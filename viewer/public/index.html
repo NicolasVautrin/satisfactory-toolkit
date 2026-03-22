@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Satisfactory Entity Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidden; }
+#toolbar {
+  position: absolute; top: 0; left: 0; right: 0; height: 40px; z-index: 10;
+  background: #2a2a2a; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  border-bottom: 1px solid #444;
+}
+#toolbar button {
+  background: #444; color: #ddd; border: 1px solid #666; padding: 4px 12px;
+  cursor: pointer; font-family: monospace; font-size: 12px;
+}
+#toolbar button:hover { background: #555; }
+#toolbar button.active { background: #666; border-color: #888; }
+.cat-toggle { display: flex; align-items: center; gap: 2px; font-size: 11px; cursor: pointer; }
+.cat-toggle input { cursor: pointer; }
+.cat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+#canvas { position: absolute; top: 40px; left: 0; right: 0; bottom: 0; }
+#canvas.with-panel { right: 280px; }
+#sel-panel {
+  position: absolute; top: 40px; right: 0; bottom: 0; width: 280px; z-index: 10;
+  background: #2a2a2a; border-left: 1px solid #444; display: none;
+  flex-direction: column; font-size: 12px;
+}
+#sel-panel.visible { display: flex; }
+#sel-panel-header {
+  padding: 8px 10px; border-bottom: 1px solid #444;
+  display: flex; justify-content: space-between; align-items: center;
+}
+#sel-panel-header strong { font-size: 13px; }
+#sel-panel-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+.sel-row {
+  display: flex; align-items: center; padding: 3px 10px; gap: 6px;
+  cursor: default;
+}
+.sel-row:hover { background: #333; }
+.sel-row .sel-color { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sel-row .sel-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-row .sel-count { color: #888; flex-shrink: 0; }
+.sel-row .sel-remove {
+  background: none; border: none; color: #888; cursor: pointer; font-size: 14px;
+  padding: 0 2px; line-height: 1; flex-shrink: 0;
+}
+.sel-row .sel-remove:hover { color: #ff4444; }
+#selection-rect {
+  position: absolute; border: 1px dashed #fff; background: rgba(255,255,255,0.1);
+  pointer-events: none; display: none; z-index: 5;
+}
+#loading {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  font-size: 18px; z-index: 20;
+}
+#status { font-size: 11px; color: #888; margin-left: auto; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="btn-export" disabled>Export Blueprint</button>
+  <button id="btn-clear" disabled>Clear Selection</button>
+  <span style="width:1px;height:20px;background:#444"></span>
+  <div id="cat-filters"></div>
+  <span style="width:1px;height:20px;background:#444"></span>
+  <label class="cat-toggle">Zoom <input id="zoom-slider" type="range" min="1" max="20" value="3" style="width:80px"></label>
+  <label class="cat-toggle">Rotate <input id="rotate-slider" type="range" min="1" max="20" value="5" style="width:80px"></label>
+  <label class="cat-toggle">Pan <input id="pan-slider" type="range" min="1" max="20" value="3" style="width:80px"></label>
+  <span id="status"></span>
+</div>
+
+<div id="canvas"></div>
+<div id="sel-panel">
+  <div id="sel-panel-header">
+    <strong>Selection (<span id="sel-total">0</span>)</strong>
+    <button id="btn-clear-panel" style="background:#444;color:#ddd;border:1px solid #666;padding:2px 8px;cursor:pointer;font-family:monospace;font-size:11px;">Clear all</button>
+  </div>
+  <div id="sel-panel-list"></div>
+</div>
+<div id="selection-rect"></div>
+<div id="loading">Loading entities...</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── Constants ──────────────────────────────────────────────────────
+const CAT_COLORS = [
+  0xff8c00, // 0 Producers - Orange
+  0x44bb44, // 1 Extractors - Green
+  0x4488ff, // 2 Belts - Blue
+  0x44dddd, // 3 Pipes - Cyan
+  0xffdd44, // 4 Power - Yellow
+  0xbb44ff, // 5 Railway - Purple
+  0x888888, // 6 Structural - Gray
+  0xcccccc, // 7 Other - White
+];
+const CAT_NAMES = ['Producers', 'Extractors', 'Belts', 'Pipes', 'Power', 'Railway', 'Structural', 'Other'];
+const HIGHLIGHT_COLOR = new THREE.Color(0xff4444);
+const DEFAULT_BOX_SIZE = 50;
+const DEFAULT_PICK_SIZE = 10;
+// Infrastructure categories get smaller pick boxes so they don't block buildings
+const PICK_SCALE = { 2: 0.2, 3: 0.2, 4: 0.2, 7: 0.2 }; // Belts, Pipes, Power, Other
+
+// ── Three.js setup ─────────────────────────────────────────────────
+const container = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+const camera = new THREE.PerspectiveCamera(60, 1, 100, 2000000);
+camera.up.set(0, 0, 1); // Z-up like UE
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.screenSpacePanning = true;
+controls.minDistance = 10;
+controls.maxDistance = 2000000;
+controls.zoomSpeed = 0.3;
+controls.zoomToCursor = true;
+controls.rotateSpeed = 0.5;
+controls.panSpeed = 0.3;
+
+// Lights — bright ambient so everything is visible
+scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(1, 1, 2);
+scene.add(dirLight);
+const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+dirLight2.position.set(-1, -1, -1);
+scene.add(dirLight2);
+
+// ── GPU Picking ────────────────────────────────────────────────────
+const pickTarget = new THREE.WebGLRenderTarget(1, 1, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+const pickScene = new THREE.Scene();
+pickScene.background = new THREE.Color(0x000000);
+
+// ── State ──────────────────────────────────────────────────────────
+let entityData = null;
+const selectedIndices = new Set();
+const catVisible = [true, true, true, true, true, true, true, true];
+
+// meshes[cat] = { boxes: {display, pick, instanceToEntity}, splines: {display, pick, instanceToEntity} }
+const meshes = [];
+
+// ── Resize ─────────────────────────────────────────────────────────
+function resize() {
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  pickTarget.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+
+// ── Helper: create an InstancedMesh pair (display + pick) ──────────
+function createInstancedPair(geom, catColor, count, opacity = 0.6) {
+  // Material color = white so instanceColor alone controls the final color (no multiplication)
+  const mat = new THREE.MeshLambertMaterial({
+    color: 0xffffff, transparent: true, opacity, wireframe: false,
+  });
+  const display = new THREE.InstancedMesh(geom, mat, count);
+  display.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
+  const pickMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const pick = new THREE.InstancedMesh(geom, pickMat, count);
+  pick.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+
+  return { display, pick, instanceToEntity: new Array(count), baseColor: new THREE.Color(catColor) };
+}
+
+// ── Helper: compute matrix for a spline segment (cylinder between two points) ──
+const _segDir = new THREE.Vector3();
+const _segMid = new THREE.Vector3();
+const _segQuat = new THREE.Quaternion();
+const _up = new THREE.Vector3(0, 0, 1);
+const SPLINE_RADIUS = 30; // visual radius of the tube
+const SPLINE_PICK_RADIUS = 5; // much thinner hit zone so splines don't block buildings
+
+function splineSegmentMatrix(p1, p2, matrix, radius) {
+  _segDir.set(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
+  const len = _segDir.length();
+  if (len < 0.01) return false;
+  _segDir.divideScalar(len);
+  _segMid.set((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2);
+  const _yAxis = new THREE.Vector3(0, 1, 0);
+  _segQuat.setFromUnitVectors(_yAxis, _segDir);
+  matrix.compose(_segMid, _segQuat, new THREE.Vector3(radius, len, radius));
+  return true;
+}
+
+// ── Build scene from data ──────────────────────────────────────────
+function buildScene(data) {
+  entityData = data;
+  const { classNames, clearance, entities } = data;
+
+  // Group entities by category, separate boxes vs splines
+  const catBoxInstances = Array.from({ length: 8 }, () => []);
+  const catSplineInstances = Array.from({ length: 8 }, () => []);
+
+  for (let ei = 0; ei < entities.length; ei++) {
+    const e = entities[ei];
+    const cat = e.cat;
+
+    if (e.sp && e.sp.length >= 2) {
+      // Spline entity: consecutive points form segments
+      for (let s = 0; s < e.sp.length - 1; s++) {
+        catSplineInstances[cat].push({ ei, p1: e.sp[s], p2: e.sp[s + 1] });
+      }
+    } else {
+      // Box entity
+      const boxes = clearance[e.c];
+      if (boxes && boxes.length > 0) {
+        for (const box of boxes) {
+          catBoxInstances[cat].push({ ei, box });
+        }
+      } else {
+        catBoxInstances[cat].push({ ei, box: null });
+      }
+    }
+  }
+
+  const boxGeom = new THREE.BoxGeometry(1, 1, 1);
+  const cylGeom = new THREE.CylinderGeometry(1, 1, 1, 6); // 6 sides = hex tube
+  const matrix = new THREE.Matrix4();
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const boxOffset = new THREE.Vector3();
+  const color = new THREE.Color();
+  const pickColor = new THREE.Color();
+
+  for (let cat = 0; cat < 8; cat++) {
+    const catData = {};
+
+    // ── Box instances ──
+    const boxInsts = catBoxInstances[cat];
+    if (boxInsts.length > 0) {
+      const pair = createInstancedPair(boxGeom, CAT_COLORS[cat], boxInsts.length);
+      color.set(CAT_COLORS[cat]);
+
+      for (let j = 0; j < boxInsts.length; j++) {
+        const { ei, box } = boxInsts[j];
+        const e = entities[ei];
+        pair.instanceToEntity[j] = ei;
+
+        pos.set(e.tx, e.ty, e.tz);
+        quat.set(e.rx, e.ry, e.rz, e.rw);
+
+        if (box) {
+          scale.set(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+          boxOffset.set(
+            (box.min.x + box.max.x) / 2 + (box.rt ? box.rt.x : 0),
+            (box.min.y + box.max.y) / 2 + (box.rt ? box.rt.y : 0),
+            (box.min.z + box.max.z) / 2 + (box.rt ? box.rt.z : 0),
+          );
+          boxOffset.applyQuaternion(quat);
+          pos.add(boxOffset);
+          matrix.compose(pos, quat, scale);
+          pair.display.setMatrixAt(j, matrix);
+          // Shrink pick box for infrastructure categories
+          const ps = PICK_SCALE[cat];
+          if (ps) scale.multiplyScalar(ps);
+          matrix.compose(pos, quat, scale);
+          pair.pick.setMatrixAt(j, matrix);
+        } else {
+          scale.set(DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE);
+          matrix.compose(pos, quat, scale);
+          pair.display.setMatrixAt(j, matrix);
+          scale.set(DEFAULT_PICK_SIZE, DEFAULT_PICK_SIZE, DEFAULT_PICK_SIZE);
+          matrix.compose(pos, quat, scale);
+          pair.pick.setMatrixAt(j, matrix);
+        }
+        pair.display.setColorAt(j, color);
+        pickColor.setHex(ei + 1);
+        pair.pick.setColorAt(j, pickColor);
+      }
+
+      pair.display.instanceMatrix.needsUpdate = true;
+      pair.display.instanceColor.needsUpdate = true;
+      pair.pick.instanceMatrix.needsUpdate = true;
+      pair.pick.instanceColor.needsUpdate = true;
+      scene.add(pair.display);
+      pickScene.add(pair.pick);
+      catData.boxes = pair;
+    }
+
+    // ── Spline instances ──
+    const splineInsts = catSplineInstances[cat];
+    if (splineInsts.length > 0) {
+      const pair = createInstancedPair(cylGeom, CAT_COLORS[cat], splineInsts.length, 0.8);
+      color.set(CAT_COLORS[cat]);
+
+      for (let j = 0; j < splineInsts.length; j++) {
+        const { ei, p1, p2 } = splineInsts[j];
+        pair.instanceToEntity[j] = ei;
+
+        if (splineSegmentMatrix(p1, p2, matrix, SPLINE_RADIUS)) {
+          pair.display.setMatrixAt(j, matrix);
+          splineSegmentMatrix(p1, p2, matrix, SPLINE_PICK_RADIUS);
+          pair.pick.setMatrixAt(j, matrix);
+        }
+        pair.display.setColorAt(j, color);
+        pickColor.setHex(ei + 1);
+        pair.pick.setColorAt(j, pickColor);
+      }
+
+      pair.display.instanceMatrix.needsUpdate = true;
+      pair.display.instanceColor.needsUpdate = true;
+      pair.pick.instanceMatrix.needsUpdate = true;
+      pair.pick.instanceColor.needsUpdate = true;
+      scene.add(pair.display);
+      pickScene.add(pair.pick);
+      catData.splines = pair;
+    }
+
+    if (catData.boxes || catData.splines) meshes[cat] = catData;
+  }
+
+  // Camera: fit to bounding box
+  const bbox = new THREE.Box3();
+  for (const e of entities) {
+    bbox.expandByPoint(new THREE.Vector3(e.tx, e.ty, e.tz));
+  }
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+
+  controls.target.copy(center);
+  camera.position.set(center.x + maxDim * 0.5, center.y - maxDim * 0.5, center.z + maxDim * 0.3);
+  controls.update();
+
+  document.getElementById('loading').style.display = 'none';
+  updateStatus();
+}
+
+// ── Selection ──────────────────────────────────────────────────────
+function pickAt(cssX, cssY) {
+  const bw = pickTarget.width;
+  const bh = pickTarget.height;
+  const x = Math.round(cssX);
+  const y = Math.round(cssY);
+
+  renderer.setRenderTarget(pickTarget);
+  renderer.render(pickScene, camera);
+
+  const px = new Uint8Array(4);
+  const readY = Math.max(0, bh - 1 - y);
+  renderer.readRenderTargetPixels(pickTarget, Math.min(x, bw - 1), readY, 1, 1, px);
+  renderer.setRenderTarget(null);
+
+  const id = (px[0] << 16) | (px[1] << 8) | px[2];
+  const entityIdx = id > 0 ? id - 1 : -1;
+  const cls = entityIdx >= 0 && entityData ? entityData.classNames[entityData.entities[entityIdx].c] : '';
+  console.log(`[pick] css(${cssX},${cssY}) buf(${x},${y}) target=${bw}x${bh} rgba=[${px}] id=${id} entity=${entityIdx} class=${cls}`);
+  return id > 0 ? id - 1 : -1;
+}
+
+function pickRect(cssX1, cssY1, cssX2, cssY2) {
+  const bh = pickTarget.height;
+  const x1 = Math.round(Math.min(cssX1, cssX2));
+  const y1 = Math.round(Math.min(cssY1, cssY2));
+  const x2 = Math.round(Math.max(cssX1, cssX2));
+  const y2 = Math.round(Math.max(cssY1, cssY2));
+  const w = Math.max(1, x2 - x1);
+  const h = Math.max(1, y2 - y1);
+
+  renderer.setRenderTarget(pickTarget);
+  renderer.render(pickScene, camera);
+
+  const px = new Uint8Array(w * h * 4);
+  const readY = Math.max(0, bh - y2);
+  renderer.readRenderTargetPixels(pickTarget, x1, readY, w, h, px);
+  renderer.setRenderTarget(null);
+
+  const found = new Set();
+  for (let i = 0; i < px.length; i += 4) {
+    const id = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
+    if (id > 0) found.add(id - 1);
+  }
+  console.log(`[pickRect] found ${found.size} entities`);
+  return found;
+}
+
+function toggleSelection(entityIdx) {
+  if (selectedIndices.has(entityIdx)) {
+    selectedIndices.delete(entityIdx);
+  } else {
+    selectedIndices.add(entityIdx);
+  }
+  console.log(`[sel] toggled entity ${entityIdx}, selection size: ${selectedIndices.size}`);
+  refreshColors();
+}
+
+function addSelection(indices) {
+  for (const idx of indices) selectedIndices.add(idx);
+  refreshColors();
+}
+
+function clearSelection() {
+  selectedIndices.clear();
+  refreshColors();
+}
+
+function refreshMeshColors(pair, catIdx) {
+  if (!pair) return;
+  const count = pair.instanceToEntity.length;
+  const arr = pair.display.instanceColor.array;
+  let highlighted = 0;
+  for (let j = 0; j < count; j++) {
+    const ei = pair.instanceToEntity[j];
+    const sel = selectedIndices.has(ei);
+    if (sel) highlighted++;
+    const c = sel ? HIGHLIGHT_COLOR : pair.baseColor;
+    arr[j * 3] = c.r;
+    arr[j * 3 + 1] = c.g;
+    arr[j * 3 + 2] = c.b;
+  }
+  pair.display.instanceColor.needsUpdate = true;
+  if (highlighted > 0) console.log(`[highlight] cat=${catIdx} highlighted=${highlighted}/${count}`);
+}
+
+// Track which categories need color refresh
+const dirtyCats = new Set();
+
+function refreshColors() {
+  // Find which categories have selected entities
+  const activeCats = new Set();
+  for (const idx of selectedIndices) {
+    activeCats.add(entityData.entities[idx].cat);
+  }
+  // Refresh categories that are dirty (had selection or lost selection)
+  for (const cat of activeCats) dirtyCats.add(cat);
+  for (const cat of dirtyCats) {
+    const m = meshes[cat];
+    if (!m) continue;
+    refreshMeshColors(m.boxes, cat);
+    refreshMeshColors(m.splines, cat);
+  }
+  // Categories that were refreshed and have no selection are now clean
+  dirtyCats.clear();
+  for (const cat of activeCats) dirtyCats.add(cat);
+
+  updateStatus();
+  updateInfoPanel();
+  document.getElementById('btn-export').disabled = selectedIndices.size === 0;
+  document.getElementById('btn-clear').disabled = selectedIndices.size === 0;
+}
+
+// ── Category filters ───────────────────────────────────────────────
+function buildFilters() {
+  const container = document.getElementById('cat-filters');
+  for (let cat = 0; cat < 8; cat++) {
+    const label = document.createElement('label');
+    label.className = 'cat-toggle';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.addEventListener('change', () => {
+      catVisible[cat] = cb.checked;
+      const m = meshes[cat];
+      if (!m) return;
+      if (m.boxes) { m.boxes.display.visible = cb.checked; m.boxes.pick.visible = cb.checked; }
+      if (m.splines) { m.splines.display.visible = cb.checked; m.splines.pick.visible = cb.checked; }
+    });
+    const dot = document.createElement('span');
+    dot.className = 'cat-dot';
+    dot.style.background = '#' + CAT_COLORS[cat].toString(16).padStart(6, '0');
+    label.appendChild(cb);
+    label.appendChild(dot);
+    label.appendChild(document.createTextNode(CAT_NAMES[cat]));
+    container.appendChild(label);
+  }
+}
+
+// ── Selection panel ──────────────────────────────────────────────
+const selPanel = document.getElementById('sel-panel');
+const selList = document.getElementById('sel-panel-list');
+const selTotal = document.getElementById('sel-total');
+const canvasDiv = document.getElementById('canvas');
+
+function removeClassFromSelection(className) {
+  for (const idx of [...selectedIndices]) {
+    const e = entityData.entities[idx];
+    if (entityData.classNames[e.c] === className) {
+      selectedIndices.delete(idx);
+    }
+  }
+  refreshColors();
+}
+
+let lastPanelVisible = false;
+function updateInfoPanel() {
+  const shouldShow = selectedIndices.size > 0;
+  if (shouldShow !== lastPanelVisible) {
+    lastPanelVisible = shouldShow;
+    selPanel.classList.toggle('visible', shouldShow);
+    canvasDiv.classList.toggle('with-panel', shouldShow);
+    requestAnimationFrame(resize);
+  }
+  if (!shouldShow) return;
+
+  selTotal.textContent = selectedIndices.size;
+
+  // Group by className, track category for color dot
+  const groups = {};
+  for (const idx of selectedIndices) {
+    const e = entityData.entities[idx];
+    const cls = entityData.classNames[e.c];
+    if (!groups[cls]) groups[cls] = { count: 0, cat: e.cat };
+    groups[cls].count++;
+  }
+
+  const sorted = Object.entries(groups).sort((a, b) => b[1].count - a[1].count);
+
+  selList.innerHTML = '';
+  for (const [cls, { count, cat }] of sorted) {
+    const row = document.createElement('div');
+    row.className = 'sel-row';
+
+    const dot = document.createElement('span');
+    dot.className = 'sel-color';
+    dot.style.background = '#' + CAT_COLORS[cat].toString(16).padStart(6, '0');
+
+    const name = document.createElement('span');
+    name.className = 'sel-name';
+    name.textContent = cls;
+    name.title = cls;
+
+    const cnt = document.createElement('span');
+    cnt.className = 'sel-count';
+    cnt.textContent = '\u00d7' + count;
+
+    const btn = document.createElement('button');
+    btn.className = 'sel-remove';
+    btn.textContent = '\u2715';
+    btn.title = 'Remove from selection';
+    btn.addEventListener('click', () => removeClassFromSelection(cls));
+
+    row.appendChild(dot);
+    row.appendChild(name);
+    row.appendChild(cnt);
+    row.appendChild(btn);
+    selList.appendChild(row);
+  }
+}
+
+document.getElementById('btn-clear-panel').addEventListener('click', clearSelection);
+
+function updateStatus() {
+  const total = entityData ? entityData.entities.length : 0;
+  document.getElementById('status').textContent =
+    `${total} entities | ${selectedIndices.size} selected | Click to select, Shift+drag for box select`;
+}
+
+// ── Mouse interaction ──────────────────────────────────────────────
+let dragStart = null;
+let isDragging = false;
+let pointerDownPos = null;
+const selRect = document.getElementById('selection-rect');
+const canvasEl = document.getElementById('canvas');
+
+canvasEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  pointerDownPos = { x: e.clientX, y: e.clientY };
+  if (e.shiftKey) {
+    isDragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    controls.enabled = false;
+    selRect.style.display = 'block';
+    selRect.style.left = e.clientX + 'px';
+    selRect.style.top = e.clientY + 'px';
+    selRect.style.width = '0px';
+    selRect.style.height = '0px';
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (!isDragging) return;
+  const x = Math.min(dragStart.x, e.clientX);
+  const y = Math.min(dragStart.y, e.clientY);
+  const w = Math.abs(e.clientX - dragStart.x);
+  const h = Math.abs(e.clientY - dragStart.y);
+  selRect.style.left = x + 'px';
+  selRect.style.top = y + 'px';
+  selRect.style.width = w + 'px';
+  selRect.style.height = h + 'px';
+});
+
+window.addEventListener('pointerup', (e) => {
+  if (isDragging) {
+    isDragging = false;
+    controls.enabled = true;
+    selRect.style.display = 'none';
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x1 = Math.round(Math.min(dragStart.x, e.clientX) - rect.left);
+    const y1 = Math.round(Math.min(dragStart.y, e.clientY) - rect.top);
+    const x2 = Math.round(Math.max(dragStart.x, e.clientX) - rect.left);
+    const y2 = Math.round(Math.max(dragStart.y, e.clientY) - rect.top);
+
+    if (x2 - x1 > 2 && y2 - y1 > 2) {
+      const found = pickRect(x1, y1, x2, y2);
+      if (!e.ctrlKey) selectedIndices.clear();
+      addSelection(found);
+    }
+    dragStart = null;
+    return;
+  }
+
+  // Simple click
+  if (e.button === 0 && !e.shiftKey) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const idx = pickAt(x, y);
+    if (idx >= 0) {
+      toggleSelection(idx);
+    }
+  }
+});
+
+// ── Export ──────────────────────────────────────────────────────────
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const name = prompt('Blueprint name:', 'my_blueprint');
+  if (!name) return;
+
+  const res = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ indices: [...selectedIndices], name }),
+  });
+  const result = await res.json();
+  if (result.success) {
+    alert(`Blueprint exported: ${result.count} entities\n${result.sbpPath}`);
+  } else {
+    alert(`Export failed: ${result.error}`);
+  }
+});
+
+document.getElementById('btn-clear').addEventListener('click', clearSelection);
+
+document.getElementById('zoom-slider').addEventListener('input', (e) => {
+  controls.zoomSpeed = e.target.value / 10;
+});
+document.getElementById('rotate-slider').addEventListener('input', (e) => {
+  controls.rotateSpeed = e.target.value / 10;
+});
+document.getElementById('pan-slider').addEventListener('input', (e) => {
+  controls.panSpeed = e.target.value / 10;
+});
+
+// ── Animation loop ─────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+buildFilters();
+resize();
+animate();
+
+fetch('/api/entities')
+  .then(r => r.json())
+  .then(data => buildScene(data))
+  .catch(err => {
+    document.getElementById('loading').textContent = 'Error: ' + err.message;
+  });
+</script>
+</body>
+</html>
