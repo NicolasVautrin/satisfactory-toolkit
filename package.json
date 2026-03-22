@@ -1,0 +1,14 @@
+{
+  "name": "satisfactory-toolkit",
+  "version": "1.0.0",
+  "description": "Satisfactory save editing, blueprint manipulation and optimization toolkit",
+  "private": true,
+  "dependencies": {
+    "@etothepii/satisfactory-file-parser": "^3.3.1",
+    "canvas": "^3.2.1",
+    "exceljs": "^4.4.0",
+    "highs": "^1.8.0",
+    "javascript-lp-solver": "^1.0.3",
+    "potrace": "^2.1.8"
+  }
+}

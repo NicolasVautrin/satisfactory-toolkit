@@ -1,0 +1,69 @@
+{
+  "comment": "Satisfactory 1.0 resource nodes by purity. Miner Mk3: 45MW, 240/min@100%. Oil Extractor: 40MW, 120m³/min@100%. Water Extractor: 20MW, 120m³/min. Resource Well Extractor: 0MW (pressurizer needed). All rates at 250% overclock.",
+  "miners": {
+    "Desc_MinerMk3_C": { "power": 45, "baseRate": 240 },
+    "Desc_OilPump_C": { "power": 40, "baseRate": 120 },
+    "Desc_WaterPump_C": { "power": 20, "baseRate": 120 },
+    "Desc_FrackingExtractor_C": { "power": 0, "baseRate": 60 }
+  },
+  "purityMultipliers": { "impure": 0.5, "normal": 1.0, "pure": 2.0 },
+  "nodes": {
+    "Desc_OreIron_C": {
+      "name": "Iron Ore", "miner": "Desc_MinerMk3_C",
+      "impure": 39, "normal": 42, "pure": 46, "total": 127, "maxRate": 92100
+    },
+    "Desc_OreCopper_C": {
+      "name": "Copper Ore", "miner": "Desc_MinerMk3_C",
+      "impure": 13, "normal": 29, "pure": 13, "total": 55, "maxRate": 36900
+    },
+    "Desc_Stone_C": {
+      "name": "Limestone", "miner": "Desc_MinerMk3_C",
+      "impure": 15, "normal": 50, "pure": 29, "total": 94, "maxRate": 69900
+    },
+    "Desc_Coal_C": {
+      "name": "Coal", "miner": "Desc_MinerMk3_C",
+      "impure": 15, "normal": 31, "pure": 16, "total": 62, "maxRate": 42300
+    },
+    "Desc_OreGold_C": {
+      "name": "Caterium Ore", "miner": "Desc_MinerMk3_C",
+      "impure": 0, "normal": 9, "pure": 8, "total": 17, "maxRate": 15000
+    },
+    "Desc_RawQuartz_C": {
+      "name": "Raw Quartz", "miner": "Desc_MinerMk3_C",
+      "impure": 3, "normal": 7, "pure": 7, "total": 17, "maxRate": 13500
+    },
+    "Desc_Sulfur_C": {
+      "name": "Sulfur", "miner": "Desc_MinerMk3_C",
+      "impure": 6, "normal": 5, "pure": 5, "total": 16, "maxRate": 10800
+    },
+    "Desc_OreBauxite_C": {
+      "name": "Bauxite", "miner": "Desc_MinerMk3_C",
+      "impure": 5, "normal": 6, "pure": 6, "total": 17, "maxRate": 12300
+    },
+    "Desc_OreUranium_C": {
+      "name": "Uranium", "miner": "Desc_MinerMk3_C",
+      "impure": 3, "normal": 2, "pure": 0, "total": 5, "maxRate": 2100
+    },
+    "Desc_SAM_C": {
+      "name": "SAM", "miner": "Desc_MinerMk3_C",
+      "impure": 10, "normal": 6, "pure": 3, "total": 19, "maxRate": 10200
+    },
+    "Desc_LiquidOil_C": {
+      "name": "Crude Oil", "miner": "Desc_OilPump_C",
+      "impure": 10, "normal": 12, "pure": 8,
+      "wellImpure": 8, "wellNormal": 6, "wellPure": 4,
+      "total": 48, "maxRate": 12600
+    },
+    "Desc_NitrogenGas_C": {
+      "name": "Nitrogen Gas", "miner": "Desc_FrackingExtractor_C",
+      "impure": 2, "normal": 7, "pure": 36,
+      "total": 45, "maxRate": 12000
+    },
+    "Desc_Water_C": {
+      "name": "Water", "miner": "Desc_WaterPump_C",
+      "impure": 0, "normal": 0, "pure": 0,
+      "total": -1, "maxRate": 9999999,
+      "comment": "Unlimited, placed on any water body"
+    }
+  }
+}
