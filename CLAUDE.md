@@ -36,6 +36,52 @@ satisfactory-toolkit/
 └── test/                       # Tests des modules lib/
 ```
 
+## 3D Entity Viewer
+
+Viewer Three.js pour visualiser les entités d'une save dans le navigateur.
+
+### Lancement
+
+```bash
+export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
+node viewer/server.js <save-name>
+# Ex: node viewer/server.js TEST
+# → http://localhost:3000
+```
+
+### Gestion du serveur
+
+- Le serveur Express reste actif en arrière-plan tant qu'il n'est pas tué
+- Pour **arrêter** le serveur : `curl -s -X POST http://localhost:3000/api/shutdown`
+- Si le shutdown ne répond pas (ancienne instance) : `powershell -Command 'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }'`
+- Pour **redémarrer** après des modifications : d'abord shutdown/kill, attendre 1s, puis relancer
+- **Important** : quand un serveur est lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
+- Les données sont cachées côté client après le premier chargement — le serveur n'est requis que pour le chargement initial et l'export blueprint
+- Après modification de `viewer/server.js`, il faut **redémarrer le serveur** ET **hard reload** (Ctrl+Shift+R) dans le navigateur
+- Après modification de `viewer/public/index.html`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
+
+### Contrôles caméra
+
+Contrôles FPS custom sans librairie externe (pas d'OrbitControls/CameraControls — incompatibles avec ce viewer) :
+
+- **Clic gauche + drag** : rotation caméra (yaw/pitch)
+- **Clic gauche sans bouger** : sélection d'entité (raycaster, objet le plus proche)
+- **Shift + clic gauche + drag** : sélection rectangulaire
+- **Clic droit + drag** : pan (déplacement dans le plan de la caméra)
+- **Molette** : zoom (avance/recule dans la direction du regard)
+- **Boutons −/+** toolbar : sensibilité Zoom (flyStep), Pan, Rot
+
+La vitesse de zoom (`flyStep`) est un pas fixe en unités, ajustable via les boutons −/+ (×2 par clic). La rotation et le pan sont gérés par des multiplicateurs de sensibilité.
+
+### Architecture
+
+- `viewer/server.js` : charge la save, extrait les entités/splines/clearance, sert l'API `/api/entities` et l'export `/api/export`
+- `viewer/public/index.html` : rendu Three.js avec InstancedMesh, contrôles caméra FPS custom
+- Entités classées en 8 catégories : Producers, Extractors, Belts, Pipes, Power, Railway, Structural, Other
+- Les ConveyorLifts sont rendus comme des splines verticales (pas de clearance data)
+- Les FGConveyorChainActor ne sont PAS inclus (les belts individuels Build_ConveyorBelt* ont leurs propres splines)
+- Les lightweight buildables (fondations, murs, rampes) sont chargés depuis le LightweightBuildable subsystem
+
 ## Sink Points Optimization
 
 Documentation complète dans [SINK_OPTIMIZATION.md](SINK_OPTIMIZATION.md).

@@ -23,12 +23,26 @@ const save = Parser.ParseSave(saveName, buf);
 const allObjects = Object.values(save.levels).flatMap(l => l.objects);
 const allEntities = allObjects.filter(o => o.type === 'SaveEntity' && o.transform);
 
-// Only keep player-built entities (Build_*, FGConveyorChainActor)
+// Only keep player-built entities (Build_*)
 const entities = allEntities.filter(o => {
   const cls = o.typePath.split('.').pop();
-  return cls.startsWith('Build_') || cls === 'FGConveyorChainActor';
+  return cls.startsWith('Build_');
 });
 console.log(`Loaded ${entities.length} buildable entities (${allEntities.length} total)`);
+
+// ── Load lightweight buildables (foundations, walls, ramps, etc.) ──
+const lwSub = allObjects.find(o => o.typePath?.includes('LightweightBuildable'));
+const lwInstances = [];
+if (lwSub && lwSub.specialProperties?.buildables) {
+  for (const b of lwSub.specialProperties.buildables) {
+    const typePath = b.typeReference.pathName;
+    const cls = typePath.split('.').pop();
+    for (const inst of b.instances) {
+      lwInstances.push({ typePath, cls, transform: inst.transform });
+    }
+  }
+}
+console.log(`Loaded ${lwInstances.length} lightweight buildables`);
 
 // ── Load clearance data ────────────────────────────────────────────
 const clearanceData = require('../data/clearanceData.json');
@@ -168,6 +182,31 @@ function buildEntityData() {
       cat: classify(e.typePath),
     };
 
+    // Extract lift as vertical spline (bottom → top)
+    if (cls.startsWith('Build_ConveyorLift')) {
+      const topTrans = e.properties?.mTopTransform?.value?.properties?.Translation?.value;
+      if (topTrans) {
+        const t = e.transform.translation;
+        const r = e.transform.rotation;
+        // Rotate topTranslation by entity quaternion to get world offset
+        const vx = topTrans.x, vy = topTrans.y, vz = topTrans.z;
+        const rx = r.x, ry = r.y, rz = r.z, rw = r.w;
+        const cx = ry * vz - rz * vy;
+        const cy = rz * vx - rx * vz;
+        const cz = rx * vy - ry * vx;
+        const cx2 = ry * cz - rz * cy;
+        const cy2 = rz * cx - rx * cz;
+        const cz2 = rx * cy - ry * cx;
+        const topX = t.x + vx + 2 * (rw * cx + cx2);
+        const topY = t.y + vy + 2 * (rw * cy + cy2);
+        const topZ = t.z + vz + 2 * (rw * cz + cz2);
+        item.sp = [
+          [Math.round(t.x * 10) / 10, Math.round(t.y * 10) / 10, Math.round(t.z * 10) / 10],
+          [Math.round(topX * 10) / 10, Math.round(topY * 10) / 10, Math.round(topZ * 10) / 10],
+        ];
+      }
+    }
+
     // Extract spline points for belts, pipes, rails
     const splineSegs = extractSplineSegments(e);
     if (splineSegs) {
@@ -182,6 +221,31 @@ function buildEntityData() {
     }
 
     items.push(item);
+  }
+
+  // Add lightweight buildables (foundations, walls, ramps, etc.)
+  for (const lw of lwInstances) {
+    if (classNameIndex[lw.cls] === undefined) {
+      classNameIndex[lw.cls] = classNames.length;
+      classNames.push(lw.cls);
+
+      const cl = clearanceData[lw.cls];
+      if (cl) {
+        classNameClearance[classNameIndex[lw.cls]] = cl.boxes.map(b => ({
+          min: b.min, max: b.max,
+          rt: b.relativeTransform?.translation || null,
+        }));
+      }
+    }
+
+    const t = lw.transform.translation;
+    const r = lw.transform.rotation;
+    items.push({
+      c: classNameIndex[lw.cls],
+      tx: t.x, ty: t.y, tz: t.z,
+      rx: r.x, ry: r.y, rz: r.z, rw: r.w,
+      cat: classify(lw.typePath),
+    });
   }
 
   return { classNames, clearance: classNameClearance, entities: items };
@@ -247,6 +311,12 @@ app.post('/api/export', (req, res) => {
     console.error('Export error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+app.post('/api/shutdown', (req, res) => {
+  res.json({ success: true });
+  console.log('Shutdown requested');
+  process.exit(0);
 });
 
 const PORT = 3000;
