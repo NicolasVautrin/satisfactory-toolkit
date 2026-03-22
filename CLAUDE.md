@@ -19,7 +19,8 @@ satisfactory-toolkit/
 ├── data/
 │   ├── mapObjects.json         # Positions des resource nodes, wells, slugs sur la carte
 │   ├── resourceConfig.json     # Config miners/extracteurs pour le LP solver
-│   └── gameData.json           # Items, recettes, buildings du jeu
+│   ├── gameData.json           # Items, recettes, buildings du jeu
+│   └── clearanceData.json      # Bounding boxes des bâtiments (généré)
 ├── lib/
 │   ├── shared/                 # Vector3D, Quaternion, Transform, FlowPort
 │   ├── extractors/             # Miner, WaterExtractor, OilPump, Fracking...
@@ -29,7 +30,6 @@ satisfactory-toolkit/
 │   ├── structural/             # Foundation (lightweight buildables)
 │   ├── Blueprint.js            # Blueprint composite (create + fromFile)
 │   ├── Registry.js             # TypePath → Builder mapping
-│   ├── clearanceData.json      # Bounding boxes des bâtiments (généré)
 │   └── generateClearanceData.js # Générateur depuis Docs du jeu
 ├── tools/                      # Scripts d'édition/optimisation
 ├── inspect/                    # Scripts d'exploration de saves
@@ -48,10 +48,10 @@ Les scripts manipulent les sauvegardes Satisfactory via `@etothepii/satisfactory
 
 ### Clearance Data (bounding boxes)
 
-`lib/clearanceData.json` contient les bounding boxes de 495 bâtiments, extraites du `mClearanceData` des Docs du jeu. Clé = `ClassName` (ex: `Build_SmelterMk1_C`).
+`data/clearanceData.json` contient les bounding boxes de 495 bâtiments, extraites du `mClearanceData` des Docs du jeu. Clé = `ClassName` (ex: `Build_SmelterMk1_C`).
 
 ```js
-const clearance = require('../lib/clearanceData.json');
+const clearance = require('../data/clearanceData.json');
 const className = typePath.split('.').pop(); // 'Build_SmelterMk1_C'
 const { boxes } = clearance[className];
 // boxes[0] = { min: {x,y,z}, max: {x,y,z}, type?, relativeTransform?, excludeForSnapping? }

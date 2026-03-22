@@ -60,7 +60,7 @@ function initSession() {
   _sessionId = [d.getDate(), d.getMonth()+1, d.getFullYear()%100, d.getHours(), d.getMinutes(), d.getSeconds()]
     .map(n => String(n).padStart(2, '0')).join('');
   _counter = 0;
-  _clearanceData = require('./lib/clearanceData.json');
+  _clearanceData = require('./data/clearanceData.json');
   return _sessionId;
 }
 function nextId() {

@@ -627,10 +627,10 @@ Les `pathName` des markers correspondent aux `pathName` dans la save :
 
 ## Clearance Data (bounding boxes)
 
-`lib/clearanceData.json` — bounding boxes de 495 bâtiments, extraites du `mClearanceData` des Docs du jeu. Clé = `ClassName` (ex: `Build_SmelterMk1_C`).
+`data/clearanceData.json` — bounding boxes de 495 bâtiments, extraites du `mClearanceData` des Docs du jeu. Clé = `ClassName` (ex: `Build_SmelterMk1_C`).
 
 ```js
-const clearance = require('./lib/clearanceData.json');
+const clearance = require('./data/clearanceData.json');
 const className = typePath.split('.').pop(); // 'Build_SmelterMk1_C'
 const { boxes } = clearance[className];
 // boxes[0] = { min: {x,y,z}, max: {x,y,z}, type?, relativeTransform?, excludeForSnapping? }
