@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+vas y<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -59,6 +59,7 @@ body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidde
 <body>
 
 <div id="toolbar">
+  <select id="save-picker" style="background:#333;color:#ddd;border:1px solid #666;padding:3px 6px;font-family:monospace;font-size:12px;max-width:200px"></select>
   <button id="btn-export" disabled>Export Blueprint</button>
   <button id="btn-clear" disabled>Clear Selection</button>
   <span style="width:1px;height:20px;background:#444"></span>
@@ -696,17 +697,101 @@ document.getElementById('rotate-up').addEventListener('click', () => {
   updateSensLabels();
 });
 
+// ── Camera position persistence (per save) ──────────────────────
+function saveCameraState() {
+  const name = savePicker?.value;
+  if (!name) return;
+  const state = {
+    x: camera.position.x, y: camera.position.y, z: camera.position.z,
+    yaw: camState.yaw, pitch: camState.pitch, flyStep: camState.flyStep,
+  };
+  localStorage.setItem(`viewer-cam-${name}`, JSON.stringify(state));
+}
+
+function restoreCameraState(name) {
+  const raw = localStorage.getItem(`viewer-cam-${name}`);
+  if (!raw) return false;
+  try {
+    const s = JSON.parse(raw);
+    camera.position.set(s.x, s.y, s.z);
+    camState.yaw = s.yaw;
+    camState.pitch = s.pitch;
+    if (s.flyStep) camState.flyStep = s.flyStep;
+    updateCameraRotation();
+    updateSensLabels();
+    return true;
+  } catch { return false; }
+}
+
+// ── Save picker ─────────────────────────────────────────────────
+const savePicker = document.getElementById('save-picker');
+
+// Auto-save camera position periodically
+setInterval(saveCameraState, 3000);
+
+async function loadSaveList() {
+  const res = await fetch('/api/saves');
+  const { saves, current } = await res.json();
+  savePicker.innerHTML = '<option value="">-- Choose save --</option>';
+  for (const s of saves) {
+    const sizeMB = (s.size / 1024 / 1024).toFixed(1);
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    opt.textContent = `${s.name} (${sizeMB} MB)`;
+    if (s.name === current) opt.selected = true;
+    savePicker.appendChild(opt);
+  }
+}
+
+async function loadSave(name) {
+  document.getElementById('loading').style.display = '';
+  document.getElementById('loading').textContent = `Loading ${name}...`;
+
+  const res = await fetch('/api/load', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const result = await res.json();
+  if (!res.ok) {
+    document.getElementById('loading').textContent = 'Error: ' + result.error;
+    return;
+  }
+
+  const entRes = await fetch('/api/entities');
+  const data = await entRes.json();
+
+  // Clear previous scene
+  for (const mesh of displayMeshes) scene.remove(mesh);
+  displayMeshes.length = 0;
+  selectedIndices.clear();
+
+  buildScene(data);
+  restoreCameraState(name);
+}
+
+savePicker.addEventListener('change', () => {
+  if (savePicker.value) loadSave(savePicker.value);
+});
+
 // ── Init ───────────────────────────────────────────────────────────
 buildFilters();
 resize();
 animate();
 
-fetch('/api/entities')
-  .then(r => r.json())
-  .then(data => buildScene(data))
-  .catch(err => {
-    document.getElementById('loading').textContent = 'Error: ' + err.message;
-  });
+loadSaveList().then(() => {
+  // If a save was pre-loaded via CLI, fetch entities directly
+  if (savePicker.value) {
+    fetch('/api/entities')
+      .then(r => { if (!r.ok) throw new Error('No save loaded'); return r.json(); })
+      .then(data => { buildScene(data); restoreCameraState(savePicker.value); })
+      .catch(() => {
+        document.getElementById('loading').textContent = 'Select a save file';
+      });
+  } else {
+    document.getElementById('loading').textContent = 'Select a save file';
+  }
+});
 </script>
 </body>
 </html>

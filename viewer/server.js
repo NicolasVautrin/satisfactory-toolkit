@@ -1,51 +1,21 @@
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { Parser } = require('@etothepii/satisfactory-file-parser');
 const { readFileAsArrayBuffer, initSession } = require('../satisfactoryLib');
 const Blueprint = require('../lib/Blueprint');
 
-// ── CLI ────────────────────────────────────────────────────────────
-const saveName = process.argv[2];
-if (!saveName) {
-  console.error('Usage: node viewer/server.js <save-name>');
-  console.error('  e.g. node viewer/server.js TEST');
-  process.exit(1);
-}
-
 const STEAM_ID = '76561198036887614';
 const GAME_SAVES = path.join(process.env.LOCALAPPDATA, 'FactoryGame/Saved/SaveGames', STEAM_ID);
-const savePath = path.join(GAME_SAVES, `${saveName}.sav`);
-
-// ── Load save ──────────────────────────────────────────────────────
-console.log(`Loading ${savePath}...`);
-const buf = readFileAsArrayBuffer(savePath);
-const save = Parser.ParseSave(saveName, buf);
-const allObjects = Object.values(save.levels).flatMap(l => l.objects);
-const allEntities = allObjects.filter(o => o.type === 'SaveEntity' && o.transform);
-
-// Only keep player-built entities (Build_*)
-const entities = allEntities.filter(o => {
-  const cls = o.typePath.split('.').pop();
-  return cls.startsWith('Build_');
-});
-console.log(`Loaded ${entities.length} buildable entities (${allEntities.length} total)`);
-
-// ── Load lightweight buildables (foundations, walls, ramps, etc.) ──
-const lwSub = allObjects.find(o => o.typePath?.includes('LightweightBuildable'));
-const lwInstances = [];
-if (lwSub && lwSub.specialProperties?.buildables) {
-  for (const b of lwSub.specialProperties.buildables) {
-    const typePath = b.typeReference.pathName;
-    const cls = typePath.split('.').pop();
-    for (const inst of b.instances) {
-      lwInstances.push({ typePath, cls, transform: inst.transform });
-    }
-  }
-}
-console.log(`Loaded ${lwInstances.length} lightweight buildables`);
 
 // ── Load clearance data ────────────────────────────────────────────
 const clearanceData = require('../data/clearanceData.json');
+
+// ── Current save state ─────────────────────────────────────────────
+let currentSaveName = null;
+let allObjects = [];
+let entities = [];
+let entityData = null;
 
 // ── Classify entities ──────────────────────────────────────────────
 const CATEGORY_PATTERNS = [
@@ -146,7 +116,7 @@ function extractSplineSegments(entity) {
 }
 
 // ── Build entity data for the client ───────────────────────────────
-function buildEntityData() {
+function buildEntityData(entities, lwInstances) {
   const classNames = [];
   const classNameIndex = {};
   const classNameClearance = {};
@@ -251,15 +221,81 @@ function buildEntityData() {
   return { classNames, clearance: classNameClearance, entities: items };
 }
 
-const entityData = buildEntityData();
-console.log(`Prepared ${entityData.classNames.length} unique classNames`);
+// ── Load a save file ───────────────────────────────────────────────
+function loadSave(saveName) {
+  const savePath = path.join(GAME_SAVES, `${saveName}.sav`);
+  console.log(`Loading ${savePath}...`);
+  const buf = readFileAsArrayBuffer(savePath);
+  const save = Parser.ParseSave(saveName, buf);
+  allObjects = Object.values(save.levels).flatMap(l => l.objects);
+  const allEntities = allObjects.filter(o => o.type === 'SaveEntity' && o.transform);
+
+  // Only keep player-built entities (Build_*)
+  entities = allEntities.filter(o => {
+    const cls = o.typePath.split('.').pop();
+    return cls.startsWith('Build_');
+  });
+  console.log(`Loaded ${entities.length} buildable entities (${allEntities.length} total)`);
+
+  // Load lightweight buildables
+  const lwSub = allObjects.find(o => o.typePath?.includes('LightweightBuildable'));
+  const lwInstances = [];
+  if (lwSub && lwSub.specialProperties?.buildables) {
+    for (const b of lwSub.specialProperties.buildables) {
+      const typePath = b.typeReference.pathName;
+      const cls = typePath.split('.').pop();
+      for (const inst of b.instances) {
+        lwInstances.push({ typePath, cls, transform: inst.transform });
+      }
+    }
+  }
+  console.log(`Loaded ${lwInstances.length} lightweight buildables`);
+
+  entityData = buildEntityData(entities, lwInstances);
+  currentSaveName = saveName;
+  console.log(`Prepared ${entityData.classNames.length} unique classNames`);
+}
+
+// ── Pre-load save from CLI arg if provided ─────────────────────────
+const cliSaveName = process.argv[2];
+if (cliSaveName) {
+  loadSave(cliSaveName);
+}
 
 // ── Express ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/api/saves', (req, res) => {
+  try {
+    const files = fs.readdirSync(GAME_SAVES)
+      .filter(f => f.endsWith('.sav'))
+      .map(f => {
+        const stat = fs.statSync(path.join(GAME_SAVES, f));
+        return { name: f.replace('.sav', ''), size: stat.size, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    res.json({ saves: files, current: currentSaveName });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/load', (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  try {
+    loadSave(name);
+    res.json({ success: true, entities: entityData.entities.length, classNames: entityData.classNames.length });
+  } catch (err) {
+    console.error('Load error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/entities', (req, res) => {
+  if (!entityData) return res.status(404).json({ error: 'No save loaded' });
   res.json(entityData);
 });
 
@@ -300,7 +336,7 @@ app.post('/api/export', (req, res) => {
       bp._objects.push(bp._cloneObject(comp));
     }
 
-    const bpDir = path.join(GAME_SAVES, '..', '..', 'blueprints', STEAM_ID);
+    const bpDir = path.join(GAME_SAVES, '..', 'blueprints', '08072023');
     const sbpPath = path.join(bpDir, `${name}.sbp`);
     const cfgPath = path.join(bpDir, `${name}.sbpcfg`);
 
