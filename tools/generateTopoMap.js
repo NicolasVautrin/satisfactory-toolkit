@@ -21,8 +21,8 @@ const fs   = require('fs');
 const { loadImage, createCanvas } = require('canvas');
 const potrace = require('potrace');
 
-const MAP_JPG    = path.join(__dirname, '..', 'map.jpg');
-const OUTPUT_SVG = path.join(__dirname, '..', 'map_topo.svg');
+const MAP_JPG    = path.join(__dirname, '..', 'data', 'map.jpg');
+const OUTPUT_SVG = path.join(__dirname, '..', 'data', 'map_topo.svg');
 
 // Altitude thresholds (grayscale luminance of terrain pixels)
 const LEVELS = [120, 135, 150, 165, 180, 195];

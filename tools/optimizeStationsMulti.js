@@ -26,8 +26,8 @@ for (const arg of process.argv.slice(2)) {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const MAP_DATA_PATH = path.join(__dirname, '..', 'data', 'mapObjects.json');
-const TOPO_SVG_PATH = path.join(__dirname, '..', 'map_topo.svg');
-const OUTPUT_SVG    = path.join(__dirname, '..', 'stations_multi.svg');
+const TOPO_SVG_PATH = path.join(__dirname, '..', 'data', 'map_topo.svg');
+const OUTPUT_SVG    = path.join(__dirname, '..', 'data', 'stations_multi.svg');
 
 const DIST_WEIGHT       = parseFloat(ARGS.dw) || 3;
 const SA_ITERATIONS     = parseInt(ARGS.sa)   || 200000;

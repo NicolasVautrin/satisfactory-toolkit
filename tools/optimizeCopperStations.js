@@ -21,8 +21,8 @@ const path = require('path');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const MAP_DATA_PATH = path.join(__dirname, '..', 'data', 'mapObjects.json');
-const TOPO_SVG_PATH = path.join(__dirname, '..', 'map_topo.svg');
-const OUTPUT_SVG    = path.join(__dirname, '..', 'copperStations.svg');
+const TOPO_SVG_PATH = path.join(__dirname, '..', 'data', 'map_topo.svg');
+const OUTPUT_SVG    = path.join(__dirname, '..', 'data', 'copperStations.svg');
 
 const DIST_WEIGHT  = parseFloat(process.argv[2]) || 3;
 const STATION_COST = parseFloat(process.argv[3]) || 50000;

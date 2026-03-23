@@ -2,7 +2,7 @@
 
 ## Carte SVG topographique
 
-Le fichier `map_topo.svg` est une carte vectorielle topographique de la map Satisfactory générée programmatiquement.
+Le fichier `data/map_topo.svg` est une carte vectorielle topographique de la map Satisfactory générée programmatiquement.
 
 ### Caractéristiques
 
@@ -27,7 +27,7 @@ Le fichier `map_topo.svg` est une carte vectorielle topographique de la map Sati
 
 ### Processus de génération
 
-1. **Source** : `map.jpg` — image satellite 5000×5000 du wiki (https://satisfactory.wiki.gg/images/Map.jpg)
+1. **Source** : `data/map.jpg` — image satellite 5000×5000 du wiki (https://satisfactory.wiki.gg/images/Map.jpg)
 2. **Classification des pixels** par excès de bleu (`B - (R+G)/2`) :
    - `> 10` → eau
    - `< -2` et luminance > 15 → continent
@@ -50,10 +50,10 @@ Script : `tools/generateTopoMap.js`
 ```bash
 export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
 # Télécharger la source (si absente)
-curl -sL -o map.jpg "https://satisfactory.wiki.gg/images/Map.jpg"
+curl -sL -o data/map.jpg "https://satisfactory.wiki.gg/images/Map.jpg"
 # Générer le SVG
 node tools/generateTopoMap.js
-# → map_topo.svg
+# → data/map_topo.svg
 ```
 
 Dépendances npm : `canvas`, `potrace`.
@@ -164,5 +164,5 @@ for (const c of copper) {
   overlay += `<circle cx="${px}" cy="${py}" r="15" fill="${color}" stroke="#000" stroke-width="1"/>`;
 }
 
-// Insérer avant </svg> dans map_topo.svg
+// Insérer avant </svg> dans data/map_topo.svg
 ```

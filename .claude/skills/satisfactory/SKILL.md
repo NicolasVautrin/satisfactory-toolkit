@@ -1,6 +1,6 @@
 ---
 name: satisfactory
-description: Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib
+description: Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib, viewer 3D d'entités
 user-invocable: true
 allowed-tools: Read, WebSearch, WebFetch
 argument-hint: [sujet]
@@ -32,6 +32,11 @@ Lis le fichier `${CLAUDE_SKILL_DIR}/map.md` pour obtenir toutes les informations
 Pour toute question sur l'optimisation du placement de gares ferroviaires, le clustering de nodes de ressources, le solver de sink points, ou les outils de planification :
 
 Lis le fichier `${CLAUDE_SKILL_DIR}/optimization.md` pour obtenir toutes les informations sur les outils d'optimisation.
+
+### Viewer 3D d'entités
+Pour toute question sur le viewer Three.js, la visualisation de saves en 3D, les contrôles caméra, la sélection d'entités, l'export blueprint depuis le viewer, l'API du serveur, ou les modifications du viewer :
+
+Lis le fichier `${CLAUDE_SKILL_DIR}/viewer.md` pour obtenir toutes les informations sur le viewer 3D.
 
 ### Autres sujets
 Pour les sujets non couverts par les fichiers de référence, utilise WebSearch pour trouver des informations à jour sur le wiki officiel (satisfactory.wiki.gg) ou les guides communautaires.

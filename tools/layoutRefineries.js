@@ -203,7 +203,7 @@ const output = `<?xml version="1.0" encoding="UTF-8"?>
 ${svg}
 </svg>`;
 
-const outputPath = path.join(__dirname, '..', 'copperFactory_map.svg');
+const outputPath = path.join(__dirname, '..', 'data', 'copperFactory_map.svg');
 fs.writeFileSync(outputPath, output);
 console.log(`\nTotal: ${totalRef} raffineries, hauteur ${Math.round(totalH_UU / 100)}m`);
 console.log(`Written: ${outputPath}`);

@@ -43,7 +43,7 @@ node tools/optimizeStations.js [distWeight] [stationCost]
 ### Sortie
 
 - **Console** : tableau par k, détail des gares (position, nb nodes, throughput, conv max)
-- **SVG** : `stations.svg` — multi-layers Inkscape (1 layer par ressource + 1 layer topo)
+- **SVG** : `data/stations.svg` — multi-layers Inkscape (1 layer par ressource + 1 layer topo)
 
 ## 2. Placement de gares multi-ressources — `tools/optimizeStationsMulti.js`
 
@@ -114,7 +114,7 @@ node tools/optimizeStationsMulti.js [distWeight]
 ### Sortie
 
 - **Console** : scan de k, SA, puis détail par gare avec allocation docks, throughput par ressource/dock, round-trip time, warnings
-- **SVG** : `stations_multi.svg` — layers Inkscape : carte topo, réseau ferré (MST + gares), 1 layer par ressource (nodes + convoyeurs)
+- **SVG** : `data/stations_multi.svg` — layers Inkscape : carte topo, réseau ferré (MST + gares), 1 layer par ressource (nodes + convoyeurs)
 
 ### Format du rapport
 
@@ -209,7 +209,7 @@ Documentation complète dans `SINK_OPTIMIZATION.md`.
 node tools/analyzeSinkPoints.js
 ```
 
-## 3. Layout d'usine — `copperFactory_map.svg`
+## 3. Layout d'usine — `data/copperFactory_map.svg`
 
 Visualisation SVG du complexe de raffineries sur l'eau (océan est), superposé à la carte topo.
 
@@ -252,7 +252,7 @@ Script historique qui optimise le tracé d'une boucle fermée passant au plus pr
 
 ```bash
 node tools/optimizeCopperLoop.js [distWeight]
-# Sortie : copperLoop.svg + copperLoop.html
+# Sortie : data/copperLoop.svg + data/copperLoop.html
 ```
 
 ## Fichiers
@@ -263,11 +263,11 @@ node tools/optimizeCopperLoop.js [distWeight]
 | `tools/optimizeStationsMulti.js` | Placement de gares multi-ressources (MST, docks partagés) |
 | `tools/optimizeCopperLoop.js` | Boucle ferroviaire cuivre (historique) |
 | `tools/analyzeSinkPoints.js` | LP solver sink points (HiGHS) |
-| `copperFactory_map.svg` | Layout du complexe raffineries sur la carte topo |
-| `stations.svg` | Carte des gares mono-ressource (Inkscape) |
-| `stations_multi.svg` | Carte des gares multi-ressources (Inkscape) |
-| `copperLoop.svg` | Tracé boucle cuivre (historique) |
+| `data/copperFactory_map.svg` | Layout du complexe raffineries sur la carte topo |
+| `data/stations.svg` | Carte des gares mono-ressource (Inkscape) |
+| `data/stations_multi.svg` | Carte des gares multi-ressources (Inkscape) |
+| `data/copperLoop.svg` | Tracé boucle cuivre (historique) |
 | `SINK_OPTIMIZATION.md` | Documentation détaillée du solver sink points |
 | `data/mapObjects.json` | Données du jeu (nodes, items, recettes) |
 | `data/resourceConfig.json` | Nodes de ressources pour le LP solver |
-| `map_topo.svg` | Carte topo vectorielle 5000×5000 |
+| `data/map_topo.svg` | Carte topo vectorielle 5000×5000 |

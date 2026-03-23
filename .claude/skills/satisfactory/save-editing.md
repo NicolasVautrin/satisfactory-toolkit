@@ -642,6 +642,53 @@ Les Docs du jeu sont à : `<SatisfactoryInstall>/CommunityResources/Docs/en-US.j
 
 **Note** : Les port offsets (positions des connections belt/pipe/power) ne sont **pas** dans les Docs — ils doivent être extraits des saves via `inspect/dumpPortOffsets.js`.
 
+## Viewer 3D (Three.js)
+
+Viewer interactif pour visualiser les entités d'une save en 3D et exporter des sélections en blueprint.
+
+### Lancement
+
+```bash
+node viewer/server.js <save-name>
+# ex: node viewer/server.js TEST
+# → http://localhost:3000
+```
+
+### Architecture
+
+```
+viewer/
+├── server.js         # Express: charge la save, API JSON, export blueprint
+└── public/
+    └── index.html    # Three.js viewer (InstancedMesh + GPU picking)
+```
+
+### Fonctionnalités
+
+- **Rendu 3D** : bâtiments en clearance boxes, splines pour belts/pipes/rails (Hermite cubique)
+- **InstancedMesh** : ~60k entités rendues efficacement (16 meshes : 8 catégories × 2 types box/spline)
+- **GPU picking** : sélection par clic (readPixels) — encode l'index entité en couleur RGB
+- **Box selection** : Shift+drag pour sélectionner par rectangle
+- **Catégories filtrables** : Producers, Extractors, Belts, Pipes, Power, Railway, Structural, Other
+- **Export blueprint** : sélection → POST /api/export → crée .sbp + .sbpcfg au centroid de la sélection
+
+### Contrôles
+
+| Action | Contrôle |
+|--------|----------|
+| Orbite | Clic gauche + drag |
+| Pan | Clic droit ou clic molette + drag |
+| Zoom | Molette |
+| Sélection simple | Clic gauche sur entité |
+| Sélection additive | Ctrl + clic |
+| Sélection rectangle | Shift + drag |
+| Sliders | Zoom / Rotate / Pan sensibilité dans la toolbar |
+
+### API serveur
+
+- `GET /api/entities` — données des entités (classNames dédupliqués, clearance par className, spline points échantillonnés)
+- `POST /api/export` — `{ indices: number[], name: string }` → crée blueprint au centroid de la sélection
+
 ## Positionnement et rotations
 
 ### Quaternions courants
