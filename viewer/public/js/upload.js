@@ -6,7 +6,7 @@ export function initUpload({ onSaveLoaded, onCbpLoaded, setLoading }) {
   document.body.addEventListener('drop', async (e) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file && (file.name.endsWith('.sav') || file.name.endsWith('.cbp'))) {
+    if (file && (file.name.endsWith('.sav') || file.name.endsWith('.cbp') || file.name.endsWith('.sbp'))) {
       await uploadFile(file, { onSaveLoaded, onCbpLoaded, setLoading });
     }
   });

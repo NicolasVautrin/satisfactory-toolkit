@@ -1,3 +1,6 @@
+import { refreshIcons } from './icons.js';
+import { getGridBoxAlign, setGridBoxAlign } from '../engine/entityGrid.js';
+
 // ── Camera & grid controls dropdown ─────────────────────────
 
 export function createControls(menuDropdown, { camState, onGridSpacingChange }) {
@@ -6,9 +9,9 @@ export function createControls(menuDropdown, { camState, onGridSpacingChange }) 
     row.className = 'ctrl-row';
     row.innerHTML = `
       <span class="ctrl-label">${label}</span>
-      <button class="ctrl-down">&minus;</button>
+      <button class="ctrl-down"><i data-lucide="minus" class="icon-sm"></i></button>
       <span class="ctrl-val"></span>
-      <button class="ctrl-up">+</button>
+      <button class="ctrl-up"><i data-lucide="plus" class="icon-sm"></i></button>
     `;
     const valSpan = row.querySelector('.ctrl-val');
     const update = () => { valSpan.textContent = getValue(); };
@@ -44,6 +47,23 @@ export function createControls(menuDropdown, { camState, onGridSpacingChange }) 
     () => onGridSpacingChange(-1),
     () => onGridSpacingChange(1),
   );
+
+  // GridBox alignment toggle
+  menuDropdown.appendChild(Object.assign(document.createElement('div'), { className: 'menu-separator' }));
+  const alignLabel = document.createElement('label');
+  alignLabel.className = 'menu-toggle';
+  const isEntity = getGridBoxAlign() === 'entity';
+  alignLabel.innerHTML = `
+    <input type="checkbox" ${isEntity ? 'checked' : ''}>
+    <span class="menu-dot" style="background:#ffaa00"></span>
+    GridBox: entity axes
+  `;
+  alignLabel.querySelector('input').addEventListener('change', (e) => {
+    setGridBoxAlign(e.target.checked ? 'entity' : 'world');
+  });
+  menuDropdown.appendChild(alignLabel);
+
+  refreshIcons(menuDropdown);
 
   return {
     updateAll() {

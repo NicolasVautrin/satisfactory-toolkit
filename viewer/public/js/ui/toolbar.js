@@ -1,3 +1,5 @@
+import { refreshIcons } from './icons.js';
+
 // ── Top bar with dropdown menus ──────────────────────────────
 
 let openMenu = null;
@@ -43,10 +45,10 @@ function createMenu(container, label) {
   return dropdown;
 }
 
-export function createToolbar(container, { onOpen, onMerge, onExport, onClear }) {
+export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloadSave }) {
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
-  fileInput.accept = '.sav,.cbp';
+  fileInput.accept = '.sav,.cbp,.sbp';
   fileInput.style.display = 'none';
   container.appendChild(fileInput);
 
@@ -61,7 +63,7 @@ export function createToolbar(container, { onOpen, onMerge, onExport, onClear })
 
   const openItem = document.createElement('div');
   openItem.className = 'menu-item';
-  openItem.textContent = 'Open...';
+  openItem.innerHTML = '<i data-lucide="folder-open" class="icon"></i> Open...';
   openItem.addEventListener('click', () => fileInput.click());
   fileMenu.appendChild(openItem);
 
@@ -75,21 +77,28 @@ export function createToolbar(container, { onOpen, onMerge, onExport, onClear })
   cbpLabel.innerHTML = '<span class="menu-file-label" id="file-cbp">No CBP loaded</span>';
   fileMenu.appendChild(cbpLabel);
 
+  const refreshItem = document.createElement('div');
+  refreshItem.className = 'menu-item disabled';
+  refreshItem.id = 'btn-refresh';
+  refreshItem.innerHTML = '<i data-lucide="refresh-cw" class="icon"></i> Refresh';
+  refreshItem.addEventListener('click', () => { closeAll(); onRefresh(); });
+  fileMenu.appendChild(refreshItem);
+
   fileMenu.appendChild(Object.assign(document.createElement('div'), { className: 'menu-separator' }));
 
   const mergeItem = document.createElement('div');
   mergeItem.className = 'menu-item disabled';
   mergeItem.id = 'btn-merge';
-  mergeItem.textContent = 'Merge CBP \u2192 Save';
+  mergeItem.innerHTML = '<i data-lucide="git-merge" class="icon"></i> Merge CBP \u2192 Save';
   mergeItem.addEventListener('click', () => { closeAll(); onMerge(); });
   fileMenu.appendChild(mergeItem);
 
-  const exportItem = document.createElement('div');
-  exportItem.className = 'menu-item disabled';
-  exportItem.id = 'btn-export';
-  exportItem.textContent = 'Export Blueprint';
-  exportItem.addEventListener('click', () => { closeAll(); onExport(); });
-  fileMenu.appendChild(exportItem);
+  const downloadItem = document.createElement('div');
+  downloadItem.className = 'menu-item disabled';
+  downloadItem.id = 'btn-download-save';
+  downloadItem.innerHTML = '<i data-lucide="save" class="icon"></i> Download Save';
+  downloadItem.addEventListener('click', () => { closeAll(); onDownloadSave(); });
+  fileMenu.appendChild(downloadItem);
 
   // ── Layers menu ─────────────────────────────────────────
   const layersMenu = createMenu(container, 'Layers');
@@ -100,17 +109,11 @@ export function createToolbar(container, { onOpen, onMerge, onExport, onClear })
   // ── Spacer + status ───────────────────────────────────────
   container.appendChild(Object.assign(document.createElement('div'), { className: 'spacer' }));
 
-  const clearBtn = document.createElement('button');
-  clearBtn.id = 'btn-clear';
-  clearBtn.textContent = 'Clear Selection';
-  clearBtn.disabled = true;
-  clearBtn.style.cssText = 'background:#444;color:#ddd;border:1px solid #666;padding:4px 12px;cursor:pointer;font-family:monospace;font-size:12px;margin-right:8px';
-  clearBtn.addEventListener('click', onClear);
-  container.appendChild(clearBtn);
-
   const status = document.createElement('span');
   status.id = 'status';
   container.appendChild(status);
+
+  refreshIcons(container);
 
   return {
     layersMenu,
@@ -125,10 +128,10 @@ export function createToolbar(container, { onOpen, onMerge, onExport, onClear })
       el.textContent = name;
     },
 
-    setButtonStates({ merge, export: exp, clear }) {
+    setButtonStates({ merge, refresh, downloadSave }) {
       mergeItem.classList.toggle('disabled', !merge);
-      exportItem.classList.toggle('disabled', !exp);
-      clearBtn.disabled = !clear;
+      refreshItem.classList.toggle('disabled', !refresh);
+      downloadItem.classList.toggle('disabled', !downloadSave);
     },
   };
 }

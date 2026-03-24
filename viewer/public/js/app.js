@@ -1,7 +1,8 @@
+import * as THREE from 'three';
 import { renderer, scene, camera, resize, initRenderer } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState } from './engine/camera.js';
-import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible } from './engine/entities.js';
-import { selectedIndices, onSelectionChange, pickAt, pickRect, toggleSelection, addSelection, clearSelection, removeClassFromSelection } from './engine/selection.js';
+import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible } from './engine/entities.js';
+import { selectedIndices, onSelectionChange, pickAt, pickPortAt, pickRect, toggleSelection, addSelection, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildTerrain, setTerrainVisible } from './engine/terrain.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
 import { gameToViewer } from './engine/scene.js';
@@ -10,6 +11,8 @@ import { createToolbar } from './ui/toolbar.js';
 import { createFilters } from './ui/filters.js';
 import { createControls } from './ui/controls.js';
 import { createSelPanel } from './ui/selPanel.js';
+import { createPropsPanel } from './ui/propsPanel.js';
+import { isPlacementActive, startPlacement, stopPlacement, handleKey as placementKey, getTransform } from './engine/placement.js';
 import { initUpload, uploadFile } from './upload.js';
 
 // ── DOM refs ────────────────────────────────────────────────
@@ -42,9 +45,9 @@ function updateStatus() {
   const total = parts.length ? parts.join(' + ') + ' entities' : 'No data';
   toolbar.updateStatus(`${total} | ${selectedIndices.size} selected | Click to select, Shift+drag for box select`);
   toolbar.setButtonStates({
-    merge: !!(getSaveData() && getCbpData()),
-    export: selectedIndices.size > 0 && !!getSaveData(),
-    clear: selectedIndices.size > 0,
+    merge: !!(getSaveData() && getCbpData()) && !isPlacementActive(),
+    refresh: true,
+    downloadSave: !!getSaveData(),
   });
 }
 
@@ -52,6 +55,19 @@ function updateStatus() {
 const toolbar = createToolbar(document.getElementById('topbar'), {
   onOpen(file) {
     uploadFile(file, { onSaveLoaded, onCbpLoaded, setLoading });
+  },
+  async onRefresh() {
+    setLoading('Refreshing...');
+    try {
+      const res = await fetch('/api/entities');
+      if (!res.ok) { setLoading(null); return; }
+      const result = await res.json();
+      if (result.save) onSaveLoaded(result.save, result.saveName || getSaveData()?.filename || 'save');
+      if (result.cbp) onCbpLoaded(result.cbp, result.cbpName || getCbpData()?.filename || 'cbp');
+      if (!result.save && !result.cbp) setLoading(null);
+    } catch (err) {
+      setLoading('Refresh error: ' + err.message);
+    }
   },
   async onMerge() {
     if (!confirm('Merge CBP into save? This will download a new _edit.sav file.')) return;
@@ -82,38 +98,22 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
       setLoading('Merge error: ' + err.message);
     }
   },
-  async onExport() {
-    const name = prompt('Blueprint name:', 'my_blueprint');
-    if (!name) return;
-    const res = await fetch('/api/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ indices: [...selectedIndices], name }),
-    });
-    const result = await res.json();
-    if (!result.success) {
-      alert(`Export failed: ${result.error}`);
-      return;
+  async onDownloadSave() {
+    try {
+      const res = await fetch('/api/download-save');
+      if (!res.ok) { alert('Download failed'); return; }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="(.+)"/);
+      const filename = match ? match[1] : 'save_edit.sav';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      alert('Download error: ' + err.message);
     }
-    // Download .sbp
-    const sbpBlob = new Blob([Uint8Array.from(atob(result.sbp), c => c.charCodeAt(0))]);
-    const sbpUrl = URL.createObjectURL(sbpBlob);
-    const a1 = document.createElement('a');
-    a1.href = sbpUrl; a1.download = `${name}.sbp`; a1.click();
-    URL.revokeObjectURL(sbpUrl);
-
-    // Download .sbpcfg
-    const cfgBlob = new Blob([Uint8Array.from(atob(result.sbpcfg), c => c.charCodeAt(0))]);
-    const cfgUrl = URL.createObjectURL(cfgBlob);
-    const a2 = document.createElement('a');
-    a2.href = cfgUrl; a2.download = `${name}.sbpcfg`; a2.click();
-    URL.revokeObjectURL(cfgUrl);
-
-    const lwMsg = result.lwCount ? ` + ${result.lwCount} lightweight` : '';
-    alert(`Blueprint exported: ${result.count} entities${lwMsg}\nDownloaded: ${name}.sbp + ${name}.sbpcfg`);
-  },
-  onClear() {
-    clearSelection();
   },
 });
 
@@ -123,6 +123,7 @@ createFilters(toolbar.layersMenu, {
   onCbpToggle: setCbpVisible,
   onTerrainToggle: setTerrainVisible,
   onGridToggle: setGridVisible,
+  onPortsToggle: setPortsVisible,
 });
 
 // ── UI: Controls (Camera menu) ──────────────────────────────
@@ -138,7 +139,57 @@ const controls = createControls(toolbar.cameraMenu, {
 const selPanel = createSelPanel(document.getElementById('sel-panel'), {
   onRemoveClass: removeClassFromSelection,
   onClear: clearSelection,
+  async onExport() {
+    if (!selectedIndices.size) return;
+    const name = prompt('Blueprint name:', 'my_blueprint');
+    if (!name) return;
+    const res = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ indices: [...selectedIndices], name }),
+    });
+    const result = await res.json();
+    if (!result.success) { alert(`Export failed: ${result.error}`); return; }
+    // Download .sbp
+    const sbpBlob = new Blob([Uint8Array.from(atob(result.sbp), c => c.charCodeAt(0))]);
+    const a1 = document.createElement('a');
+    a1.href = URL.createObjectURL(sbpBlob); a1.download = `${name}.sbp`; a1.click();
+    URL.revokeObjectURL(a1.href);
+    // Download .sbpcfg
+    const cfgBlob = new Blob([Uint8Array.from(atob(result.sbpcfg), c => c.charCodeAt(0))]);
+    const a2 = document.createElement('a');
+    a2.href = URL.createObjectURL(cfgBlob); a2.download = `${name}.sbpcfg`; a2.click();
+    URL.revokeObjectURL(a2.href);
+    const lwMsg = result.lwCount ? ` + ${result.lwCount} lightweight` : '';
+    alert(`Blueprint exported: ${result.count} entities${lwMsg}`);
+  },
+  async onDelete() {
+    if (!selectedIndices.size) return;
+    if (!confirm(`Delete ${selectedIndices.size} entities from save?`)) return;
+    setLoading('Deleting...');
+    try {
+      const res = await fetch('/api/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ indices: [...selectedIndices] }),
+      });
+      const result = await res.json();
+      if (!result.success) { setLoading('Delete error: ' + result.error); return; }
+      // Rebuild scene with updated data
+      const data = result.save;
+      data.filename = getSaveData()?.filename || '';
+      buildSaveScene(data);
+      clearSelection();
+      setLoading(null);
+      updateStatus();
+    } catch (err) {
+      setLoading('Delete error: ' + err.message);
+    }
+  },
 });
+
+// ── UI: Properties panel ────────────────────────────────────
+const propsPanel = createPropsPanel(document.getElementById('props-panel'));
 
 // ── Selection change handler ────────────────────────────────
 onSelectionChange(() => {
@@ -150,6 +201,7 @@ onSelectionChange(() => {
 
 // ── Data load handlers ──────────────────────────────────────
 function onSaveLoaded(data, filename) {
+  data.filename = filename;
   buildSaveScene(data);
   clearSelection();
   if (!restoreCameraState(camKey())) fitCamera(data.entities, gameToViewer);
@@ -160,6 +212,62 @@ function onSaveLoaded(data, filename) {
 }
 
 function onCbpLoaded(data, filename) {
+  data.filename = filename;
+
+  // If it's a blueprint (.sbp), start placement mode
+  if (filename.endsWith('.sbp')) {
+    // Compute camera target position in Unreal coords for initial placement
+    // Camera looks at: position + forward * some distance
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const target = camera.position.clone().addScaledVector(fwd, 5000);
+    // Viewer → Unreal: flip X back
+    const initialPos = { x: -target.x, y: target.y, z: target.z };
+
+    startPlacement(data, initialPos, {
+      onMove(transformedData) {
+        transformedData.filename = filename;
+        buildCbpScene(transformedData);
+      },
+      async onConfirm() {
+        if (!getSaveData()) return;
+        setLoading('Injecting...');
+        try {
+          const t = getTransform();
+          const res = await fetch('/api/inject-blueprint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transform: t }),
+          });
+          const result = await res.json();
+          if (!result.success) { setLoading('Inject error: ' + result.error); return; }
+          stopPlacement();
+          const d = result.save;
+          d.filename = getSaveData()?.filename || '';
+          buildSaveScene(d);
+          buildCbpScene({ classNames: [], clearance: {}, entities: [] });
+          clearSelection();
+          setLoading(null);
+          updateStatus();
+          toolbar.setFileLabel('cbp', '');
+        } catch (err) {
+          setLoading('Inject error: ' + err.message);
+        }
+      },
+      onCancel() {
+        stopPlacement();
+        buildCbpScene({ classNames: [], clearance: {}, entities: [] });
+        updateStatus();
+        toolbar.setFileLabel('cbp', '');
+      },
+    });
+
+    // Trigger initial build
+    setLoading(null);
+    updateStatus();
+    toolbar.setFileLabel('cbp', filename + ' [placing]');
+    return;
+  }
+
   buildCbpScene(data);
   if (!getSaveData() && !restoreCameraState(camKey())) fitCamera(data.entities, gameToViewer);
   setLoading(null);
@@ -173,7 +281,13 @@ let isDragging = false;
 let pointerDownPos = null;
 const CLICK_THRESHOLD = 5;
 
+let rightDownPos = null;
+
 renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button === 2) {
+    rightDownPos = { x: e.clientX, y: e.clientY };
+    return;
+  }
   if (e.button !== 0) return;
   pointerDownPos = { x: e.clientX, y: e.clientY };
   if (e.shiftKey) {
@@ -199,6 +313,18 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', (e) => {
+  // Right-click without drag = close props panel
+  if (e.button === 2 && rightDownPos) {
+    const dx = Math.abs(e.clientX - rightDownPos.x);
+    const dy = Math.abs(e.clientY - rightDownPos.y);
+    if (dx < CLICK_THRESHOLD && dy < CLICK_THRESHOLD) {
+      propsPanel.hide();
+      requestAnimationFrame(resize);
+    }
+    rightDownPos = null;
+    return;
+  }
+
   if (isDragging) {
     isDragging = false;
     selRect.style.display = 'none';
@@ -226,9 +352,35 @@ window.addEventListener('pointerup', (e) => {
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const idx = pickAt(x, y);
-      if (idx >= 0) toggleSelection(idx);
+      if (e.ctrlKey) {
+        // Ctrl+click = toggle selection (skip ports)
+        if (idx >= 0) toggleSelection(idx);
+      } else {
+        // Click = inspect properties (ports first, then entities)
+        const portEntityIdx = pickPortAt(x, y);
+        const inspectIdx = portEntityIdx >= 0 ? portEntityIdx : idx;
+        if (inspectIdx >= 0) {
+          propsPanel.show(inspectIdx, getSaveData() || getCbpData());
+          requestAnimationFrame(resize);
+        } else {
+          propsPanel.hide();
+          requestAnimationFrame(resize);
+        }
+      }
     }
     pointerDownPos = null;
+  }
+});
+
+// ── Keyboard handler for blueprint placement ────────────────
+window.addEventListener('keydown', (e) => {
+  // Don't intercept when typing in an input
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (placementKey(e)) {
+    e.preventDefault();
+    // Update status with current transform
+    const t = getTransform();
+    toolbar.updateStatus(`Placing: X=${t.tx} Y=${t.ty} Z=${t.tz} Rot=${t.yaw}° | Q/D=X Z/S=Y R/F=Z A/E=Rot`);
   }
 });
 
@@ -236,6 +388,7 @@ window.addEventListener('pointerup', (e) => {
 initRenderer(canvasEl);
 initCameraControls();
 buildGrid();
+updateStatus();
 
 // Upload (drag & drop)
 initUpload({ onSaveLoaded, onCbpLoaded, setLoading });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { camera, renderer, gameToViewer, CAT_NAMES, HIGHLIGHT_COLOR } from './scene.js';
-import { getSaveData, getDisplayMeshes, getCatVisible } from './entities.js';
+import { getSaveData, getDisplayMeshes, getPortMeshes, getCatVisible, isPortsVisible } from './entities.js';
 
 // ── State ───────────────────────────────────────────────────
 export const selectedIndices = new Set();
@@ -35,6 +35,26 @@ export function pickAt(cssX, cssY) {
     const e = saveData.entities[ei];
     console.log(`[pick] entity=${ei} class=${saveData.classNames[e.c]} cat=${CAT_NAMES[e.cat]}`);
     return ei;
+  }
+  return -1;
+}
+
+// ── Port picking (inspect only, no selection) ───────────────
+export function pickPortAt(cssX, cssY) {
+  if (!isPortsVisible()) return -1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = (cssX / rect.width) * 2 - 1;
+  pointer.y = -(cssY / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(pointer, camera);
+  const portMeshes = getPortMeshes();
+  const intersects = raycaster.intersectObjects(portMeshes, false);
+  const catVisible = getCatVisible();
+
+  for (const hit of intersects) {
+    const { cat, instanceToEntity } = hit.object.userData;
+    if (!catVisible[cat]) continue;
+    return instanceToEntity[hit.instanceId];
   }
   return -1;
 }

@@ -48,44 +48,60 @@ export function buildGrid() {
   const yStart = Math.ceil(yMin / step) * step;
   const zStart = Math.ceil(zMin / step) * step;
 
-  const gridMat = new THREE.LineBasicMaterial({ color: GRID_COLOR, transparent: true, opacity: 0.2 });
-  const xMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.x, transparent: true, opacity: 0.5 });
-  const yMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.y, transparent: true, opacity: 0.5 });
-  const zMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.z, transparent: true, opacity: 0.5 });
+  const gridPts = [];
+  const xAxisPts = [];
+  const yAxisPts = [];
+  const zAxisPts = [];
 
-  function addLine(p1, p2, mat) {
-    const geom = new THREE.BufferGeometry().setFromPoints([
-      gameToViewer(p1[0], p1[1], p1[2]),
-      gameToViewer(p2[0], p2[1], p2[2]),
-    ]);
-    gridGroup.add(new THREE.Line(geom, mat));
+  function addPt(arr, x1, y1, z1, x2, y2, z2) {
+    const v1 = gameToViewer(x1, y1, z1);
+    const v2 = gameToViewer(x2, y2, z2);
+    arr.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
   }
 
+  // Floor (XY at zMin)
   for (let x = xStart; x <= xMax; x += step) {
-    addLine([x, yMin, zMin], [x, yMax, zMin], x === 0 ? yMat : gridMat);
+    addPt(x === 0 ? yAxisPts : gridPts, x, yMin, zMin, x, yMax, zMin);
   }
   for (let y = yStart; y <= yMax; y += step) {
-    addLine([xMin, y, zMin], [xMax, y, zMin], y === 0 ? xMat : gridMat);
+    addPt(y === 0 ? xAxisPts : gridPts, xMin, y, zMin, xMax, y, zMin);
   }
 
+  // Back wall (XZ at yMin)
   for (let x = xStart; x <= xMax; x += step) {
-    addLine([x, yMin, zMin], [x, yMin, zMax], gridMat);
+    addPt(gridPts, x, yMin, zMin, x, yMin, zMax);
   }
   for (let z = zStart; z <= zMax; z += step) {
-    addLine([xMin, yMin, z], [xMax, yMin, z], z === 0 ? xMat : gridMat);
+    addPt(z === 0 ? xAxisPts : gridPts, xMin, yMin, z, xMax, yMin, z);
   }
 
+  // Left wall (YZ at xMin)
   for (let y = yStart; y <= yMax; y += step) {
-    addLine([xMin, y, zMin], [xMin, y, zMax], gridMat);
+    addPt(gridPts, xMin, y, zMin, xMin, y, zMax);
   }
   for (let z = zStart; z <= zMax; z += step) {
-    addLine([xMin, yMin, z], [xMin, yMax, z], z === 0 ? yMat : gridMat);
+    addPt(z === 0 ? yAxisPts : gridPts, xMin, yMin, z, xMin, yMax, z);
   }
 
-  addLine([xMin, yMin, zMin], [xMax, yMin, zMin], xMat);
-  addLine([xMin, yMin, zMin], [xMin, yMax, zMin], yMat);
-  addLine([xMin, yMin, zMin], [xMin, yMin, zMax], zMat);
+  // Axes
+  addPt(xAxisPts, xMin, yMin, zMin, xMax, yMin, zMin);
+  addPt(yAxisPts, xMin, yMin, zMin, xMin, yMax, zMin);
+  addPt(zAxisPts, xMin, yMin, zMin, xMin, yMin, zMax);
 
+  function addBatch(pts, color, opacity) {
+    if (pts.length === 0) return;
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+    gridGroup.add(new THREE.LineSegments(geom, mat));
+  }
+
+  addBatch(gridPts, GRID_COLOR, 0.2);
+  addBatch(xAxisPts, AXIS_COLORS.x, 0.5);
+  addBatch(yAxisPts, AXIS_COLORS.y, 0.5);
+  addBatch(zAxisPts, AXIS_COLORS.z, 0.5);
+
+  // ── Labels ──────────────────────────────────────────────
   function makeLabel(text, position, color) {
     const canvas = document.createElement('canvas');
     canvas.width = 128; canvas.height = 32;

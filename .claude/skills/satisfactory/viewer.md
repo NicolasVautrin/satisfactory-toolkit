@@ -1,6 +1,6 @@
 # 3D Entity Viewer
 
-Viewer Three.js pour visualiser les entités d'une save Satisfactory dans le navigateur. Permet la sélection d'entités, l'export en blueprint, et le merge de CBP dans une save.
+Viewer Three.js pour visualiser les entités d'une save Satisfactory dans le navigateur. Permet la sélection d'entités, l'inspection de propriétés, la visualisation des ports, l'export/import de blueprints, la suppression d'entités, et le merge de CBP dans une save.
 
 ## Lancement
 
@@ -10,38 +10,65 @@ node viewer/server.js
 # → http://localhost:3000
 ```
 
-Le serveur Express démarre sans save — l'utilisateur charge les fichiers `.sav` et `.cbp` via l'interface (bouton Open ou drag & drop).
+Le serveur Express démarre sans save — l'utilisateur charge les fichiers `.sav`, `.cbp` ou `.sbp` via l'interface (bouton Open ou drag & drop).
 
 ## Gestion du serveur
 
 - Le serveur reste actif en arrière-plan tant qu'il n'est pas tué
 - **Arrêter** : `curl -s -X POST http://localhost:3000/api/shutdown`
 - **Kill forcé** (si shutdown ne répond pas) : `powershell -Command 'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }'`
-- **Redémarrer** après modifications de `viewer/server.js` : shutdown/kill, attendre 1s, relancer + hard reload (Ctrl+Shift+R) dans le navigateur
-- Après modification de `viewer/public/index.html` : un simple hard reload suffit (pas besoin de redémarrer le serveur)
+- **Redémarrer** après modifications de `viewer/server.js` ou `viewer/lib/` : shutdown/kill, attendre 1s, relancer + hard reload (Ctrl+Shift+R) dans le navigateur
+- Après modification de `viewer/public/` : un simple hard reload suffit (pas besoin de redémarrer le serveur)
 - Quand lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
 
 ## Architecture
 
-### Fichiers
-- `viewer/server.js` : serveur Express, parsing de save/CBP à l'upload, API REST
-- `viewer/public/index.html` : rendu Three.js, contrôles caméra FPS custom, UI
+### Fichiers serveur
+- `viewer/server.js` : routes Express, orchestration
+- `viewer/lib/spline.js` : Hermite sampling, extraction splines save/CBP, quatRotate
+- `viewer/lib/entityData.js` : classify, clearance, ports, buildSaveEntityData, buildCbpEntityData
+- `viewer/lib/saveLoader.js` : loadSave, loadCbp, loadBlueprint, deleteEntities, injectBlueprint, state management
+- `viewer/lib/merge.js` : CBP→Save conversion et merge
+
+### Fichiers client
+- `viewer/public/index.html` : point d'entrée, charge Three.js + Lucide icons via CDN
+- `viewer/public/js/app.js` : orchestration client, handlers souris/clavier, wiring UI
+- `viewer/public/js/engine/scene.js` : Three.js core, gameToViewer, constantes couleurs/catégories
+- `viewer/public/js/engine/entities.js` : buildMeshes (boxes, belt splines, pipe splines, lifts), ports rendering
+- `viewer/public/js/engine/selection.js` : raycasting, pickAt, pickPortAt, pickRect, sélection
+- `viewer/public/js/engine/camera.js` : contrôles caméra FPS custom, persistance localStorage
+- `viewer/public/js/engine/terrain.js` : rendu heightmap
+- `viewer/public/js/engine/grid.js` : grille 3D de la scène (faces externes)
+- `viewer/public/js/engine/placement.js` : placement interactif de blueprints (axes, clavier, bbox grid)
+- `viewer/public/js/engine/entityGrid.js` : gridBox par entité (toggle world/entity alignment)
+- `viewer/public/js/ui/toolbar.js` : barre de menus (File, Layers, Camera)
+- `viewer/public/js/ui/filters.js` : toggles catégories/terrain/grid/ports/CBP (persistés localStorage)
+- `viewer/public/js/ui/controls.js` : sensibilité caméra/grille, toggle gridBox alignment
+- `viewer/public/js/ui/selPanel.js` : panneau sélection (droite) avec Export, Delete, Clear
+- `viewer/public/js/ui/propsPanel.js` : panneau propriétés (gauche) avec Copy, GridBox, Close
+- `viewer/public/js/ui/icons.js` : helper Lucide icons (refreshIcons)
+- `viewer/public/js/upload.js` : upload fichiers + drag & drop
 
 ### Chargement des fichiers
 Le viewer fonctionne par **upload client → serveur** :
-1. L'utilisateur ouvre un fichier `.sav` ou `.cbp` via le bouton **Open** ou par **drag & drop**
+1. L'utilisateur ouvre un fichier `.sav`, `.cbp` ou `.sbp` via le bouton **Open** ou par **drag & drop**
 2. Le fichier est envoyé en POST binaire à `/api/upload` avec le nom en header `X-Save-Name`
 3. Le serveur parse le fichier, construit les données d'entités, et renvoie le JSON
 4. Le client reconstruit la scène 3D (clearMeshes + buildMeshes)
 
-Deux slots indépendants côté serveur : `saveState` (save) et `cbpState` (CBP). Charger une nouvelle save remplace entièrement l'ancienne.
+Deux slots indépendants côté serveur : `saveState` (save) et `cbpState` (CBP/blueprint). Le bouton **Refresh** (File menu) re-demande les données au serveur sans re-uploader le fichier — utile après un hard reload du navigateur.
 
 ### API REST (server.js)
 | Endpoint | Méthode | Description |
 |---|---|---|
-| `/api/upload` | POST | Upload et parse un fichier `.sav` ou `.cbp` (binaire, header `X-Save-Name`) |
+| `/api/upload` | POST | Upload et parse un fichier `.sav`, `.cbp` ou `.sbp` (binaire, header `X-Save-Name`) |
+| `/api/entities` | GET | Retourne les entity data en mémoire (pour refresh sans re-upload) |
+| `/api/inspect/:index` | GET | Retourne les détails d'une entité (instanceName, properties, components) |
 | `/api/terrain` | GET | Retourne les données de heightmap pour le terrain |
 | `/api/export` | POST | Exporte une sélection en blueprint (`{ indices, name }`) |
+| `/api/delete` | POST | Supprime des entités de la save en mémoire (`{ indices }`) |
+| `/api/inject-blueprint` | POST | Injecte un blueprint dans la save avec un transform (`{ transform: { tx, ty, tz, yaw } }`) |
+| `/api/download-save` | GET | Télécharge la save modifiée en `_edit.sav` |
 | `/api/merge` | POST | Merge le CBP chargé dans la save chargée, retourne un `.sav` modifié |
 | `/api/shutdown` | POST | Arrête le serveur |
 
@@ -49,16 +76,22 @@ Deux slots indépendants côté serveur : `saveState` (save) et `cbpState` (CBP)
 Le serveur prépare un objet compact pour le client :
 - `classNames` : tableau des noms de classes uniques
 - `clearance` : bounding boxes par index de classe (depuis `data/clearanceData.json`)
-- `entities` : tableau d'objets `{ c, tx, ty, tz, rx, ry, rz, rw, cat, sp? }` où :
+- `portLayouts` : définitions des ports par index de classe (offset, direction, flow, type)
+- `entities` : tableau d'objets `{ c, tx, ty, tz, rx, ry, rz, rw, cat, sp?, lift?, box?, cn? }` où :
   - `c` = index dans classNames
   - `tx/ty/tz` = position, `rx/ry/rz/rw` = rotation quaternion
   - `cat` = catégorie (0-7)
-  - `sp` = points de spline `[[x,y,z], ...]` (optionnel, pour belts/pipes/lifts/rails)
+  - `sp` = points de spline `[[x,y,z], ...]` (optionnel, pour belts/pipes/rails)
+  - `lift` = 2 endpoints `[[x,y,z], [x,y,z]]` (optionnel, pour ConveyorLifts)
+  - `box` = clearance box par instance (optionnel, pour beams)
+  - `cn` = état de connexion des ports `[0|1, ...]` (optionnel, même ordre que portLayouts)
+
+### Entités filtrées
+- `Build_PipelineFlowIndicator_C` : exclu du chargement (indicateur cosmétique, pas un bâtiment)
 
 ### Conversion coordonnées Unreal → Three.js
 - **Positions** : `gameToViewer(x, y, z) = Vector3(-x, y, z)` — réflexion axe X
 - **Quaternions** : `(rx, ry, rz, rw) → (rx, -ry, -rz, rw)` — conjugaison pour la réflexion X
-- Les splines n'ont pas besoin de conversion quaternion car leur quaternion est calculé directement à partir des positions déjà transformées
 
 ### Catégories d'entités (8)
 | Index | Nom | Couleur | Regex de classification |
@@ -76,68 +109,143 @@ Le serveur prépare un objet compact pour le client :
 - **InstancedMesh** pour la performance (milliers d'entités)
 - Les entités avec clearance data sont rendues comme des **box** (BoxGeometry)
 - Les entités sans clearance sont des cubes de taille par défaut (200 unités)
-- Les belts, pipes, rails avec splines sont rendus comme des **cylindres** (CylinderGeometry, 6 segments) le long des points de spline
-- Les ConveyorLifts sont rendus comme des splines verticales (bottom → top via `mTopTransform`)
-- Les **lightweight buildables** (fondations, murs, rampes) sont chargés depuis le subsystem, pas depuis `levels[*].objects`
+- Les **belts** avec splines sont rendus comme des **box** (section carrée 30u)
+- Les **pipes** avec splines sont rendus comme des **cylindres** (CylinderGeometry, 6 segments)
+- Les **ConveyorLifts** sont rendus comme un shaft rectangulaire (30u section) + 2 cubes (50u) aux extrémités
+- Les **lightweight buildables** (fondations, murs, rampes) sont chargés depuis le subsystem
 - Les FGConveyorChainActor ne sont PAS inclus (les belts individuels ont leurs propres splines)
 
-### Splines
-Le serveur extrait les splines Hermite (`mSplineData`) des entités, les échantillonne (3 samples par span), et les transforme en coordonnées monde via la rotation quaternion de l'entité. Le client reçoit directement les points monde.
+### Ports
+Les ports de connexion (belt/pipe) sont visualisés sur les bâtiments :
+- **Forme** : cube = belt, sphère = pipe
+- **Couleur** : vert = input, orange = output
+- **Taille** : gros + opaque = non connecté, petit + transparent = connecté
+- **Direction** : cône pointant dans la direction du port (100u connecté, 200u non connecté)
+- Toggle "Ports" dans le menu Layers (persisté localStorage)
+- Les ports sont cliquables pour inspecter l'entité parente (mais pas sélectionnables)
+- Les port layouts sont définis via `Builder.PORT_LAYOUT` sur chaque classe de builder dans `lib/`
 
-## Contrôles caméra
+### GridBox par entité
+- Bouton grille dans le panneau propriétés (toggle on/off par entité)
+- Grille 3D centrée sur l'entité, dimensionnée par sa clearance box, pas de 800u
+- Mode d'alignement configurable dans Camera menu : axes de l'entité ou axes du monde
+- Persisté en localStorage (`viewer_gridBoxAlign`)
 
+## Contrôles
+
+### Caméra
 Contrôles FPS custom (pas d'OrbitControls ni CameraControls — incompatibles avec ce viewer).
 
 | Action | Contrôle |
 |---|---|
 | Rotation caméra (yaw/pitch) | Clic gauche + drag |
-| Sélection d'entité | Clic gauche sans bouger |
+| Inspection d'entité | Clic gauche sans bouger |
+| Sélection d'entité | Ctrl + clic gauche |
 | Sélection rectangulaire | Shift + clic gauche + drag |
+| Ajouter à la sélection | Ctrl + shift + drag |
 | Pan (déplacement plan caméra) | Clic droit + drag |
+| Fermer panneau propriétés | Clic droit sans bouger |
 | Zoom (avance/recule) | Molette |
-| Sensibilité Zoom/Pan/Rot | Boutons −/+ dans la toolbar |
+| Sensibilité Zoom/Pan/Rot/Grid | Boutons −/+ dans Camera menu |
 
-La vitesse de zoom (`flyStep`) est un pas fixe en unités, ajustable via les boutons −/+ (x2 par clic). La rotation et le pan sont gérés par des multiplicateurs de sensibilité.
+### Placement de blueprint
+Quand un `.sbp` est chargé, le mode placement s'active :
+
+| Touche | Action |
+|---|---|
+| Q / D | Translation X |
+| Z / S | Translation Y |
+| R / F | Translation Z (up/down) |
+| A / E | Rotation Z (yaw) |
+| Enter | Injecter le blueprint dans la save |
+| Escape | Annuler le placement |
+
+Modificateurs de sensibilité :
+- Normal : 100u / 15°
+- **Shift** : 10u / 1° (fin)
+- **Ctrl** : 800u / 90° (grille fondation)
+
+Le blueprint est affiché en cyan avec un repère RGB au centroïde (suit la rotation) et une gridBox alignée sur les axes du monde.
 
 ### Persistance caméra
-La position de caméra (position, yaw, pitch, flyStep, panSpeed, rotateSpeed) est sauvegardée dans `localStorage` toutes les 3 secondes, avec clé séparée pour save vs CBP. Elle est restaurée automatiquement au chargement — `fitCamera` n'est appelé que s'il n'y a pas de position persistée.
+Position de caméra sauvegardée dans `localStorage` toutes les 3 secondes, avec clé séparée pour save vs CBP.
 
-## Sélection et export
+### Persistance layers
+L'état des toggles (catégories, terrain, grid, ports, CBP) est persisté dans `localStorage` sous la clé `viewer_layers`.
 
-### Sélection
-- **Clic** sur une entité : toggle sélection (raycaster sur InstancedMesh)
-- **Shift + drag** : sélection rectangulaire (projection screen-space de toutes les entités visibles)
-- **Ctrl + shift + drag** : ajoute à la sélection existante
-- Les entités sélectionnées sont colorées en rouge (`#ff4444`)
-- Un panneau latéral (280px) affiche les entités sélectionnées groupées par classe, avec compteur
-- Possibilité de retirer une classe entière de la sélection via le bouton ✕
+## Panneau propriétés (gauche)
 
-### Export Blueprint
-Le bouton "Export Blueprint" (toolbar) exporte les entités sélectionnées :
+Affiché au clic sur une entité ou un port :
+- Nom de la save
+- ClassName
+- Catégorie (avec pastille couleur)
+- Position X/Y/Z (coordonnées Unreal)
+- Rotation quaternion
+- Ports : nom, type (belt/pipe), flow (in/out), état connecté/déconnecté
+- Index de l'entité
+- Bouton **Copy** : copie un JSON sérialisé dans le presse-papier
+- Bouton **GridBox** : toggle une grille 3D autour de l'entité
+- Bouton **Close** (ou clic droit dans le vide)
+
+## Panneau sélection (droite)
+
+Affiché quand des entités sont sélectionnées :
+- Compteur total
+- Boutons d'action en haut : **Export** (blueprint), **Delete** (suppression), **Clear** (vider la sélection)
+- Liste des classes sélectionnées groupées par type, avec compteur et bouton ✕ pour retirer une classe
+
+## Export Blueprint
+
+Le bouton Export dans le panneau de sélection :
 1. Calcule le centroïde des entités sélectionnées
-2. Crée un blueprint via `Blueprint.create(name, cx, cy, cz)`
-3. Clone les entités sélectionnées + leurs composants associés
-4. Écrit les fichiers `.sbp` et `.sbpcfg` dans le dossier blueprints du jeu
+2. Extrait le yaw de la première entité pour aligner le blueprint avec la grille
+3. Crée un blueprint via `Blueprint.create(name, cx, cy, cz, bpRotation)`
+4. Clone les entités sélectionnées + leurs composants + lightweight buildables
+5. Télécharge les fichiers `.sbp` et `.sbpcfg`
 
-**Note** : seules les entités normales (pas lightweight) peuvent être exportées — les lightweight sont ajoutées après les entités indexées dans le tableau du serveur.
+## Import Blueprint (.sbp)
 
-### Merge CBP → Save
-Le bouton "Merge CBP → Save" (actif quand save + CBP chargés) injecte les entités du CBP dans la save et télécharge un fichier `_edit.sav`. Le serveur convertit les propriétés CBP (format SCIM) vers le format du parser satisfactory-file-parser.
+1. Charger un `.sbp` via Open ou drag & drop
+2. Le blueprint apparaît en overlay cyan au centre de la caméra
+3. Déplacer/tourner avec le clavier (Q/D/Z/S/R/F/A/E + Shift/Ctrl)
+4. **Enter** pour injecter dans la save en mémoire
+5. **Escape** pour annuler
+6. **File > Download Save** pour télécharger la save modifiée
 
-### Filtres par catégorie
-Les checkboxes dans la toolbar permettent de masquer/afficher les catégories. Les catégories masquées ne sont pas sélectionnables (ni par clic ni par rectangle). Toggle terrain et grille 3D également disponibles.
+Le serveur génère un dummy `.sbpcfg` pour parser le `.sbp` seul.
+
+## Suppression d'entités
+
+Le bouton Delete dans le panneau de sélection :
+1. Confirmation dialog
+2. `POST /api/delete` avec les indices
+3. Le serveur supprime les entités + composants de la save en mémoire
+4. Reconstruit entityData + saveBuf
+5. Le client reconstruit la scène
+
+## Icônes (Lucide)
+
+Le viewer utilise [Lucide](https://lucide.dev) via CDN UMD. Les icônes sont rendues avec `<i data-lucide="icon-name" class="icon">` et activées par `lucide.createIcons()` via le helper `icons.js`. Appeler `refreshIcons(container)` après chaque mise à jour du DOM contenant des icônes.
 
 ## Modifier le viewer
 
 ### Ajouter une catégorie ou changer la classification
-Modifier `CATEGORY_PATTERNS` dans `viewer/server.js` (côté serveur) et `CAT_NAMES`/`CAT_COLORS` dans `viewer/public/index.html` (côté client).
+Modifier `CATEGORY_PATTERNS` dans `viewer/lib/entityData.js` (côté serveur) et `CAT_NAMES`/`CAT_COLORS` dans `viewer/public/js/engine/scene.js` (côté client).
 
-### Changer le rendu d'un type d'entité
-Le rendu est déterminé par la présence de `sp` (spline) dans les données :
-- Avec `sp` : rendu en cylindres le long de la spline
-- Sans `sp` : rendu en box (clearance data ou taille par défaut)
-
-Pour un rendu custom, modifier `buildMeshes()` dans `index.html`.
+### Ajouter des ports à un bâtiment
+1. Ajouter `Builder.PORT_LAYOUT = PORTS;` dans le fichier du builder (après `Builder.Ports = ...`)
+2. Enregistrer le builder dans `lib/Registry.js` si pas déjà fait
+3. Les ports apparaîtront automatiquement dans le viewer
 
 ### Ajouter une API endpoint
-Ajouter la route dans `viewer/server.js`. Les variables `saveState` et `cbpState` sont accessibles dans le scope du module, chacune contenant les données parsées de leur slot respectif.
+Ajouter la route dans `viewer/server.js`. Utiliser `getSaveState()` et `getCbpState()` depuis `saveLoader.js`.
+
+### Changer le rendu d'un type d'entité
+Le rendu est déterminé par les champs de l'entité :
+- `lift` : rendu en shaft + 2 cubes (ConveyorLift)
+- `sp` + cat 2 : rendu en box-spline (belts)
+- `sp` + autre cat : rendu en cylindre-spline (pipes, rails)
+- `box` : clearance box par instance (beams)
+- Sinon : clearance data de la classe ou cube par défaut
+
+Pour un rendu custom, modifier `buildMeshes()` dans `entities.js`.

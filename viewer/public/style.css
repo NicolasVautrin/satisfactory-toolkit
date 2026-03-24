@@ -1,15 +1,19 @@
 /* ── Reset & Layout ──────────────────────────────────────── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ── Lucide icons ────────────────────────────────────────── */
+.icon { width: 14px; height: 14px; vertical-align: -2px; stroke-width: 2; }
+.icon-sm { width: 12px; height: 12px; vertical-align: -2px; stroke-width: 2; }
+
 body {
   background: #1a1a1a; color: #ddd; font-family: monospace;
   overflow: hidden; height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   grid-template-areas:
-    "topbar  topbar"
-    "canvas  sel";
+    "topbar  topbar  topbar"
+    "props   canvas  sel";
 }
 
 /* ── Top Bar ─────────────────────────────────────────────── */
@@ -92,8 +96,9 @@ body {
   width: 20px; height: 20px; cursor: pointer;
   font-family: monospace; font-size: 12px;
   display: flex; align-items: center; justify-content: center;
-  padding: 0;
+  padding: 0; line-height: 1;
 }
+.ctrl-row button .icon-sm { vertical-align: 0; }
 .ctrl-row button:hover { background: #555; }
 .ctrl-row .ctrl-val {
   min-width: 40px; text-align: center;
@@ -115,6 +120,68 @@ body {
   overflow: hidden;
   min-width: 0;
 }
+
+/* ── Properties Panel (left) ────────────────────────────── */
+#props-panel {
+  grid-area: props;
+  background: #2a2a2a; border-right: 1px solid #444;
+  width: 280px; overflow-y: auto;
+  display: none; flex-direction: column;
+  font-size: 12px; z-index: 10;
+}
+#props-panel.visible { display: flex; }
+
+#props-panel-header {
+  padding: 8px 10px; border-bottom: 1px solid #444;
+  display: flex; justify-content: space-between; align-items: center;
+}
+#props-panel-header strong { font-size: 13px; }
+#props-panel-header span {
+  display: flex; gap: 4px;
+}
+#props-panel-header button {
+  background: #444; color: #ddd; border: 1px solid #666;
+  padding: 2px 8px; cursor: pointer;
+  font-family: monospace; font-size: 11px;
+}
+#props-panel-header button:hover { background: #555; }
+#props-panel-header button.active { background: #665500; border-color: #ffaa00; color: #ffaa00; }
+
+#props-panel-content { flex: 1; overflow-y: auto; padding: 6px 10px; }
+
+.props-section {
+  margin-bottom: 8px;
+}
+.props-section-title {
+  color: #888; font-size: 10px; text-transform: uppercase;
+  margin-bottom: 3px; letter-spacing: 0.5px;
+}
+.props-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 2px 0;
+}
+.props-label { color: #888; flex-shrink: 0; }
+.props-value {
+  color: #ddd; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.props-value.connected { color: #44ff44; }
+.props-value.disconnected { color: #ff4444; }
+
+.props-port-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+}
+.props-port-dot {
+  width: 8px; height: 8px; border-radius: 2px;
+  display: inline-block; flex-shrink: 0;
+}
+.props-port-dot.belt { border-radius: 0; }
+.props-port-dot.pipe { border-radius: 50%; }
+.props-port-dot.input { background: #44ff44; }
+.props-port-dot.output { background: #ff8844; }
+.props-port-name { flex: 1; }
+.props-port-status { font-size: 10px; }
 
 /* ── Selection Panel (right) ─────────────────────────────── */
 #sel-panel {
@@ -138,6 +205,21 @@ body {
 }
 
 #sel-panel-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+#sel-panel-actions {
+  padding: 6px 10px; border-bottom: 1px solid #444;
+  display: flex; gap: 4px;
+}
+#sel-panel-actions button {
+  flex: 1;
+  background: #444; color: #ddd; border: 1px solid #666;
+  padding: 4px 8px; cursor: pointer;
+  font-family: monospace; font-size: 11px;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+#sel-panel-actions button:hover { background: #555; }
+#btn-delete-panel { color: #ff6666; }
+#btn-delete-panel:hover { background: #553333; }
 
 .sel-row {
   display: flex; align-items: center;
