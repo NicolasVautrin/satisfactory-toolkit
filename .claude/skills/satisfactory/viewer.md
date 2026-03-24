@@ -1,17 +1,16 @@
 # 3D Entity Viewer
 
-Viewer Three.js pour visualiser les entités d'une save Satisfactory dans le navigateur. Permet la sélection d'entités et l'export en blueprint.
+Viewer Three.js pour visualiser les entités d'une save Satisfactory dans le navigateur. Permet la sélection d'entités, l'export en blueprint, et le merge de CBP dans une save.
 
 ## Lancement
 
 ```bash
 export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
-node viewer/server.js <save-name>
-# Ex: node viewer/server.js TEST
+node viewer/server.js
 # → http://localhost:3000
 ```
 
-Le serveur Express charge la save, extrait les entités/splines/clearance, et sert l'application sur le port 3000.
+Le serveur Express démarre sans save — l'utilisateur charge les fichiers `.sav` et `.cbp` via l'interface (bouton Open ou drag & drop).
 
 ## Gestion du serveur
 
@@ -21,21 +20,29 @@ Le serveur Express charge la save, extrait les entités/splines/clearance, et se
 - **Redémarrer** après modifications de `viewer/server.js` : shutdown/kill, attendre 1s, relancer + hard reload (Ctrl+Shift+R) dans le navigateur
 - Après modification de `viewer/public/index.html` : un simple hard reload suffit (pas besoin de redémarrer le serveur)
 - Quand lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
-- Les données sont cachées côté client après le premier chargement — le serveur n'est requis que pour le chargement initial et l'export
 
 ## Architecture
 
 ### Fichiers
-- `viewer/server.js` : serveur Express, parsing de save, API REST
+- `viewer/server.js` : serveur Express, parsing de save/CBP à l'upload, API REST
 - `viewer/public/index.html` : rendu Three.js, contrôles caméra FPS custom, UI
+
+### Chargement des fichiers
+Le viewer fonctionne par **upload client → serveur** :
+1. L'utilisateur ouvre un fichier `.sav` ou `.cbp` via le bouton **Open** ou par **drag & drop**
+2. Le fichier est envoyé en POST binaire à `/api/upload` avec le nom en header `X-Save-Name`
+3. Le serveur parse le fichier, construit les données d'entités, et renvoie le JSON
+4. Le client reconstruit la scène 3D (clearMeshes + buildMeshes)
+
+Deux slots indépendants côté serveur : `saveState` (save) et `cbpState` (CBP). Charger une nouvelle save remplace entièrement l'ancienne.
 
 ### API REST (server.js)
 | Endpoint | Méthode | Description |
 |---|---|---|
-| `/api/saves` | GET | Liste des saves disponibles (nom, taille, date) + save courante |
-| `/api/load` | POST | Charge une save par nom (`{ name }`) |
-| `/api/entities` | GET | Retourne les données d'entités préparées pour le client |
+| `/api/upload` | POST | Upload et parse un fichier `.sav` ou `.cbp` (binaire, header `X-Save-Name`) |
+| `/api/terrain` | GET | Retourne les données de heightmap pour le terrain |
 | `/api/export` | POST | Exporte une sélection en blueprint (`{ indices, name }`) |
+| `/api/merge` | POST | Merge le CBP chargé dans la save chargée, retourne un `.sav` modifié |
 | `/api/shutdown` | POST | Arrête le serveur |
 
 ### Données serveur → client
@@ -47,6 +54,11 @@ Le serveur prépare un objet compact pour le client :
   - `tx/ty/tz` = position, `rx/ry/rz/rw` = rotation quaternion
   - `cat` = catégorie (0-7)
   - `sp` = points de spline `[[x,y,z], ...]` (optionnel, pour belts/pipes/lifts/rails)
+
+### Conversion coordonnées Unreal → Three.js
+- **Positions** : `gameToViewer(x, y, z) = Vector3(-x, y, z)` — réflexion axe X
+- **Quaternions** : `(rx, ry, rz, rw) → (rx, -ry, -rz, rw)` — conjugaison pour la réflexion X
+- Les splines n'ont pas besoin de conversion quaternion car leur quaternion est calculé directement à partir des positions déjà transformées
 
 ### Catégories d'entités (8)
 | Index | Nom | Couleur | Regex de classification |
@@ -88,7 +100,7 @@ Contrôles FPS custom (pas d'OrbitControls ni CameraControls — incompatibles a
 La vitesse de zoom (`flyStep`) est un pas fixe en unités, ajustable via les boutons −/+ (x2 par clic). La rotation et le pan sont gérés par des multiplicateurs de sensibilité.
 
 ### Persistance caméra
-La position de caméra (position, yaw, pitch, flyStep) est sauvegardée dans `localStorage` toutes les 3 secondes, par save. Elle est restaurée automatiquement au chargement d'une save.
+La position de caméra (position, yaw, pitch, flyStep, panSpeed, rotateSpeed) est sauvegardée dans `localStorage` toutes les 3 secondes, avec clé séparée pour save vs CBP. Elle est restaurée automatiquement au chargement — `fitCamera` n'est appelé que s'il n'y a pas de position persistée.
 
 ## Sélection et export
 
@@ -107,10 +119,13 @@ Le bouton "Export Blueprint" (toolbar) exporte les entités sélectionnées :
 3. Clone les entités sélectionnées + leurs composants associés
 4. Écrit les fichiers `.sbp` et `.sbpcfg` dans le dossier blueprints du jeu
 
-**Note** : seules les entités normales (pas lightweight) peuvent être exportées — le tableau `entities` du serveur ne contient que les entités avec index dans le tableau `entities` du parsing (les lightweight sont ajoutées après).
+**Note** : seules les entités normales (pas lightweight) peuvent être exportées — les lightweight sont ajoutées après les entités indexées dans le tableau du serveur.
+
+### Merge CBP → Save
+Le bouton "Merge CBP → Save" (actif quand save + CBP chargés) injecte les entités du CBP dans la save et télécharge un fichier `_edit.sav`. Le serveur convertit les propriétés CBP (format SCIM) vers le format du parser satisfactory-file-parser.
 
 ### Filtres par catégorie
-Les checkboxes dans la toolbar permettent de masquer/afficher les catégories. Les catégories masquées ne sont pas sélectionnables (ni par clic ni par rectangle).
+Les checkboxes dans la toolbar permettent de masquer/afficher les catégories. Les catégories masquées ne sont pas sélectionnables (ni par clic ni par rectangle). Toggle terrain et grille 3D également disponibles.
 
 ## Modifier le viewer
 
@@ -122,7 +137,7 @@ Le rendu est déterminé par la présence de `sp` (spline) dans les données :
 - Avec `sp` : rendu en cylindres le long de la spline
 - Sans `sp` : rendu en box (clearance data ou taille par défaut)
 
-Pour un rendu custom, modifier `buildScene()` dans `index.html`.
+Pour un rendu custom, modifier `buildMeshes()` dans `index.html`.
 
 ### Ajouter une API endpoint
-Ajouter la route dans `viewer/server.js`. Les variables `allObjects`, `entities`, `entityData` sont accessibles dans le scope du module.
+Ajouter la route dans `viewer/server.js`. Les variables `saveState` et `cbpState` sont accessibles dans le scope du module, chacune contenant les données parsées de leur slot respectif.

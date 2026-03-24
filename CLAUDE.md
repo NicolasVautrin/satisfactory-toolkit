@@ -44,10 +44,11 @@ Viewer Three.js pour visualiser les entités d'une save dans le navigateur.
 
 ```bash
 export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
-node viewer/server.js <save-name>
-# Ex: node viewer/server.js TEST
+node viewer/server.js
 # → http://localhost:3000
 ```
+
+Le serveur démarre sans save — charger les fichiers `.sav` et `.cbp` via le bouton Open ou drag & drop dans le navigateur.
 
 ### Gestion du serveur
 
@@ -56,7 +57,6 @@ node viewer/server.js <save-name>
 - Si le shutdown ne répond pas (ancienne instance) : `powershell -Command 'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }'`
 - Pour **redémarrer** après des modifications : d'abord shutdown/kill, attendre 1s, puis relancer
 - **Important** : quand un serveur est lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
-- Les données sont cachées côté client après le premier chargement — le serveur n'est requis que pour le chargement initial et l'export blueprint
 - Après modification de `viewer/server.js`, il faut **redémarrer le serveur** ET **hard reload** (Ctrl+Shift+R) dans le navigateur
 - Après modification de `viewer/public/index.html`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
 

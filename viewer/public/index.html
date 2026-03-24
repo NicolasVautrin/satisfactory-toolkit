@@ -1,4 +1,4 @@
-vas y<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -54,12 +54,17 @@ body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidde
   font-size: 18px; z-index: 20;
 }
 #status { font-size: 11px; color: #888; margin-left: auto; }
+.file-label { font-size: 10px; color: #aaa; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
 
 <div id="toolbar">
-  <select id="save-picker" style="background:#333;color:#ddd;border:1px solid #666;padding:3px 6px;font-family:monospace;font-size:12px;max-width:200px"></select>
+  <button id="btn-open">Open...</button>
+  <input type="file" id="file-input" accept=".sav,.cbp" style="display:none">
+  <span id="file-save" class="file-label" title="Loaded save"></span>
+  <span id="file-cbp" class="file-label" title="Loaded CBP"></span>
+  <button id="btn-merge" disabled>Merge CBP → Save</button>
   <button id="btn-export" disabled>Export Blueprint</button>
   <button id="btn-clear" disabled>Clear Selection</button>
   <span style="width:1px;height:20px;background:#444"></span>
@@ -74,6 +79,11 @@ body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidde
   <span style="font-size:11px;display:flex;align-items:center;gap:2px" title="Rotate sensitivity">
     Rot<button id="rotate-down">−</button><span id="rotate-val">3.0</span><button id="rotate-up">+</button>
   </span>
+  <label class="cat-toggle" title="Terrain topography"><input type="checkbox" id="terrain-toggle" checked><span class="cat-dot" style="background:#4a7a28"></span>Terrain</label>
+  <label class="cat-toggle" title="3D Grid"><input type="checkbox" id="grid-toggle" checked><span class="cat-dot" style="background:#666"></span>Grid</label>
+  <span style="font-size:11px;display:flex;align-items:center;gap:2px" title="Grid spacing (UU)">
+    Grid<button id="grid-down">−</button><span id="grid-val">10000</span><button id="grid-up">+</button>
+  </span>
   <span id="status"></span>
 </div>
 
@@ -86,7 +96,7 @@ body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidde
   <div id="sel-panel-list"></div>
 </div>
 <div id="selection-rect"></div>
-<div id="loading">Loading entities...</div>
+<div id="loading">Drop a .sav or .cbp file, or click Open</div>
 
 <script type="importmap">
 {
@@ -100,6 +110,11 @@ body { background: #1a1a1a; color: #ddd; font-family: monospace; overflow: hidde
 <script type="module">
 import * as THREE from 'three';
 
+// ── Game → Viewer coordinate transform ──────────────────────────────
+function gameToViewer(x, y, z) {
+  return new THREE.Vector3(-x, y, z);
+}
+
 // ── Constants ──────────────────────────────────────────────────────
 const CAT_COLORS = [
   0xff8c00, 0x44bb44, 0x4488ff, 0x44dddd,
@@ -107,9 +122,9 @@ const CAT_COLORS = [
 ];
 const CAT_NAMES = ['Producers', 'Extractors', 'Belts', 'Pipes', 'Power', 'Railway', 'Structural', 'Other'];
 const HIGHLIGHT_COLOR = new THREE.Color(0xff4444);
+const CBP_COLOR = new THREE.Color(0x44ffcc);  // cyan-vert for CBP overlay
 const DEFAULT_BOX_SIZE = 200;
-// Priority: buildings first, infrastructure last
-const CAT_PRIORITY = [0, 1, 3, 3, 5, 2, 1, 4]; // lower = higher priority
+const CAT_PRIORITY = [0, 1, 3, 3, 5, 2, 1, 4];
 
 // ── Three.js setup ─────────────────────────────────────────────────
 const container = document.getElementById('canvas');
@@ -124,10 +139,9 @@ const camera = new THREE.PerspectiveCamera(60, 1, 100, 2000000);
 camera.up.set(0, 0, 1);
 
 // ── Custom FPS-style camera controls ──────────────────────────────
-// Left drag = rotate, Right drag = pan, Wheel = zoom (fly forward/backward)
 const camState = {
-  yaw: -Math.PI / 4,    // horizontal angle
-  pitch: -Math.PI / 6,  // vertical angle (negative = looking down)
+  yaw: -Math.PI / 4,
+  pitch: -Math.PI / 6,
   rotateSpeed: 0.003,
   panSpeed: 1.5,
   flyStep: 5000,
@@ -143,7 +157,6 @@ function updateCameraRotation() {
   camera.lookAt(target);
 }
 
-// Wheel = fly forward/backward
 renderer.domElement.addEventListener('wheel', (e) => {
   e.preventDefault();
   const fwd = new THREE.Vector3();
@@ -152,13 +165,12 @@ renderer.domElement.addEventListener('wheel', (e) => {
   camera.position.addScaledVector(fwd, step);
 }, { passive: false });
 
-// Mouse drag
 let activeButton = -1;
 let lastMouse = null;
 renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && e.shiftKey) return; // shift+left = box selection, handled elsewhere
+  if (e.button === 0 && e.shiftKey) return;
   activeButton = e.button;
   lastMouse = { x: e.clientX, y: e.clientY };
   renderer.domElement.setPointerCapture(e.pointerId);
@@ -171,13 +183,11 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   lastMouse = { x: e.clientX, y: e.clientY };
 
   if (activeButton === 0) {
-    // Left drag = rotate
     camState.yaw -= dx * camState.rotateSpeed;
     camState.pitch -= dy * camState.rotateSpeed;
     camState.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, camState.pitch));
     updateCameraRotation();
   } else if (activeButton === 2) {
-    // Right drag = pan in camera screen space
     const fwd = new THREE.Vector3();
     camera.getWorldDirection(fwd);
     const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
@@ -209,10 +219,13 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
 // ── State ──────────────────────────────────────────────────────────
-let entityData = null;
+let saveEntityData = null;   // save dataset
+let cbpEntityData = null;    // cbp dataset
 const selectedIndices = new Set();
 const catVisible = [true, true, true, true, true, true, true, true];
-const displayMeshes = []; // flat list of all display InstancedMeshes
+let cbpVisible = true;
+const displayMeshes = [];    // save meshes (selectable)
+const cbpMeshes = [];        // cbp overlay meshes (not selectable)
 
 // ── Resize ─────────────────────────────────────────────────────────
 function resize() {
@@ -225,13 +238,13 @@ function resize() {
 window.addEventListener('resize', resize);
 
 // ── Helper: create display InstancedMesh ───────────────────────────
-function createDisplayMesh(geom, catColor, count, cat, opacity = 0.6) {
+function createDisplayMesh(geom, color, count, cat, opacity = 0.6) {
   const mat = new THREE.MeshLambertMaterial({
     color: 0xffffff, transparent: true, opacity,
   });
   const mesh = new THREE.InstancedMesh(geom, mat, count);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-  mesh.userData = { cat, instanceToEntity: new Array(count), baseColor: new THREE.Color(catColor) };
+  mesh.userData = { cat, instanceToEntity: new Array(count), baseColor: new THREE.Color(color) };
   return mesh;
 }
 
@@ -242,20 +255,21 @@ const _segQuat = new THREE.Quaternion();
 const SPLINE_RADIUS = 30;
 
 function splineSegmentMatrix(p1, p2, matrix) {
-  _segDir.set(p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]);
+  const v1 = gameToViewer(p1[0], p1[1], p1[2]);
+  const v2 = gameToViewer(p2[0], p2[1], p2[2]);
+  _segDir.set(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z);
   const len = _segDir.length();
   if (len < 0.01) return false;
   _segDir.divideScalar(len);
-  _segMid.set((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2);
+  _segMid.set((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
   const _yAxis = new THREE.Vector3(0, 1, 0);
   _segQuat.setFromUnitVectors(_yAxis, _segDir);
   matrix.compose(_segMid, _segQuat, new THREE.Vector3(SPLINE_RADIUS, len, SPLINE_RADIUS));
   return true;
 }
 
-// ── Build scene from data ──────────────────────────────────────────
-function buildScene(data) {
-  entityData = data;
+// ── Build meshes from entity data ──────────────────────────────────
+function buildMeshes(data, meshArray, colorMode) {
   const { classNames, clearance, entities } = data;
 
   const catBoxInstances = Array.from({ length: 8 }, () => []);
@@ -267,6 +281,8 @@ function buildScene(data) {
       for (let s = 0; s < e.sp.length - 1; s++) {
         catSplineInstances[e.cat].push({ ei, p1: e.sp[s], p2: e.sp[s + 1] });
       }
+    } else if (e.box) {
+      catBoxInstances[e.cat].push({ ei, box: e.box });
     } else {
       const boxes = clearance[e.c];
       if (boxes && boxes.length > 0) {
@@ -286,18 +302,23 @@ function buildScene(data) {
   const boxOffset = new THREE.Vector3();
   const color = new THREE.Color();
 
+  const isCbp = colorMode === 'cbp';
+  const opacity = isCbp ? 0.3 : 0.6;
+  const splineOpacity = isCbp ? 0.4 : 0.8;
+
   for (let cat = 0; cat < 8; cat++) {
     // Boxes
     const boxInsts = catBoxInstances[cat];
     if (boxInsts.length > 0) {
-      const mesh = createDisplayMesh(boxGeom, CAT_COLORS[cat], boxInsts.length, cat);
-      color.set(CAT_COLORS[cat]);
+      const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
+      const mesh = createDisplayMesh(boxGeom, catColor, boxInsts.length, cat, opacity);
+      color.copy(catColor);
       for (let j = 0; j < boxInsts.length; j++) {
         const { ei, box } = boxInsts[j];
         const e = entities[ei];
         mesh.userData.instanceToEntity[j] = ei;
-        pos.set(e.tx, e.ty, e.tz);
-        quat.set(e.rx, e.ry, e.rz, e.rw);
+        pos.copy(gameToViewer(e.tx, e.ty, e.tz));
+        quat.set(e.rx, -e.ry, -e.rz, e.rw); // reflect quaternion for X-flip
         if (box) {
           scale.set(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
           boxOffset.set(
@@ -317,14 +338,15 @@ function buildScene(data) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
-      displayMeshes.push(mesh);
+      meshArray.push(mesh);
     }
 
     // Splines
     const splineInsts = catSplineInstances[cat];
     if (splineInsts.length > 0) {
-      const mesh = createDisplayMesh(cylGeom, CAT_COLORS[cat], splineInsts.length, cat, 0.8);
-      color.set(CAT_COLORS[cat]);
+      const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
+      const mesh = createDisplayMesh(cylGeom, catColor, splineInsts.length, cat, splineOpacity);
+      color.copy(catColor);
       for (let j = 0; j < splineInsts.length; j++) {
         const { ei, p1, p2 } = splineInsts[j];
         mesh.userData.instanceToEntity[j] = ei;
@@ -336,13 +358,16 @@ function buildScene(data) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor.needsUpdate = true;
       scene.add(mesh);
-      displayMeshes.push(mesh);
+      meshArray.push(mesh);
     }
-  }
 
-  // Camera: fit to bounding box
+  }
+}
+
+// ── Fit camera to entities ─────────────────────────────────────────
+function fitCamera(entities) {
   const bbox = new THREE.Box3();
-  for (const e of entities) bbox.expandByPoint(new THREE.Vector3(e.tx, e.ty, e.tz));
+  for (const e of entities) bbox.expandByPoint(gameToViewer(e.tx, e.ty, e.tz));
   const center = new THREE.Vector3();
   bbox.getCenter(center);
   const size = new THREE.Vector3();
@@ -353,17 +378,41 @@ function buildScene(data) {
     center.x + maxDim * 0.5, center.y - maxDim * 0.5, center.z + maxDim * 0.3,
   );
   camera.lookAt(center);
-  // Derive yaw/pitch from camera direction
   const initDir = new THREE.Vector3();
   camera.getWorldDirection(initDir);
   camState.yaw = Math.atan2(initDir.x, initDir.y);
   camState.pitch = Math.asin(initDir.z);
+}
 
+// ── Clear mesh array ───────────────────────────────────────────────
+function clearMeshes(meshArray) {
+  for (const mesh of meshArray) scene.remove(mesh);
+  meshArray.length = 0;
+}
+
+// ── Build scene for save data ──────────────────────────────────────
+function buildSaveScene(data) {
+  saveEntityData = data;
+  clearMeshes(displayMeshes);
+  selectedIndices.clear();
+  buildMeshes(data, displayMeshes, 'save');
+  if (!restoreCameraState()) fitCamera(data.entities);
   document.getElementById('loading').style.display = 'none';
   updateStatus();
 }
 
-// ── Raycaster picking ──────────────────────────────────────────────
+// ── Build scene for CBP data ───────────────────────────────────────
+function buildCbpScene(data) {
+  cbpEntityData = data;
+  clearMeshes(cbpMeshes);
+  buildMeshes(data, cbpMeshes, 'cbp');
+  // Fit camera only if no save loaded and no persisted state
+  if (!saveEntityData && !restoreCameraState()) fitCamera(data.entities);
+  document.getElementById('loading').style.display = 'none';
+  updateStatus();
+}
+
+// ── Raycaster picking (save meshes only) ──────────────────────────
 function pickAt(cssX, cssY) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((cssX) / rect.width) * 2 - 1;
@@ -374,45 +423,18 @@ function pickAt(cssX, cssY) {
 
   if (intersects.length === 0) return -1;
 
-  // Select closest visible hit
   for (const hit of intersects) {
     const { cat, instanceToEntity } = hit.object.userData;
     if (!catVisible[cat]) continue;
     const ei = instanceToEntity[hit.instanceId];
-    const e = entityData.entities[ei];
-    console.log(`[pick] entity=${ei} class=${entityData.classNames[e.c]} cat=${CAT_NAMES[e.cat]}`);
+    const e = saveEntityData.entities[ei];
+    console.log(`[pick] entity=${ei} class=${saveEntityData.classNames[e.c]} cat=${CAT_NAMES[e.cat]}`);
     return ei;
   }
   return -1;
 }
 
-// ── Box select via screen-space projection ─────────────────────────
-function pickRect(x1, y1, x2, y2) {
-  const rect = renderer.domElement.getBoundingClientRect();
-  const w = rect.width, h = rect.height;
-  // Normalize to NDC
-  const ndcL = (x1 / w) * 2 - 1;
-  const ndcR = (x2 / w) * 2 - 1;
-  const ndcT = -(y1 / h) * 2 + 1;
-  const ndcB = -(y2 / h) * 2 + 1;
-
-  const found = new Set();
-  const vec = new THREE.Vector3();
-
-  for (const e of entityData.entities) {
-    if (!catVisible[e.cat]) continue;
-    vec.set(e.tx, e.ty, e.tz);
-    vec.project(camera);
-    if (vec.z < -1 || vec.z > 1) continue; // behind camera or too far
-    if (vec.x >= ndcL && vec.x <= ndcR && vec.y >= ndcB && vec.y <= ndcT) {
-      found.add(entityData.entities.indexOf(e));
-    }
-  }
-  // Faster: use index directly
-  return found;
-}
-
-// Optimized version using indices
+// ── Box select (save meshes only) ─────────────────────────────────
 function pickRectOptimized(x1, y1, x2, y2) {
   const rect = renderer.domElement.getBoundingClientRect();
   const w = rect.width, h = rect.height;
@@ -421,12 +443,13 @@ function pickRectOptimized(x1, y1, x2, y2) {
 
   const found = new Set();
   const vec = new THREE.Vector3();
-  const entities = entityData.entities;
+  if (!saveEntityData) return found;
+  const entities = saveEntityData.entities;
 
   for (let i = 0; i < entities.length; i++) {
     const e = entities[i];
     if (!catVisible[e.cat]) continue;
-    vec.set(e.tx, e.ty, e.tz);
+    vec.copy(gameToViewer(e.tx, e.ty, e.tz));
     vec.project(camera);
     if (vec.z > -1 && vec.z < 1 && vec.x >= ndcL && vec.x <= ndcR && vec.y >= ndcB && vec.y <= ndcT) {
       found.add(i);
@@ -458,14 +481,11 @@ function clearSelection() {
 function refreshColors() {
   const color = new THREE.Color();
   for (const mesh of displayMeshes) {
-    const { cat, instanceToEntity, baseColor } = mesh.userData;
-    // Skip if this category has no selected entities (optimization)
-    let hasSelected = false;
+    const { instanceToEntity, baseColor } = mesh.userData;
     const arr = mesh.instanceColor.array;
     for (let j = 0; j < instanceToEntity.length; j++) {
       const ei = instanceToEntity[j];
       const sel = selectedIndices.has(ei);
-      if (sel) hasSelected = true;
       color.copy(sel ? HIGHLIGHT_COLOR : baseColor);
       arr[j * 3] = color.r;
       arr[j * 3 + 1] = color.g;
@@ -475,7 +495,7 @@ function refreshColors() {
   }
   updateStatus();
   updateInfoPanel();
-  document.getElementById('btn-export').disabled = selectedIndices.size === 0;
+  document.getElementById('btn-export').disabled = selectedIndices.size === 0 || !saveEntityData;
   document.getElementById('btn-clear').disabled = selectedIndices.size === 0;
 }
 
@@ -493,6 +513,9 @@ function buildFilters() {
       for (const mesh of displayMeshes) {
         if (mesh.userData.cat === cat) mesh.visible = cb.checked;
       }
+      for (const mesh of cbpMeshes) {
+        if (mesh.userData.cat === cat) mesh.visible = cb.checked && cbpVisible;
+      }
     });
     const dot = document.createElement('span');
     dot.className = 'cat-dot';
@@ -502,6 +525,25 @@ function buildFilters() {
     label.appendChild(document.createTextNode(CAT_NAMES[cat]));
     filtersDiv.appendChild(label);
   }
+
+  // CBP toggle
+  const cbpLabel = document.createElement('label');
+  cbpLabel.className = 'cat-toggle';
+  cbpLabel.title = 'CBP overlay';
+  const cbpCb = document.createElement('input');
+  cbpCb.type = 'checkbox';
+  cbpCb.checked = true;
+  cbpCb.addEventListener('change', () => {
+    cbpVisible = cbpCb.checked;
+    for (const mesh of cbpMeshes) mesh.visible = cbpCb.checked;
+  });
+  const cbpDot = document.createElement('span');
+  cbpDot.className = 'cat-dot';
+  cbpDot.style.background = '#44ffcc';
+  cbpLabel.appendChild(cbpCb);
+  cbpLabel.appendChild(cbpDot);
+  cbpLabel.appendChild(document.createTextNode('CBP'));
+  filtersDiv.appendChild(cbpLabel);
 }
 
 // ── Selection panel ────────────────────────────────────────────────
@@ -512,8 +554,8 @@ const canvasDiv = document.getElementById('canvas');
 
 function removeClassFromSelection(className) {
   for (const idx of [...selectedIndices]) {
-    const e = entityData.entities[idx];
-    if (entityData.classNames[e.c] === className) selectedIndices.delete(idx);
+    const e = saveEntityData.entities[idx];
+    if (saveEntityData.classNames[e.c] === className) selectedIndices.delete(idx);
   }
   refreshColors();
 }
@@ -527,13 +569,13 @@ function updateInfoPanel() {
     canvasDiv.classList.toggle('with-panel', shouldShow);
     requestAnimationFrame(resize);
   }
-  if (!shouldShow) return;
+  if (!shouldShow || !saveEntityData) return;
 
   selTotal.textContent = selectedIndices.size;
   const groups = {};
   for (const idx of selectedIndices) {
-    const e = entityData.entities[idx];
-    const cls = entityData.classNames[e.c];
+    const e = saveEntityData.entities[idx];
+    const cls = saveEntityData.classNames[e.c];
     if (!groups[cls]) groups[cls] = { count: 0, cat: e.cat };
     groups[cls].count++;
   }
@@ -569,9 +611,16 @@ function updateInfoPanel() {
 document.getElementById('btn-clear-panel').addEventListener('click', clearSelection);
 
 function updateStatus() {
-  const total = entityData ? entityData.entities.length : 0;
+  const saveCount = saveEntityData ? saveEntityData.entities.length : 0;
+  const cbpCount = cbpEntityData ? cbpEntityData.entities.length : 0;
+  const parts = [];
+  if (saveCount) parts.push(`${saveCount} save`);
+  if (cbpCount) parts.push(`${cbpCount} cbp`);
+  const total = parts.length ? parts.join(' + ') + ' entities' : 'No data';
   document.getElementById('status').textContent =
-    `${total} entities | ${selectedIndices.size} selected | Click to select, Shift+drag for box select`;
+    `${total} | ${selectedIndices.size} selected | Click to select, Shift+drag for box select`;
+  // Merge button: enabled only when both save and cbp are loaded
+  document.getElementById('btn-merge').disabled = !(saveEntityData && cbpEntityData);
 }
 
 // ── Mouse interaction ──────────────────────────────────────────────
@@ -626,7 +675,6 @@ window.addEventListener('pointerup', (e) => {
     return;
   }
 
-  // Simple click — only if didn't drag (orbit)
   if (e.button === 0 && !e.shiftKey && pointerDownPos) {
     const dx = Math.abs(e.clientX - pointerDownPos.x);
     const dy = Math.abs(e.clientY - pointerDownPos.y);
@@ -651,14 +699,340 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     body: JSON.stringify({ indices: [...selectedIndices], name }),
   });
   const result = await res.json();
-  if (result.success) {
-    alert(`Blueprint exported: ${result.count} entities\n${result.sbpPath}`);
-  } else {
+  if (!result.success) {
     alert(`Export failed: ${result.error}`);
+    return;
   }
+
+  // Download .sbp
+  const sbpBlob = new Blob([Uint8Array.from(atob(result.sbp), c => c.charCodeAt(0))]);
+  const sbpUrl = URL.createObjectURL(sbpBlob);
+  const a1 = document.createElement('a');
+  a1.href = sbpUrl; a1.download = `${name}.sbp`; a1.click();
+  URL.revokeObjectURL(sbpUrl);
+
+  // Download .sbpcfg
+  const cfgBlob = new Blob([Uint8Array.from(atob(result.sbpcfg), c => c.charCodeAt(0))]);
+  const cfgUrl = URL.createObjectURL(cfgBlob);
+  const a2 = document.createElement('a');
+  a2.href = cfgUrl; a2.download = `${name}.sbpcfg`; a2.click();
+  URL.revokeObjectURL(cfgUrl);
+
+  const lwMsg = result.lwCount ? ` + ${result.lwCount} lightweight` : '';
+  alert(`Blueprint exported: ${result.count} entities${lwMsg}\nDownloaded: ${name}.sbp + ${name}.sbpcfg`);
 });
 
 document.getElementById('btn-clear').addEventListener('click', clearSelection);
+
+// ── Merge CBP → Save ──────────────────────────────────────────────
+document.getElementById('btn-merge').addEventListener('click', async () => {
+  if (!confirm('Merge CBP into save? This will download a new _edit.sav file.')) return;
+  const loadingEl = document.getElementById('loading');
+  loadingEl.style.display = '';
+  loadingEl.textContent = 'Merging CBP into save...';
+
+  try {
+    const res = await fetch('/api/merge', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json();
+      loadingEl.textContent = 'Merge error: ' + err.error;
+      return;
+    }
+
+    // Download the resulting .sav file
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="(.+)"/);
+    const filename = match ? match[1] : 'merged_edit.sav';
+    const entityCount = res.headers.get('X-Entity-Count') || '?';
+    const totalCount = res.headers.get('X-Total-Count') || '?';
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+
+    loadingEl.style.display = 'none';
+    alert(`Merge complete: ${entityCount} entities (${totalCount} total objects) injected.\nDownloaded: ${filename}`);
+  } catch (err) {
+    loadingEl.textContent = 'Merge error: ' + err.message;
+  }
+});
+
+// ── Upload file ────────────────────────────────────────────────────
+async function uploadFile(file) {
+  const loadingEl = document.getElementById('loading');
+  loadingEl.style.display = '';
+  loadingEl.textContent = `Uploading ${file.name}...`;
+
+  try {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Save-Name': file.name },
+      body: file,
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      loadingEl.textContent = 'Error: ' + result.error;
+      return;
+    }
+
+    if (result.type === 'cbp') {
+      buildCbpScene(result.cbp);
+      document.getElementById('file-cbp').textContent = file.name;
+      document.getElementById('file-cbp').title = file.name;
+    } else {
+      buildSaveScene(result.save);
+      document.getElementById('file-save').textContent = file.name;
+      document.getElementById('file-save').title = file.name;
+    }
+  } catch (err) {
+    loadingEl.textContent = 'Error: ' + err.message;
+  }
+}
+
+document.getElementById('btn-open').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+
+document.getElementById('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  await uploadFile(file);
+  e.target.value = '';
+});
+
+// ── Drag & drop ────────────────────────────────────────────────────
+document.body.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.body.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file && (file.name.endsWith('.sav') || file.name.endsWith('.cbp'))) {
+    await uploadFile(file);
+  }
+});
+
+// ── Terrain ──────────────────────────────────────────────────────────
+const TOPO_STOPS = [
+  { z: -5000,  r: 0.176, g: 0.314, b: 0.086 },
+  { z: -1700,  r: 0.290, g: 0.478, b: 0.157 },
+  { z:  1900,  r: 0.478, g: 0.647, b: 0.235 },
+  { z:  9000,  r: 0.722, g: 0.788, b: 0.353 },
+  { z: 14000,  r: 0.831, g: 0.753, b: 0.478 },
+  { z: 20000,  r: 0.910, g: 0.855, b: 0.627 },
+  { z: 30000,  r: 0.961, g: 0.929, b: 0.816 },
+];
+const SHALLOW_WATER_TOPO = { r: 0.165, g: 0.478, b: 0.710 };
+const DEEP_WATER_TOPO    = { r: 0.082, g: 0.282, b: 0.455 };
+const OFFMAP_TOPO = { r: 0.067, g: 0.067, b: 0.067 };
+
+function topoColor(z, out) {
+  if (z === null) { out.r = OFFMAP_TOPO.r; out.g = OFFMAP_TOPO.g; out.b = OFFMAP_TOPO.b; return; }
+  const stops = TOPO_STOPS;
+  if (z <= stops[0].z) { out.r = stops[0].r; out.g = stops[0].g; out.b = stops[0].b; return; }
+  if (z >= stops[stops.length-1].z) { const s = stops[stops.length-1]; out.r = s.r; out.g = s.g; out.b = s.b; return; }
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (z >= stops[i].z && z < stops[i+1].z) {
+      const t = (z - stops[i].z) / (stops[i+1].z - stops[i].z);
+      out.r = stops[i].r + t * (stops[i+1].r - stops[i].r);
+      out.g = stops[i].g + t * (stops[i+1].g - stops[i].g);
+      out.b = stops[i].b + t * (stops[i+1].b - stops[i].b);
+      return;
+    }
+  }
+}
+
+let terrainMesh = null;
+
+function buildTerrain(terrain) {
+  if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); terrainMesh.material.dispose(); }
+
+  const { gridSize, bounds, shallowWaterZ, deepWaterZ, data } = terrain;
+  const GS = gridSize;
+
+  const vertCount = GS * GS;
+  const positions = new Float32Array(vertCount * 3);
+  const colors = new Float32Array(vertCount * 3);
+  const col = { r: 0, g: 0, b: 0 };
+
+  for (let row = 0; row < GS; row++) {
+    for (let col_ = 0; col_ < GS; col_++) {
+      const vi = row * GS + col_;
+      const gameX = bounds.xMin + (col_ / (GS - 1)) * (bounds.xMax - bounds.xMin);
+      const gameY = bounds.yMin + (row / (GS - 1)) * (bounds.yMax - bounds.yMin);
+      const gi = row * GS + col_;
+      const z = data[gi];
+      const v = gameToViewer(gameX, gameY, (z === null) ? deepWaterZ : z);
+
+      positions[vi * 3]     = v.x;
+      positions[vi * 3 + 1] = v.y;
+      positions[vi * 3 + 2] = v.z;
+
+      if (z === deepWaterZ) {
+        col.r = DEEP_WATER_TOPO.r; col.g = DEEP_WATER_TOPO.g; col.b = DEEP_WATER_TOPO.b;
+      } else if (z === shallowWaterZ) {
+        col.r = SHALLOW_WATER_TOPO.r; col.g = SHALLOW_WATER_TOPO.g; col.b = SHALLOW_WATER_TOPO.b;
+      } else {
+        topoColor(z, col);
+      }
+      colors[vi * 3]     = col.r;
+      colors[vi * 3 + 1] = col.g;
+      colors[vi * 3 + 2] = col.b;
+    }
+  }
+
+  const indices = [];
+  for (let row = 0; row < GS - 1; row++) {
+    for (let col_ = 0; col_ < GS - 1; col_++) {
+      const a = row * GS + col_;
+      const b = a + 1;
+      const c = a + GS;
+      const d = c + 1;
+      indices.push(a, c, b);
+      indices.push(b, c, d);
+    }
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geom.setIndex(indices);
+  geom.computeVertexNormals();
+
+  const mat = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  terrainMesh = new THREE.Mesh(geom, mat);
+  terrainMesh.renderOrder = -1;
+  scene.add(terrainMesh);
+}
+
+document.getElementById('terrain-toggle').addEventListener('change', (e) => {
+  if (terrainMesh) terrainMesh.visible = e.target.checked;
+});
+
+// ── 3D Grid with axes ────────────────────────────────────────────────
+const GRID_BOUNDS = {
+  xMin: -324699, xMax: 425302,
+  yMin: -375000, yMax: 375000,
+  zMin: -25000,  zMax: 200000,
+};
+const AXIS_COLORS = { x: 0xff4444, y: 0x44ff44, z: 0x4488ff };
+const GRID_COLOR = 0x444444;
+const LABEL_COLOR = '#aaaaaa';
+
+let gridGroup = null;
+let gridSpacing = 10000;
+
+function buildGrid() {
+  if (gridGroup) { scene.remove(gridGroup); }
+  gridGroup = new THREE.Group();
+
+  const { xMin, xMax, yMin, yMax, zMin, zMax } = GRID_BOUNDS;
+  const step = gridSpacing;
+
+  const xStart = Math.ceil(xMin / step) * step;
+  const yStart = Math.ceil(yMin / step) * step;
+  const zStart = Math.ceil(zMin / step) * step;
+
+  const gridMat = new THREE.LineBasicMaterial({ color: GRID_COLOR, transparent: true, opacity: 0.2 });
+  const xMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.x, transparent: true, opacity: 0.5 });
+  const yMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.y, transparent: true, opacity: 0.5 });
+  const zMat = new THREE.LineBasicMaterial({ color: AXIS_COLORS.z, transparent: true, opacity: 0.5 });
+
+  function addLine(p1, p2, mat) {
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      gameToViewer(p1[0], p1[1], p1[2]),
+      gameToViewer(p2[0], p2[1], p2[2]),
+    ]);
+    gridGroup.add(new THREE.Line(geom, mat));
+  }
+
+  for (let x = xStart; x <= xMax; x += step) {
+    addLine([x, yMin, zMin], [x, yMax, zMin], x === 0 ? yMat : gridMat);
+  }
+  for (let y = yStart; y <= yMax; y += step) {
+    addLine([xMin, y, zMin], [xMax, y, zMin], y === 0 ? xMat : gridMat);
+  }
+
+  for (let x = xStart; x <= xMax; x += step) {
+    addLine([x, yMin, zMin], [x, yMin, zMax], gridMat);
+  }
+  for (let z = zStart; z <= zMax; z += step) {
+    addLine([xMin, yMin, z], [xMax, yMin, z], z === 0 ? xMat : gridMat);
+  }
+
+  for (let y = yStart; y <= yMax; y += step) {
+    addLine([xMin, y, zMin], [xMin, y, zMax], gridMat);
+  }
+  for (let z = zStart; z <= zMax; z += step) {
+    addLine([xMin, yMin, z], [xMin, yMax, z], z === 0 ? yMat : gridMat);
+  }
+
+  addLine([xMin, yMin, zMin], [xMax, yMin, zMin], xMat);
+  addLine([xMin, yMin, zMin], [xMin, yMax, zMin], yMat);
+  addLine([xMin, yMin, zMin], [xMin, yMin, zMax], zMat);
+
+  function makeLabel(text, position, color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    ctx.font = '20px monospace';
+    ctx.fillStyle = color || LABEL_COLOR;
+    ctx.textAlign = 'center';
+    ctx.fillText(text, 64, 22);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(gameToViewer(position[0], position[1], position[2]));
+    sprite.scale.set(step * 0.8, step * 0.2, 1);
+    gridGroup.add(sprite);
+  }
+
+  for (let x = xStart; x <= xMax; x += step) {
+    makeLabel((x / 1000).toFixed(0) + 'k', [x, yMin - step * 0.4, zMin], '#ff6666');
+  }
+  for (let y = yStart; y <= yMax; y += step) {
+    makeLabel((y / 1000).toFixed(0) + 'k', [xMin - step * 0.4, y, zMin], '#66ff66');
+  }
+  for (let z = zStart; z <= zMax; z += step) {
+    makeLabel((z / 1000).toFixed(0) + 'k', [xMin - step * 0.4, yMin, z], '#6688ff');
+  }
+
+  makeLabel('X', [xMax + step * 0.5, yMin, zMin], '#ff4444');
+  makeLabel('Y', [xMin, yMax + step * 0.5, zMin], '#44ff44');
+  makeLabel('Z', [xMin, yMin, zMax + step * 0.5], '#4488ff');
+
+  scene.add(gridGroup);
+}
+
+buildGrid();
+
+document.getElementById('grid-toggle').addEventListener('change', (e) => {
+  if (gridGroup) gridGroup.visible = e.target.checked;
+});
+
+function updateGridLabel() {
+  document.getElementById('grid-val').textContent = gridSpacing;
+}
+document.getElementById('grid-down').addEventListener('click', () => {
+  gridSpacing = Math.max(1000, gridSpacing / 2);
+  updateGridLabel();
+  buildGrid();
+  gridGroup.visible = document.getElementById('grid-toggle').checked;
+});
+document.getElementById('grid-up').addEventListener('click', () => {
+  gridSpacing = Math.min(100000, gridSpacing * 2);
+  updateGridLabel();
+  buildGrid();
+  gridGroup.visible = document.getElementById('grid-toggle').checked;
+});
 
 // ── Animation loop ─────────────────────────────────────────────────
 function animate() {
@@ -697,19 +1071,22 @@ document.getElementById('rotate-up').addEventListener('click', () => {
   updateSensLabels();
 });
 
-// ── Camera position persistence (per save) ──────────────────────
+// ── Camera position persistence ──────────────────────────────────
 function saveCameraState() {
-  const name = savePicker?.value;
-  if (!name) return;
+  const key = saveEntityData ? 'save' : cbpEntityData ? 'cbp' : null;
+  if (!key) return;
   const state = {
     x: camera.position.x, y: camera.position.y, z: camera.position.z,
-    yaw: camState.yaw, pitch: camState.pitch, flyStep: camState.flyStep,
+    yaw: camState.yaw, pitch: camState.pitch,
+    flyStep: camState.flyStep, panSpeed: camState.panSpeed, rotateSpeed: camState.rotateSpeed,
   };
-  localStorage.setItem(`viewer-cam-${name}`, JSON.stringify(state));
+  localStorage.setItem(`viewer-cam-${key}`, JSON.stringify(state));
 }
 
-function restoreCameraState(name) {
-  const raw = localStorage.getItem(`viewer-cam-${name}`);
+function restoreCameraState() {
+  const key = saveEntityData ? 'save' : cbpEntityData ? 'cbp' : null;
+  if (!key) return false;
+  const raw = localStorage.getItem(`viewer-cam-${key}`);
   if (!raw) return false;
   try {
     const s = JSON.parse(raw);
@@ -717,81 +1094,26 @@ function restoreCameraState(name) {
     camState.yaw = s.yaw;
     camState.pitch = s.pitch;
     if (s.flyStep) camState.flyStep = s.flyStep;
+    if (s.panSpeed) camState.panSpeed = s.panSpeed;
+    if (s.rotateSpeed) camState.rotateSpeed = s.rotateSpeed;
     updateCameraRotation();
     updateSensLabels();
     return true;
   } catch { return false; }
 }
 
-// ── Save picker ─────────────────────────────────────────────────
-const savePicker = document.getElementById('save-picker');
-
-// Auto-save camera position periodically
 setInterval(saveCameraState, 3000);
-
-async function loadSaveList() {
-  const res = await fetch('/api/saves');
-  const { saves, current } = await res.json();
-  savePicker.innerHTML = '<option value="">-- Choose save --</option>';
-  for (const s of saves) {
-    const sizeMB = (s.size / 1024 / 1024).toFixed(1);
-    const opt = document.createElement('option');
-    opt.value = s.name;
-    opt.textContent = `${s.name} (${sizeMB} MB)`;
-    if (s.name === current) opt.selected = true;
-    savePicker.appendChild(opt);
-  }
-}
-
-async function loadSave(name) {
-  document.getElementById('loading').style.display = '';
-  document.getElementById('loading').textContent = `Loading ${name}...`;
-
-  const res = await fetch('/api/load', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  const result = await res.json();
-  if (!res.ok) {
-    document.getElementById('loading').textContent = 'Error: ' + result.error;
-    return;
-  }
-
-  const entRes = await fetch('/api/entities');
-  const data = await entRes.json();
-
-  // Clear previous scene
-  for (const mesh of displayMeshes) scene.remove(mesh);
-  displayMeshes.length = 0;
-  selectedIndices.clear();
-
-  buildScene(data);
-  restoreCameraState(name);
-}
-
-savePicker.addEventListener('change', () => {
-  if (savePicker.value) loadSave(savePicker.value);
-});
 
 // ── Init ───────────────────────────────────────────────────────────
 buildFilters();
 resize();
 animate();
 
-loadSaveList().then(() => {
-  // If a save was pre-loaded via CLI, fetch entities directly
-  if (savePicker.value) {
-    fetch('/api/entities')
-      .then(r => { if (!r.ok) throw new Error('No save loaded'); return r.json(); })
-      .then(data => { buildScene(data); restoreCameraState(savePicker.value); })
-      .catch(() => {
-        document.getElementById('loading').textContent = 'Select a save file';
-      });
-  } else {
-    document.getElementById('loading').textContent = 'Select a save file';
-  }
-});
+// Load terrain (save-independent)
+fetch('/api/terrain')
+  .then(r => r.ok ? r.json() : null)
+  .then(terrain => { if (terrain) buildTerrain(terrain); })
+  .catch(() => {});
 </script>
 </body>
 </html>
