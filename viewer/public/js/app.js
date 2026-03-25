@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { renderer, scene, camera, resize, initRenderer } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState } from './engine/camera.js';
-import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible } from './engine/entities.js';
+import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible, addEntityToScene, rebuildEntityPorts } from './engine/entities.js';
 import { selectedIndices, onSelectionChange, pickAt, pickPortAt, pickRect, toggleSelection, addSelection, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildTerrain, setTerrainVisible } from './engine/terrain.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
@@ -175,13 +175,9 @@ const selPanel = createSelPanel(document.getElementById('sel-panel'), {
       });
       const result = await res.json();
       if (!result.success) { setLoading('Delete error: ' + result.error); return; }
-      // Rebuild scene with updated data
-      const data = result.save;
-      data.filename = getSaveData()?.filename || '';
-      buildSaveScene(data);
+      // Scene rebuild handled by WS 'entitiesDeleted' message
       clearSelection();
       setLoading(null);
-      updateStatus();
     } catch (err) {
       setLoading('Delete error: ' + err.message);
     }
@@ -395,6 +391,67 @@ initUpload({ onSaveLoaded, onCbpLoaded, setLoading });
 
 // Camera persistence
 setInterval(() => saveCameraState(camKey()), 3000);
+
+// Auto-refresh if server already has data loaded
+fetch('/api/entities')
+  .then(r => r.ok ? r.json() : null)
+  .then(result => {
+    if (result?.save) onSaveLoaded(result.save, result.saveName || 'save');
+    if (result?.cbp) onCbpLoaded(result.cbp, result.cbpName || 'cbp');
+  })
+  .catch(() => {});
+
+// ── WebSocket ──────────────────────────────────────────────
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${wsProto}//${location.host}`);
+ws.onopen = () => {
+  console.log('[WS] connected');
+  // Send camera position periodically
+  setInterval(() => {
+    if (ws.readyState === 1) {
+      const p = camera.position;
+      // Viewer → Unreal: flip X, convert yaw to UE convention (0°=+X)
+      const ueYaw = camState.yaw * 180 / Math.PI + 90;
+      ws.send(JSON.stringify({
+        type: 'camera',
+        position: { x: -p.x, y: p.y, z: p.z },
+        yaw: ueYaw,
+        pitch: camState.pitch * 180 / Math.PI,
+      }));
+    }
+  }, 1000);
+};
+ws.onclose = () => console.log('[WS] disconnected');
+ws.onmessage = (event) => {
+  try {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'entityAdded' && getSaveData()) {
+      addEntityToScene(msg.item, msg.classUpdate);
+      updateStatus();
+      console.log(`[WS] Entity added at index ${msg.index}`);
+    } else if (msg.type === 'entitiesDeleted' && getSaveData()) {
+      // Indices shifted after delete — full refresh needed
+      fetch('/api/entities')
+        .then(r => r.ok ? r.json() : null)
+        .then(result => {
+          if (result?.save) onSaveLoaded(result.save, result.saveName || getSaveData()?.filename || 'save');
+        });
+      console.log(`[WS] ${msg.indices.length} entities deleted, refreshing`);
+    } else if (msg.type === 'connectionsUpdated' && getSaveData()) {
+      // Update connection state and rebuild port meshes
+      for (const ent of msg.entities) {
+        const e = getSaveData().entities[ent.index];
+        if (e) {
+          e.cn = ent.connections;
+          rebuildEntityPorts(ent.index, e, getSaveData().portLayouts);
+        }
+      }
+      console.log(`[WS] Connections updated for ${msg.entities.map(e => e.index).join(', ')}`);
+    }
+  } catch (err) {
+    console.error('[WS] message error:', err);
+  }
+};
 
 // Load terrain
 fetch('/api/terrain')

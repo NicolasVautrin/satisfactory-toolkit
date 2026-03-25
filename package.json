@@ -6,10 +6,12 @@
   "dependencies": {
     "@etothepii/satisfactory-file-parser": "^3.3.1",
     "canvas": "^3.2.1",
+    "d3-contour": "^4.0.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "highs": "^1.8.0",
     "javascript-lp-solver": "^1.0.3",
-    "potrace": "^2.1.8"
+    "potrace": "^2.1.8",
+    "ws": "^8.20.0"
   }
 }

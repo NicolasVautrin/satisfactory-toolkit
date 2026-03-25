@@ -96,7 +96,7 @@ export function buildGrid() {
     gridGroup.add(new THREE.LineSegments(geom, mat));
   }
 
-  addBatch(gridPts, GRID_COLOR, 0.2);
+  addBatch(gridPts, GRID_COLOR, 0.4);
   addBatch(xAxisPts, AXIS_COLORS.x, 0.5);
   addBatch(yAxisPts, AXIS_COLORS.y, 0.5);
   addBatch(zAxisPts, AXIS_COLORS.z, 0.5);

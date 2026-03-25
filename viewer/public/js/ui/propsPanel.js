@@ -1,4 +1,5 @@
 import { CAT_COLORS, CAT_NAMES } from '../engine/scene.js';
+import { getPortLayout } from '../engine/entities.js';
 import { refreshIcons } from './icons.js';
 import { toggleGrid, hasGrid } from '../engine/entityGrid.js';
 
@@ -104,18 +105,18 @@ export function createPropsPanel(container) {
       html += `</div>`;
 
       // Ports
-      const portLayout = entityData.portLayouts ? entityData.portLayouts[e.c] : null;
+      const portLayout = getPortLayout(e, entityData.portLayouts);
       if (portLayout && portLayout.length > 0) {
         html += `<div class="props-section">`;
         html += `<div class="props-section-title">Ports</div>`;
         for (let pi = 0; pi < portLayout.length; pi++) {
           const p = portLayout[pi];
           const connected = e.cn ? e.cn[pi] : 0;
-          const flowClass = p.flow === 0 ? 'input' : 'output';
+          const flowClass = p.flow === -1 ? 'bidir' : p.flow === 0 ? 'input' : 'output';
           const typeClass = p.type === 0 ? 'belt' : 'pipe';
           const statusClass = connected ? 'connected' : 'disconnected';
           const statusText = connected ? 'connected' : 'disconnected';
-          const flowLabel = p.flow === 0 ? 'in' : 'out';
+          const flowLabel = p.flow === -1 ? 'any' : p.flow === 0 ? 'in' : 'out';
           html += `<div class="props-port-row">`;
           html += `<span class="props-port-dot ${typeClass} ${flowClass}"></span>`;
           html += `<span class="props-port-name">${p.n}</span>`;
@@ -151,7 +152,7 @@ export function createPropsPanel(container) {
         props.ports = portLayout.map((p, pi) => ({
           name: p.n,
           type: p.type === 0 ? 'belt' : 'pipe',
-          flow: p.flow === 0 ? 'input' : 'output',
+          flow: p.flow === -1 ? 'any' : p.flow === 0 ? 'input' : 'output',
           connected: !!(e.cn && e.cn[pi]),
           offset: { x: p.ox, y: p.oy, z: p.oz },
           dir: { x: p.dx, y: p.dy, z: p.dz },

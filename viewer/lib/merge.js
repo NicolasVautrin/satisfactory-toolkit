@@ -234,7 +234,7 @@ function mergeCbpIntoSave() {
   console.log(`Merge session: ${sessionId}`);
 
   const cbpRaw = cbpState.raw;
-  const save = Parser.ParseSave(saveState.name, saveState.saveBuf);
+  const save = saveState.save;
 
   const mainLevelKey = Object.keys(save.levels).find(k => {
     const objs = save.levels[k].objects;

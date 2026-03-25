@@ -1,14 +1,66 @@
+const http = require('http');
 const path = require('path');
 const express = require('express');
+const { WebSocketServer } = require('ws');
 const { initSession } = require('../satisfactoryLib');
 const Blueprint = require('../lib/Blueprint');
-const { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, deleteEntities, injectBlueprint } = require('./lib/saveLoader');
+const { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, injectBlueprint, editEntities } = require('./lib/saveLoader');
 const { mergeCbpIntoSave } = require('./lib/merge');
 
 // ── Express ────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── WebSocket ──────────────────────────────────────────────────────
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+function broadcast(msg) {
+  const data = JSON.stringify(msg);
+  console.log('[WS>>]', msg.type, data.substring(0, 300));
+  for (const ws of wss.clients) {
+    if (ws.readyState === 1) ws.send(data);
+  }
+}
+
+let cameraState = null;
+
+wss.on('connection', (ws) => {
+  console.log('WebSocket client connected');
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data);
+      if (msg.type === 'camera') {
+        cameraState = { position: msg.position, yaw: msg.yaw, pitch: msg.pitch };
+      }
+    } catch (e) {}
+  });
+  ws.on('close', () => console.log('WebSocket client disconnected'));
+});
+
+// ── Load save from disk ──────────────────────────────────────────────
+const fs = require('fs');
+app.post('/api/load-file', (req, res) => {
+  const { filePath } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'filePath required' });
+  try {
+    const buf = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const name = path.basename(filePath, ext);
+    const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    if (ext === '.cbp' || ext === '.sbp') {
+      ext === '.cbp' ? loadCbp(name, arrayBuf) : loadBlueprint(name, arrayBuf);
+      res.json({ success: true, type: 'cbp', name });
+    } else {
+      loadSave(name, arrayBuf);
+      res.json({ success: true, type: 'save', name });
+    }
+  } catch (err) {
+    console.error('Load file error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ── Upload save/CBP ────────────────────────────────────────────────
 app.post('/api/upload', express.raw({ type: 'application/octet-stream', limit: '500mb' }), (req, res) => {
@@ -51,8 +103,12 @@ app.get('/api/inspect/:index', (req, res) => {
   const saveState = getSaveState();
   if (!saveState) return res.status(400).json({ error: 'No save loaded' });
   const idx = parseInt(req.params.index);
-  const entity = saveState.entities[idx];
-  if (!entity) return res.status(404).json({ error: 'Entity not found' });
+  const item = saveState.items[idx];
+  if (!item) return res.status(404).json({ error: 'Entity not found' });
+  if (item.type === 'lw') {
+    return res.json({ typePath: item.lw.typePath, cls: item.lw.cls, transform: item.lw.transform, lightweight: true });
+  }
+  const entity = item.entity;
 
   const comps = (entity.components || []).map(ref => {
     const comp = saveState.allObjects.find(o => o.instanceName === ref.pathName);
@@ -68,10 +124,7 @@ app.get('/api/inspect/:index', (req, res) => {
   const props = {};
   for (const [k, v] of Object.entries(entity.properties || {})) {
     if (v?.value?.pathName) props[k] = v.value.pathName;
-    else if (v?.value !== undefined) {
-      const s = JSON.stringify(v.value);
-      props[k] = s.length > 200 ? s.substring(0, 200) + '...' : v.value;
-    }
+    else if (v?.value !== undefined) props[k] = v.value;
   }
 
   res.json({
@@ -102,25 +155,22 @@ app.post('/api/export', (req, res) => {
 
     initSession();
 
-    const lwStartIdx = saveState.entities.length;
     let cx = 0, cy = 0, cz = 0;
     const selected = [];
     const selectedLw = [];
     for (const idx of indices) {
-      if (idx >= lwStartIdx) {
-        const lw = saveState.lwInstances[idx - lwStartIdx];
-        if (!lw) continue;
-        selectedLw.push(lw);
-        cx += lw.transform.translation.x;
-        cy += lw.transform.translation.y;
-        cz += lw.transform.translation.z;
+      const item = saveState.items[idx];
+      if (!item) continue;
+      if (item.type === 'lw') {
+        selectedLw.push(item.lw);
+        cx += item.lw.transform.translation.x;
+        cy += item.lw.transform.translation.y;
+        cz += item.lw.transform.translation.z;
       } else {
-        const e = saveState.entities[idx];
-        if (!e) continue;
-        selected.push(e);
-        cx += e.transform.translation.x;
-        cy += e.transform.translation.y;
-        cz += e.transform.translation.z;
+        selected.push(item.entity);
+        cx += item.entity.transform.translation.x;
+        cy += item.entity.transform.translation.y;
+        cz += item.entity.transform.translation.z;
       }
     }
     const totalCount = selected.length + selectedLw.length;
@@ -203,19 +253,6 @@ app.post('/api/export', (req, res) => {
   }
 });
 
-// ── Delete entities ─────────────────────────────────────────────────
-app.post('/api/delete', (req, res) => {
-  try {
-    const { indices } = req.body;
-    if (!indices?.length) return res.status(400).json({ error: 'indices required' });
-    const result = deleteEntities(indices);
-    res.json({ success: true, deleted: result.deleted, save: result.entityData });
-  } catch (err) {
-    console.error('Delete error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ── Inject blueprint into save ──────────────────────────────────────
 app.post('/api/inject-blueprint', (req, res) => {
   try {
@@ -233,10 +270,12 @@ app.post('/api/inject-blueprint', (req, res) => {
 app.get('/api/download-save', (req, res) => {
   const saveState = getSaveState();
   if (!saveState) return res.status(400).json({ error: 'No save loaded' });
+  const { serializeSave } = require('./lib/saveLoader');
+  const buf = serializeSave();
   const outputName = `${saveState.name}_edit`;
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${outputName}.sav"`);
-  res.send(Buffer.from(saveState.saveBuf));
+  res.send(buf);
 });
 
 // ── Merge CBP into save ────────────────────────────────────────────
@@ -255,6 +294,101 @@ app.post('/api/merge', (req, res) => {
   }
 });
 
+// ── Camera state ─────────────────────────────────────────────────────
+app.get('/api/camera', (req, res) => {
+  if (!cameraState) return res.status(404).json({ error: 'No camera data (open viewer first)' });
+  res.json(cameraState);
+});
+
+// ── Edit entities (add/update/delete + connections) ─────────────────
+app.post('/api/edit', (req, res) => {
+  try {
+    const batch = req.body;
+    if (!batch?.entities?.length) {
+      return res.status(400).json({ error: 'entities array required' });
+    }
+
+    // Resolve anchor: { fromCamera: distance } or { x, y, z }
+    if (batch.anchor?.fromCamera !== undefined) {
+      if (!cameraState) {
+        return res.status(400).json({ error: 'No camera data — open viewer first' });
+      }
+      const dist = batch.anchor.fromCamera;
+      const yawRad = cameraState.yaw * Math.PI / 180;
+      const pitchRad = cameraState.pitch * Math.PI / 180;
+      const cosPitch = Math.cos(pitchRad);
+      batch.anchor = {
+        x: cameraState.position.x + Math.cos(yawRad) * cosPitch * dist,
+        y: cameraState.position.y + Math.sin(yawRad) * cosPitch * dist,
+        z: cameraState.position.z + Math.sin(pitchRad) * dist,
+      };
+    }
+
+    const result = editEntities(batch);
+
+    // Broadcast added entities
+    for (const ent of result.added) {
+      broadcast({
+        type: 'entityAdded',
+        index: ent.index,
+        item: ent.item,
+        classUpdate: ent.classUpdate,
+      });
+    }
+
+    // Broadcast updated entities
+    for (const ent of result.updated) {
+      broadcast({
+        type: 'entityAdded',
+        index: ent.index,
+        item: ent.item,
+        classUpdate: ent.classUpdate,
+      });
+    }
+
+    // Broadcast deleted entities
+    if (result.deleted.length > 0) {
+      broadcast({ type: 'entitiesDeleted', indices: result.deleted });
+    }
+
+    // Broadcast connection updates
+    for (const conn of result.connections) {
+      if (conn.source && conn.target) {
+        broadcast({
+          type: 'connectionsUpdated',
+          entities: [conn.source, conn.target],
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      added: result.added.map(e => ({ id: e.id, index: e.index, instanceName: e.instanceName })),
+      updated: result.updated.map(e => ({ id: e.id, index: e.index })),
+      deleted: result.deleted,
+      connections: result.connections.length,
+    });
+  } catch (err) {
+    console.error('Edit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Move player (deferred — applied on save export) ─────────────────
+app.post('/api/move-player', (req, res) => {
+  try {
+    const { position } = req.body;
+    if (!position) return res.status(400).json({ error: 'position {x, y, z} required' });
+    const { setPlayerPosition } = require('./lib/saveLoader');
+    setPlayerPosition(position);
+    console.log(`Player position set to (${position.x}, ${position.y}, ${position.z}) — will be applied on save export`);
+    res.json({ success: true, position });
+  } catch (err) {
+    console.error('Move player error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Shutdown ───────────────────────────────────────────────────────
 app.post('/api/shutdown', (req, res) => {
   res.json({ success: true });
@@ -264,6 +398,6 @@ app.post('/api/shutdown', (req, res) => {
 
 // ── Start ──────────────────────────────────────────────────────────
 const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Viewer: http://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Viewer: http://localhost:${PORT} (WebSocket enabled)`);
 });

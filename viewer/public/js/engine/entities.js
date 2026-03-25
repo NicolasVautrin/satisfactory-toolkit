@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, camera, gameToViewer, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE } from './scene.js';
+import { scene, camera, gameToViewer, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE } from './scene.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;
@@ -36,8 +36,7 @@ export function setCatVisible(cat, visible) {
 export function setPortsVisible(visible) {
   portsVisible = visible;
   for (const mesh of portMeshes) {
-    const cat = mesh.userData.cat;
-    mesh.visible = visible && catVisible[cat];
+    mesh.visible = visible && catVisible[mesh.userData.cat];
   }
 }
 
@@ -46,245 +45,38 @@ export function setCbpVisible(visible) {
   for (const mesh of cbpMeshes) mesh.visible = visible;
 }
 
-// ── Spline helpers ──────────────────────────────────────────
-const _segDir = new THREE.Vector3();
-const _segMid = new THREE.Vector3();
-const _segQuat = new THREE.Quaternion();
-const SPLINE_RADIUS = 30;
+// ── Shared geometry ─────────────────────────────────────────
+const _boxGeom = new THREE.BoxGeometry(1, 1, 1);
+const _cylGeom = new THREE.CylinderGeometry(1, 1, 1, 6);
+const _sphereGeom = new THREE.SphereGeometry(0.5, 8, 6);
+const _coneGeom = new THREE.ConeGeometry(0.5, 1, 8);
 
-function splineSegmentMatrix(p1, p2, matrix) {
-  const v1 = gameToViewer(p1[0], p1[1], p1[2]);
-  const v2 = gameToViewer(p2[0], p2[1], p2[2]);
-  _segDir.set(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z);
-  const len = _segDir.length();
-  if (len < 0.01) return false;
-  _segDir.divideScalar(len);
-  _segMid.set((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
-  const _yAxis = new THREE.Vector3(0, 1, 0);
-  _segQuat.setFromUnitVectors(_yAxis, _segDir);
-  matrix.compose(_segMid, _segQuat, new THREE.Vector3(SPLINE_RADIUS, len, SPLINE_RADIUS));
-  return true;
-}
+// ── Shared temporaries ──────────────────────────────────────
+const _m = new THREE.Matrix4();
+const _pos = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
+const _scale = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _color = new THREE.Color();
+const _yAxis = new THREE.Vector3(0, 1, 0);
 
-// ── Create InstancedMesh ────────────────────────────────────
-function createDisplayMesh(geom, color, count, cat, opacity = 0.6) {
-  const mat = new THREE.MeshLambertMaterial({
-    color: 0xffffff, transparent: true, opacity,
-  });
-  const mesh = new THREE.InstancedMesh(geom, mat, count);
-  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-  mesh.userData = { cat, instanceToEntity: new Array(count), baseColor: new THREE.Color(color) };
-  return mesh;
-}
-
-// ── Belt spline segment (box) ───────────────────────────────
-const BELT_SECTION = 30; // 30u = ~0.3m square section
-
-function beltSegmentMatrix(p1, p2, matrix) {
-  const v1 = gameToViewer(p1[0], p1[1], p1[2]);
-  const v2 = gameToViewer(p2[0], p2[1], p2[2]);
-  _segDir.set(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z);
-  const len = _segDir.length();
-  if (len < 0.01) return false;
-  _segDir.divideScalar(len);
-  _segMid.set((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
-  const _yAxis = new THREE.Vector3(0, 1, 0);
-  _segQuat.setFromUnitVectors(_yAxis, _segDir);
-  matrix.compose(_segMid, _segQuat, new THREE.Vector3(BELT_SECTION, len, BELT_SECTION));
-  return true;
-}
-
-// ── Lift rendering constants ────────────────────────────────
-const LIFT_SHAFT_SECTION = 30;   // 30cm shaft
-const LIFT_END_SIZE = 50;        // 50cm endpoint cubes
-
-// ── Build meshes from entity data ───────────────────────────
-function buildMeshes(data, meshArray, colorMode) {
-  const { classNames, clearance, entities } = data;
-
-  const catBoxInstances = Array.from({ length: 8 }, () => []);
-  const catBeltSplineInstances = Array.from({ length: 8 }, () => []);
-  const catPipeSplineInstances = Array.from({ length: 8 }, () => []);
-  const catLiftInstances = []; // { ei, p1, p2 }
-
-  for (let ei = 0; ei < entities.length; ei++) {
-    const e = entities[ei];
-    if (e.lift && e.lift.length === 2) {
-      // ConveyorLift → special rendering
-      catLiftInstances.push({ ei, p1: e.lift[0], p2: e.lift[1], cat: e.cat });
-    } else if (e.sp && e.sp.length >= 2) {
-      const isBelt = e.cat === 2; // Belts category
-      const bucket = isBelt ? catBeltSplineInstances : catPipeSplineInstances;
-      for (let s = 0; s < e.sp.length - 1; s++) {
-        bucket[e.cat].push({ ei, p1: e.sp[s], p2: e.sp[s + 1] });
-      }
-    } else if (e.box) {
-      catBoxInstances[e.cat].push({ ei, box: e.box });
-    } else {
-      const boxes = clearance[e.c];
-      if (boxes && boxes.length > 0) {
-        for (const box of boxes) catBoxInstances[e.cat].push({ ei, box });
-      } else {
-        catBoxInstances[e.cat].push({ ei, box: null });
-      }
-    }
-  }
-
-  const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-  const cylGeom = new THREE.CylinderGeometry(1, 1, 1, 6);
-  const matrix = new THREE.Matrix4();
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const boxOffset = new THREE.Vector3();
-  const color = new THREE.Color();
-
-  const isCbp = colorMode === 'cbp';
-  const opacity = isCbp ? 0.3 : 0.6;
-  const splineOpacity = isCbp ? 0.4 : 0.8;
-
-  for (let cat = 0; cat < 8; cat++) {
-    // Boxes
-    const boxInsts = catBoxInstances[cat];
-    if (boxInsts.length > 0) {
-      const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
-      const mesh = createDisplayMesh(boxGeom, catColor, boxInsts.length, cat, opacity);
-      color.copy(catColor);
-      for (let j = 0; j < boxInsts.length; j++) {
-        const { ei, box } = boxInsts[j];
-        const e = entities[ei];
-        mesh.userData.instanceToEntity[j] = ei;
-        pos.copy(gameToViewer(e.tx, e.ty, e.tz));
-        quat.set(e.rx, -e.ry, -e.rz, e.rw);
-        if (box) {
-          scale.set(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
-          boxOffset.set(
-            (box.min.x + box.max.x) / 2 + (box.rt ? box.rt.x : 0),
-            (box.min.y + box.max.y) / 2 + (box.rt ? box.rt.y : 0),
-            (box.min.z + box.max.z) / 2 + (box.rt ? box.rt.z : 0),
-          );
-          boxOffset.applyQuaternion(quat);
-          pos.add(boxOffset);
-        } else {
-          scale.set(DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE);
-        }
-        matrix.compose(pos, quat, scale);
-        mesh.setMatrixAt(j, matrix);
-        mesh.setColorAt(j, color);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor.needsUpdate = true;
-      scene.add(mesh);
-      meshArray.push(mesh);
-    }
-
-    // Belt splines (box section)
-    const beltInsts = catBeltSplineInstances[cat];
-    if (beltInsts.length > 0) {
-      const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
-      const mesh = createDisplayMesh(boxGeom, catColor, beltInsts.length, cat, splineOpacity);
-      color.copy(catColor);
-      for (let j = 0; j < beltInsts.length; j++) {
-        const { ei, p1, p2 } = beltInsts[j];
-        mesh.userData.instanceToEntity[j] = ei;
-        if (beltSegmentMatrix(p1, p2, matrix)) {
-          mesh.setMatrixAt(j, matrix);
-        }
-        mesh.setColorAt(j, color);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor.needsUpdate = true;
-      scene.add(mesh);
-      meshArray.push(mesh);
-    }
-
-    // Pipe splines (cylinder section)
-    const pipeInsts = catPipeSplineInstances[cat];
-    if (pipeInsts.length > 0) {
-      const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
-      const mesh = createDisplayMesh(cylGeom, catColor, pipeInsts.length, cat, splineOpacity);
-      color.copy(catColor);
-      for (let j = 0; j < pipeInsts.length; j++) {
-        const { ei, p1, p2 } = pipeInsts[j];
-        mesh.userData.instanceToEntity[j] = ei;
-        if (splineSegmentMatrix(p1, p2, matrix)) {
-          mesh.setMatrixAt(j, matrix);
-        }
-        mesh.setColorAt(j, color);
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor.needsUpdate = true;
-      scene.add(mesh);
-      meshArray.push(mesh);
-    }
-  }
-
-  // Lifts: shaft (box) + 2 endpoint cubes
-  if (catLiftInstances.length > 0) {
-    // 3 instances per lift: shaft + bottom cube + top cube
-    const totalInsts = catLiftInstances.length * 3;
-    const liftCat = 2; // Belts category
-    const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[liftCat]);
-    const mesh = createDisplayMesh(boxGeom, catColor, totalInsts, liftCat, splineOpacity);
-    color.copy(catColor);
-    const yAxis = new THREE.Vector3(0, 1, 0);
-    const dir = new THREE.Vector3();
-
-    let j = 0;
-    for (const { ei, p1, p2 } of catLiftInstances) {
-      const v1 = gameToViewer(p1[0], p1[1], p1[2]);
-      const v2 = gameToViewer(p2[0], p2[1], p2[2]);
-      dir.set(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z);
-      const len = dir.length();
-
-      if (len < 0.01) {
-        // Degenerate lift, skip
-        for (let k = 0; k < 3; k++) { mesh.userData.instanceToEntity[j] = ei; mesh.setColorAt(j, color); j++; }
-        continue;
-      }
-
-      dir.divideScalar(len);
-      const liftQuat = new THREE.Quaternion().setFromUnitVectors(yAxis, dir);
-      const mid = new THREE.Vector3((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
-
-      // Shaft
-      mesh.userData.instanceToEntity[j] = ei;
-      matrix.compose(mid, liftQuat, new THREE.Vector3(LIFT_SHAFT_SECTION, len, LIFT_SHAFT_SECTION));
-      mesh.setMatrixAt(j, matrix);
-      mesh.setColorAt(j, color);
-      j++;
-
-      // Bottom endpoint cube
-      mesh.userData.instanceToEntity[j] = ei;
-      quat.identity();
-      matrix.compose(v1, quat, new THREE.Vector3(LIFT_END_SIZE, LIFT_END_SIZE, LIFT_END_SIZE));
-      mesh.setMatrixAt(j, matrix);
-      mesh.setColorAt(j, color);
-      j++;
-
-      // Top endpoint cube
-      mesh.userData.instanceToEntity[j] = ei;
-      matrix.compose(v2, quat, new THREE.Vector3(LIFT_END_SIZE, LIFT_END_SIZE, LIFT_END_SIZE));
-      mesh.setMatrixAt(j, matrix);
-      mesh.setColorAt(j, color);
-      j++;
-    }
-
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    scene.add(mesh);
-    meshArray.push(mesh);
-  }
-}
-
-// ── Port rendering ─────────────────────────────────────────
+// ── Port constants ──────────────────────────────────────────
 const PORT_INPUT_COLOR = new THREE.Color(0x44ff44);
 const PORT_OUTPUT_COLOR = new THREE.Color(0xff8844);
+const PORT_BIDIR_COLOR = new THREE.Color(0x44aaff);
 const PORT_MARKER_CONNECTED = 50;
 const PORT_MARKER_DISCONNECTED = 100;
 const PORT_CONE_H_CONNECTED = 100;
 const PORT_CONE_H_DISCONNECTED = 200;
 const PORT_CONE_RADIUS = 50;
+const BELT_SECTION = 30;
+const SPLINE_RADIUS = 30;
+
+function portColor(flow) {
+  return flow === -1 ? PORT_BIDIR_COLOR : flow === 0 ? PORT_INPUT_COLOR : PORT_OUTPUT_COLOR;
+}
+
+// ── Matrix computations ─────────────────────────────────────
 
 function quatRotateVec(qx, qy, qz, qw, vx, vy, vz) {
   const cx = qy * vz - qz * vy;
@@ -300,145 +92,223 @@ function quatRotateVec(qx, qy, qz, qw, vx, vy, vz) {
   };
 }
 
-function buildPortMeshes(data) {
-  const { classNames, entities, portLayouts } = data;
-  if (!portLayouts) return;
-
-  // Log which classNames have port layouts
-  const portClassCounts = {};
-  for (let ei = 0; ei < entities.length; ei++) {
-    const e = entities[ei];
-    if (portLayouts[e.c]) {
-      const cls = classNames[e.c];
-      portClassCounts[cls] = (portClassCounts[cls] || 0) + 1;
-    }
+function boxMatrix(e, box) {
+  _pos.copy(gameToViewer(e.tx, e.ty, e.tz));
+  _quat.set(e.rx, -e.ry, -e.rz, e.rw);
+  if (box) {
+    _scale.set(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
+    _pos.add(boxLocalOffset(box, _quat));
+  } else {
+    _scale.set(DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE, DEFAULT_BOX_SIZE);
   }
-  console.log('[Ports] Classes with ports:', portClassCounts);
+  _m.compose(_pos, _quat, _scale);
+}
 
-  // Collect all port instances grouped by: cat × portType × flow × connected
-  // Key = `${cat}_${portType}_${flow}_${connected}`
-  const markerBuckets = {};
-  const coneBuckets = {};
+function splineMatrix(p1, p2, section) {
+  const v1 = gameToViewer(p1[0], p1[1], p1[2]);
+  const v2 = gameToViewer(p2[0], p2[1], p2[2]);
+  _dir.set(v2.x - v1.x, v2.y - v1.y, v2.z - v1.z);
+  const len = _dir.length();
+  if (len < 0.01) return false;
+  _dir.divideScalar(len);
+  _pos.set((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
+  _quat.setFromUnitVectors(_yAxis, _dir);
+  _scale.set(section, len, section);
+  _m.compose(_pos, _quat, _scale);
+  return true;
+}
 
-  for (let ei = 0; ei < entities.length; ei++) {
-    const e = entities[ei];
-    const layout = portLayouts[e.c];
-    if (!layout) continue;
+function portMarkerMatrix(inst) {
+  const size = inst.connected ? PORT_MARKER_CONNECTED : PORT_MARKER_DISCONNECTED;
+  _pos.copy(gameToViewer(inst.wx, inst.wy, inst.wz));
+  _quat.identity();
+  _scale.set(size, size, size);
+  _m.compose(_pos, _quat, _scale);
+}
 
-    for (let pi = 0; pi < layout.length; pi++) {
-      const p = layout[pi];
-      const connected = e.cn ? e.cn[pi] : 0;
+function portConeMatrix(inst) {
+  const coneH = inst.connected ? PORT_CONE_H_CONNECTED : PORT_CONE_H_DISCONNECTED;
+  _dir.set(-inst.ndx, inst.ndy, inst.ndz); // gameToViewer: flip X
+  if (_dir.lengthSq() < 0.001) _dir.set(0, 1, 0);
+  _dir.normalize();
+  _quat.setFromUnitVectors(_yAxis, _dir);
+  _pos.copy(gameToViewer(inst.wx, inst.wy, inst.wz));
+  _pos.addScaledVector(_dir, coneH / 2);
+  _scale.set(PORT_CONE_RADIUS * 2, coneH, PORT_CONE_RADIUS * 2);
+  _m.compose(_pos, _quat, _scale);
+}
 
-      // Rotate offset by entity quaternion (in Unreal space)
-      const rOff = quatRotateVec(e.rx, e.ry, e.rz, e.rw, p.ox, p.oy, p.oz);
-      const wx = e.tx + rOff.x;
-      const wy = e.ty + rOff.y;
-      const wz = e.tz + rOff.z;
+// ── Port layout helpers ─────────────────────────────────────
 
-      // Rotate direction by entity quaternion (in Unreal space)
-      const rDir = quatRotateVec(e.rx, e.ry, e.rz, e.rw, p.dx, p.dy, p.dz);
-      // Normalize direction
-      const dLen = Math.sqrt(rDir.x * rDir.x + rDir.y * rDir.y + rDir.z * rDir.z);
-      const ndx = dLen > 0 ? rDir.x / dLen : 0;
-      const ndy = dLen > 0 ? rDir.y / dLen : 0;
-      const ndz = dLen > 0 ? rDir.z / dLen : 0;
+export function getPortLayout(e, portLayouts) {
+  return e.ports || (portLayouts && portLayouts[e.c]) || null;
+}
 
-      const key = `${e.cat}_${p.type}_${p.flow}_${connected}`;
-      if (!markerBuckets[key]) markerBuckets[key] = [];
-      markerBuckets[key].push({ ei, pi, wx, wy, wz, cat: e.cat, ptype: p.type, flow: p.flow, connected });
-
-      if (!coneBuckets[key]) coneBuckets[key] = [];
-      coneBuckets[key].push({ ei, pi, wx, wy, wz, ndx, ndy, ndz, cat: e.cat, flow: p.flow, connected });
-    }
-  }
-
-  const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-  const sphereGeom = new THREE.SphereGeometry(0.5, 8, 6);
-  const coneGeom = new THREE.ConeGeometry(0.5, 1, 8);
-  const matrix = new THREE.Matrix4();
-  const pos = new THREE.Vector3();
-  const scl = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const color = new THREE.Color();
-  const yAxis = new THREE.Vector3(0, 1, 0);
-  const dir = new THREE.Vector3();
-
-  // Build marker meshes
-  for (const [key, bucket] of Object.entries(markerBuckets)) {
-    const { cat, ptype, flow, connected } = bucket[0];
-    const geom = ptype === 0 ? boxGeom : sphereGeom; // 0=belt→box, 1=pipe→sphere
-    const baseColor = flow === 0 ? PORT_INPUT_COLOR : PORT_OUTPUT_COLOR;
-    const size = connected ? PORT_MARKER_CONNECTED : PORT_MARKER_DISCONNECTED;
-    const opacity = connected ? 0.3 : 1.0;
-
-    const mat = new THREE.MeshLambertMaterial({
-      color: 0xffffff, transparent: true, opacity,
+function computePorts(ei, e, portLayouts) {
+  const layout = getPortLayout(e, portLayouts);
+  if (!layout) return null;
+  const instances = [];
+  for (let pi = 0; pi < layout.length; pi++) {
+    const p = layout[pi];
+    const connected = e.cn ? e.cn[pi] : 0;
+    const rOff = quatRotateVec(e.rx, e.ry, e.rz, e.rw, p.ox, p.oy, p.oz);
+    const wx = e.tx + rOff.x, wy = e.ty + rOff.y, wz = e.tz + rOff.z;
+    const rDir = quatRotateVec(e.rx, e.ry, e.rz, e.rw, p.dx, p.dy, p.dz);
+    const dLen = Math.sqrt(rDir.x * rDir.x + rDir.y * rDir.y + rDir.z * rDir.z);
+    instances.push({
+      ei, pi, wx, wy, wz,
+      ndx: dLen > 0 ? rDir.x / dLen : 0,
+      ndy: dLen > 0 ? rDir.y / dLen : 0,
+      ndz: dLen > 0 ? rDir.z / dLen : 0,
+      cat: e.cat, ptype: p.type, flow: p.flow, connected,
     });
-    const mesh = new THREE.InstancedMesh(geom, mat, bucket.length);
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(bucket.length * 3), 3);
-    mesh.userData = { cat, isPort: true, instanceToEntity: new Array(bucket.length), instanceToPort: new Array(bucket.length) };
+  }
+  return instances;
+}
 
-    color.copy(baseColor);
-    for (let j = 0; j < bucket.length; j++) {
-      const inst = bucket[j];
-      mesh.userData.instanceToEntity[j] = inst.ei;
-      mesh.userData.instanceToPort[j] = inst.pi;
-      pos.copy(gameToViewer(inst.wx, inst.wy, inst.wz));
-      scl.set(size, size, size);
-      quat.identity();
-      matrix.compose(pos, quat, scl);
-      mesh.setMatrixAt(j, matrix);
-      mesh.setColorAt(j, color);
+// ── InstancedMesh creation from bucket ──────────────────────
+
+function createInstancedMesh(geom, matOptions, count, userData) {
+  const mat = new THREE.MeshLambertMaterial(matOptions);
+  const mesh = new THREE.InstancedMesh(geom, mat, count);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+  mesh.userData = userData;
+  return mesh;
+}
+
+function flushBucket(bucket, geom, matOptions, computeMatrix, meshArray, cat) {
+  const count = bucket.length;
+  if (count === 0) return;
+  const mesh = createInstancedMesh(geom, matOptions, count, {
+    cat,
+    instanceToEntity: new Array(count),
+    baseColor: new THREE.Color(matOptions._bucketColor || 0xffffff),
+  });
+  for (let j = 0; j < count; j++) {
+    mesh.userData.instanceToEntity[j] = bucket[j].ei;
+    computeMatrix(bucket[j]);
+    mesh.setMatrixAt(j, _m);
+    _color.set(matOptions._bucketColor || 0xffffff);
+    mesh.setColorAt(j, _color);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.instanceColor.needsUpdate = true;
+  mesh.visible = catVisible[cat];
+  scene.add(mesh);
+  meshArray.push(mesh);
+}
+
+function flushPortBucket(bucket, geom, computeMatrix, meshArray) {
+  const count = bucket.length;
+  if (count === 0) return;
+  const { cat, flow, connected } = bucket[0];
+  const color = portColor(flow);
+  const opacity = connected ? 0.3 : 1.0;
+  const mesh = createInstancedMesh(geom, { color: 0xffffff, transparent: true, opacity, depthTest: false }, count, {
+    cat, isPort: true,
+    instanceToEntity: new Array(count),
+    instanceToPort: new Array(count),
+  });
+  mesh.renderOrder = 10;
+  _color.copy(color);
+  for (let j = 0; j < count; j++) {
+    mesh.userData.instanceToEntity[j] = bucket[j].ei;
+    mesh.userData.instanceToPort[j] = bucket[j].pi;
+    computeMatrix(bucket[j]);
+    mesh.setMatrixAt(j, _m);
+    mesh.setColorAt(j, _color);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.instanceColor.needsUpdate = true;
+  mesh.visible = portsVisible && catVisible[cat];
+  scene.add(mesh);
+  meshArray.push(mesh);
+}
+
+// ── Collect + flush: single pipeline for batch and single ───
+
+function buildEntityMeshes(entities, clearance, portLayouts, displayArray, portArray, colorMode) {
+  // ── Collect into buckets ──────────────────────────────────
+  const catBoxBuckets = Array.from({ length: 8 }, () => []);
+  const catBeltBuckets = Array.from({ length: 8 }, () => []);
+  const catPipeBuckets = Array.from({ length: 8 }, () => []);
+  const portMarkerBuckets = {};
+  const portConeBuckets = {};
+
+  for (let i = 0; i < entities.length; i++) {
+    const e = entities[i];
+    const ei = e._ei !== undefined ? e._ei : i; // allow override for incremental
+
+    // Boxes
+    if (e.boxes) {
+      for (const box of e.boxes) catBoxBuckets[e.cat].push({ ei, e, box });
+    } else if (e.sp && e.sp.length >= 2) {
+      const bucket = e.cat === 2 ? catBeltBuckets : catPipeBuckets;
+      for (let s = 0; s < e.sp.length - 1; s++) {
+        bucket[e.cat].push({ ei, p1: e.sp[s], p2: e.sp[s + 1] });
+      }
+    } else if (e.box) {
+      catBoxBuckets[e.cat].push({ ei, e, box: e.box });
+    } else {
+      const boxes = clearance[e.c];
+      if (boxes && boxes.length > 0) {
+        for (const box of boxes) catBoxBuckets[e.cat].push({ ei, e, box });
+      } else {
+        catBoxBuckets[e.cat].push({ ei, e, box: null });
+      }
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    mesh.visible = portsVisible && catVisible[cat];
-    scene.add(mesh);
-    portMeshes.push(mesh);
+
+    // Ports
+    const ports = computePorts(ei, e, portLayouts);
+    if (ports) {
+      for (const inst of ports) {
+        const key = `${inst.cat}_${inst.ptype}_${inst.flow}_${inst.connected}`;
+        if (!portMarkerBuckets[key]) portMarkerBuckets[key] = [];
+        portMarkerBuckets[key].push(inst);
+        if (!portConeBuckets[key]) portConeBuckets[key] = [];
+        portConeBuckets[key].push(inst);
+      }
+    }
   }
 
-  // Build cone meshes (direction indicators)
-  for (const [key, bucket] of Object.entries(coneBuckets)) {
-    const { cat, flow, connected } = bucket[0];
-    const baseColor = flow === 0 ? PORT_INPUT_COLOR : PORT_OUTPUT_COLOR;
-    const coneH = connected ? PORT_CONE_H_CONNECTED : PORT_CONE_H_DISCONNECTED;
-    const opacity = connected ? 0.3 : 1.0;
+  // ── Flush display meshes ──────────────────────────────────
+  const isCbp = colorMode === 'cbp';
+  const opacity = isCbp ? 0.3 : 0.6;
+  const splineOpacity = isCbp ? 0.4 : 0.8;
 
-    const mat = new THREE.MeshLambertMaterial({
-      color: 0xffffff, transparent: true, opacity,
-    });
-    const mesh = new THREE.InstancedMesh(coneGeom, mat, bucket.length);
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(bucket.length * 3), 3);
-    mesh.userData = { cat, isPort: true, instanceToEntity: new Array(bucket.length), instanceToPort: new Array(bucket.length) };
+  for (let cat = 0; cat < 8; cat++) {
+    const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[cat]);
 
-    color.copy(baseColor);
-    for (let j = 0; j < bucket.length; j++) {
-      const inst = bucket[j];
-      mesh.userData.instanceToEntity[j] = inst.ei;
-      mesh.userData.instanceToPort[j] = inst.pi;
-      // Cone tip should point in the port direction
-      // ConeGeometry points along +Y by default, tip at top
-      // We need to orient Y axis → port direction (in viewer space)
-      dir.set(-inst.ndx, inst.ndy, inst.ndz); // gameToViewer: flip X
-      if (dir.lengthSq() < 0.001) dir.set(0, 1, 0);
-      dir.normalize();
-      quat.setFromUnitVectors(yAxis, dir);
-
-      // Position the cone so its base is at the port position
-      // ConeGeometry center is at the middle, so offset by half height along direction
-      pos.copy(gameToViewer(inst.wx, inst.wy, inst.wz));
-      pos.addScaledVector(dir, coneH / 2);
-
-      scl.set(PORT_CONE_RADIUS * 2, coneH, PORT_CONE_RADIUS * 2);
-      matrix.compose(pos, quat, scl);
-      mesh.setMatrixAt(j, matrix);
-      mesh.setColorAt(j, color);
+    if (catBoxBuckets[cat].length > 0) {
+      flushBucket(catBoxBuckets[cat], _boxGeom,
+        { color: 0xffffff, transparent: true, opacity, _bucketColor: catColor },
+        (inst) => boxMatrix(inst.e, inst.box),
+        displayArray, cat);
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.instanceColor.needsUpdate = true;
-    mesh.visible = portsVisible && catVisible[cat];
-    scene.add(mesh);
-    portMeshes.push(mesh);
+
+    if (catBeltBuckets[cat].length > 0) {
+      flushBucket(catBeltBuckets[cat], _boxGeom,
+        { color: 0xffffff, transparent: true, opacity: splineOpacity, _bucketColor: catColor },
+        (inst) => splineMatrix(inst.p1, inst.p2, BELT_SECTION),
+        displayArray, cat);
+    }
+
+    if (catPipeBuckets[cat].length > 0) {
+      flushBucket(catPipeBuckets[cat], _cylGeom,
+        { color: 0xffffff, transparent: true, opacity: splineOpacity, _bucketColor: catColor },
+        (inst) => splineMatrix(inst.p1, inst.p2, SPLINE_RADIUS),
+        displayArray, cat);
+    }
+  }
+
+  // ── Flush port meshes ─────────────────────────────────────
+  for (const bucket of Object.values(portMarkerBuckets)) {
+    const geom = bucket[0].ptype === 0 ? _boxGeom : _sphereGeom;
+    flushPortBucket(bucket, geom, portMarkerMatrix, portArray);
+  }
+
+  for (const bucket of Object.values(portConeBuckets)) {
+    flushPortBucket(bucket, _coneGeom, portConeMatrix, portArray);
   }
 }
 
@@ -453,12 +323,51 @@ export function buildSaveScene(data) {
   saveEntityData = data;
   clearMeshes(displayMeshes);
   clearMeshes(portMeshes);
-  buildMeshes(data, displayMeshes, 'save');
-  buildPortMeshes(data);
+  buildEntityMeshes(data.entities, data.clearance, data.portLayouts, displayMeshes, portMeshes, 'save');
+  console.log('[Ports] built for', data.entities.length, 'entities');
 }
 
 export function buildCbpScene(data) {
   cbpEntityData = data;
   clearMeshes(cbpMeshes);
-  buildMeshes(data, cbpMeshes, 'cbp');
+  buildEntityMeshes(data.entities, data.clearance, data.portLayouts || {}, cbpMeshes, [], 'cbp');
+}
+
+// ── Incremental entity addition (same pipeline, 1 entity) ──
+
+export function addEntityToScene(item, classUpdate) {
+  if (!saveEntityData) return;
+
+  if (classUpdate) {
+    saveEntityData.classNames = classUpdate.classNames;
+    saveEntityData.clearance = classUpdate.clearance;
+    saveEntityData.portLayouts = classUpdate.portLayouts;
+  }
+
+  const ei = saveEntityData.entities.length;
+  saveEntityData.entities.push(item);
+
+  // Tag with real index for the pipeline
+  const tagged = { ...item, _ei: ei };
+  buildEntityMeshes([tagged], saveEntityData.clearance, saveEntityData.portLayouts, displayMeshes, portMeshes, 'save');
+}
+
+// ── Rebuild ports for an entity (after connection update) ───
+
+export function rebuildEntityPorts(ei, e, portLayouts) {
+  // Remove existing port meshes for this entity
+  for (let i = portMeshes.length - 1; i >= 0; i--) {
+    const mesh = portMeshes[i];
+    const indices = mesh.userData?.instanceToEntity;
+    if (!indices) continue;
+    if (indices.length === 1 && indices[0] === ei) {
+      scene.remove(mesh);
+      mesh.geometry?.dispose();
+      mesh.material?.dispose();
+      portMeshes.splice(i, 1);
+    }
+  }
+  // Rebuild via same pipeline
+  const tagged = { ...e, _ei: ei };
+  buildEntityMeshes([tagged], saveEntityData.clearance, portLayouts, [], portMeshes, 'save');
 }

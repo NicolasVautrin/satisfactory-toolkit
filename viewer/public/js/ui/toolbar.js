@@ -11,10 +11,11 @@ function closeAll() {
   openMenu = null;
 }
 
-// Close menus on click outside
+// Close menus on click outside or focus loss
 document.addEventListener('pointerdown', (e) => {
   if (openMenu && !openMenu.menu.contains(e.target)) closeAll();
 });
+window.addEventListener('blur', closeAll);
 
 function createMenu(container, label) {
   const menu = document.createElement('div');

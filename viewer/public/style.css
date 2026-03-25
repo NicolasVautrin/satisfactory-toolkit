@@ -21,7 +21,7 @@ body {
   grid-area: topbar;
   background: #2a2a2a; border-bottom: 1px solid #444;
   display: flex; align-items: center;
-  height: 32px; z-index: 10;
+  height: 32px; z-index: 20;
   font-size: 12px;
 }
 
@@ -180,6 +180,7 @@ body {
 .props-port-dot.pipe { border-radius: 50%; }
 .props-port-dot.input { background: #44ff44; }
 .props-port-dot.output { background: #ff8844; }
+.props-port-dot.bidir { background: #44aaff; }
 .props-port-name { flex: 1; }
 .props-port-status { font-size: 10px; }
 

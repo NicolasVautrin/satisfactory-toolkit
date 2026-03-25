@@ -57,8 +57,11 @@ Le serveur démarre sans save — charger les fichiers `.sav` et `.cbp` via le b
 - Si le shutdown ne répond pas (ancienne instance) : `powershell -Command 'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }'`
 - Pour **redémarrer** après des modifications : d'abord shutdown/kill, attendre 1s, puis relancer
 - **Important** : quand un serveur est lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
-- Après modification de `viewer/server.js`, il faut **redémarrer le serveur** ET **hard reload** (Ctrl+Shift+R) dans le navigateur
-- Après modification de `viewer/public/index.html`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
+- Après modification de `viewer/server.js` ou de fichiers sous `viewer/lib/`, il faut **redémarrer le serveur** ET **hard reload** (Ctrl+Shift+R) dans le navigateur
+- Après modification de `viewer/public/`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
+- **Relancer le serveur automatiquement** après modification de fichiers serveur — l'utilisateur a une confirmation via le tool approval
+- **Ne pas supprimer les entités de test avant un restart** — le restart perd la save de toute façon, supprimer avant est inutile
+- **Après le démarrage du serveur**, toujours charger la save TEST : `curl -s -X POST http://localhost:3000/api/load-file -H "Content-Type: application/json" -d '{"filePath":"C:/Users/nicolasv/AppData/Local/FactoryGame/Saved/SaveGames/76561198036887614/TEST.sav"}'`
 
 ### Contrôles caméra
 

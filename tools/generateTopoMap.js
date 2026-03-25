@@ -10,18 +10,16 @@
  * Stacks layers: black bg → continent (low→high) → water on top.
  *
  * Dependencies: canvas, potrace
- * Source image: bin/map.jpg (https://satisfactory.wiki.gg/images/Map.jpg)
+ * Source image: data/map.jpg (https://satisfactory.wiki.gg/images/Map.jpg)
  *
  * Usage:
- *   node bin/tools/generateTopoMap.js
+ *   node tools/generateTopoMap.js
  */
 
 const path = require('path');
 const fs   = require('fs');
-const { loadImage, createCanvas } = require('canvas');
-const potrace = require('potrace');
+const { loadMapPixels, traceBlackMask, cleanup } = require('./mapHelper');
 
-const MAP_JPG    = path.join(__dirname, '..', 'data', 'map.jpg');
 const OUTPUT_SVG = path.join(__dirname, '..', 'data', 'map_topo.svg');
 
 // Altitude thresholds (grayscale luminance of terrain pixels)
@@ -40,91 +38,31 @@ const COLORS = [
 
 const WATER_COLOR  = '#2a7ab5';
 const BG_COLOR     = '#111111';
-const TURD_SIZE    = 500;
-const OPT_TOL      = 5.0;
 
 async function run() {
-  if (!fs.existsSync(MAP_JPG)) {
-    console.error('Source image not found:', MAP_JPG);
-    console.error('Download it: curl -sL -o bin/map.jpg "https://satisfactory.wiki.gg/images/Map.jpg"');
-    process.exit(1);
-  }
-
-  const img = await loadImage(MAP_JPG);
-  const W = img.width, H = img.height;
-  console.log(`Source: ${W}x${H}`);
-
-  // Read pixel data
-  const srcCanvas = createCanvas(W, H);
-  const srcCtx    = srcCanvas.getContext('2d');
-  srcCtx.drawImage(img, 0, 0);
-  const srcData = srcCtx.getImageData(0, 0, W, H).data;
-
-  // Classify pixels
-  const gray    = new Uint8Array(W * H);
-  const isCont  = new Uint8Array(W * H);
-  const isWater = new Uint8Array(W * H);
-
-  for (let i = 0; i < W * H; i++) {
-    const r = srcData[i * 4], g = srcData[i * 4 + 1], b = srcData[i * 4 + 2];
-    const lum = r * 0.3 + g * 0.59 + b * 0.11;
-    gray[i] = lum;
-
-    const blueExcess = b - (r + g) / 2;
-    isWater[i] = (blueExcess > 10) ? 1 : 0;
-    isCont[i]  = (blueExcess < -2 && lum > 15) ? 1 : 0;
-  }
+  const { gray, isCont, isWater, W, H } = await loadMapPixels();
 
   const total  = W * H;
   const wCount = isWater.reduce((s, v) => s + v, 0);
   const cCount = isCont.reduce((s, v) => s + v, 0);
+  console.log(`Source: ${W}x${H}`);
   console.log(`Water: ${(wCount / total * 100).toFixed(1)}%  Continent: ${(cCount / total * 100).toFixed(1)}%  Off-map: ${((total - wCount - cCount) / total * 100).toFixed(1)}%`);
-
-  // --- Trace helper: zone = BLACK pixels → potrace fills the zone ---
-  const tmpPath = path.join(__dirname, '..', '_tmp_topo.png');
-
-  function traceBlackMask(maskFn) {
-    const c   = createCanvas(W, H);
-    const ctx = c.getContext('2d');
-    const im  = ctx.createImageData(W, H);
-    for (let i = 0; i < W * H; i++) {
-      const v = maskFn(i) ? 0 : 255;  // zone = BLACK
-      im.data[i * 4]     = v;
-      im.data[i * 4 + 1] = v;
-      im.data[i * 4 + 2] = v;
-      im.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(im, 0, 0);
-    fs.writeFileSync(tmpPath, c.toBuffer('image/png'));
-
-    return new Promise((resolve, reject) => {
-      potrace.trace(tmpPath, {
-        turdSize:     TURD_SIZE,
-        threshold:    128,
-        optTolerance: OPT_TOL,
-      }, (err, svg) => {
-        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-        if (err) return reject(err);
-        resolve(svg.match(/<path d="([^"]+)"/)?.[1] || null);
-      });
-    });
-  }
 
   // --- Trace all layers ---
 
   // Water
   console.log('Tracing water...');
-  const waterD = await traceBlackMask(i => isWater[i]);
+  const waterD = await traceBlackMask(i => isWater[i], W, H);
 
   // Continent outline (all continent pixels)
   console.log('Tracing continent...');
-  const contD = await traceBlackMask(i => isCont[i]);
+  const contD = await traceBlackMask(i => isCont[i], W, H);
 
   // Altitude levels
   const levelDs = [];
   for (let t = 0; t < LEVELS.length; t++) {
     console.log(`Tracing level ${LEVELS[t]}...`);
-    const d = await traceBlackMask(i => isCont[i] && gray[i] >= LEVELS[t]);
+    const d = await traceBlackMask(i => isCont[i] && gray[i] >= LEVELS[t], W, H);
     levelDs.push(d);
   }
 
@@ -150,6 +88,8 @@ async function run() {
 
   fs.writeFileSync(OUTPUT_SVG, svg);
   console.log(`Done! ${OUTPUT_SVG} (${(svg.length / 1024).toFixed(0)} KB)`);
+
+  cleanup();
 }
 
-run().catch(e => { console.error(e); process.exit(1); });
+run().catch(e => { console.error(e); cleanup(); process.exit(1); });

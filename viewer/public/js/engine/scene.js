@@ -5,6 +5,17 @@ export function gameToViewer(x, y, z) {
   return new THREE.Vector3(-x, y, z);
 }
 
+// Box offset in entity-local UE space → viewer space
+const _boxOffset = new THREE.Vector3();
+export function boxLocalOffset(box, quat) {
+  const cx = (box.min.x + box.max.x) / 2 + (box.rt ? box.rt.x : 0);
+  const cy = (box.min.y + box.max.y) / 2 + (box.rt ? box.rt.y : 0);
+  const cz = (box.min.z + box.max.z) / 2 + (box.rt ? box.rt.z : 0);
+  _boxOffset.copy(gameToViewer(cx, cy, cz));
+  _boxOffset.applyQuaternion(quat);
+  return _boxOffset;
+}
+
 // ── Constants ───────────────────────────────────────────────
 export const CAT_COLORS = [
   0xff8c00, 0x44bb44, 0x4488ff, 0x44dddd,

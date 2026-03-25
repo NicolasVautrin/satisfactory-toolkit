@@ -31,8 +31,9 @@ export function pickAt(cssX, cssY) {
   for (const hit of intersects) {
     const { cat, instanceToEntity } = hit.object.userData;
     if (!catVisible[cat]) continue;
-    const ei = instanceToEntity[hit.instanceId];
+    const ei = instanceToEntity[hit.instanceId ?? 0];
     const e = saveData.entities[ei];
+    if (!e) continue;
     console.log(`[pick] entity=${ei} class=${saveData.classNames[e.c]} cat=${CAT_NAMES[e.cat]}`);
     return ei;
   }
@@ -54,7 +55,7 @@ export function pickPortAt(cssX, cssY) {
   for (const hit of intersects) {
     const { cat, instanceToEntity } = hit.object.userData;
     if (!catVisible[cat]) continue;
-    return instanceToEntity[hit.instanceId];
+    return instanceToEntity[hit.instanceId ?? 0];
   }
   return -1;
 }

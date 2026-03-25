@@ -63,6 +63,7 @@ function initSession() {
   _clearanceData = require('./data/clearanceData.json');
   return _sessionId;
 }
+function getSessionId() { return _sessionId; }
 function nextId() {
   if (!_sessionId) throw new Error('Call initSession() before using the lib');
   return `${_sessionId}_${String(++_counter).padStart(3, '0')}`;
@@ -445,9 +446,9 @@ Object.assign(module.exports, {
   BUILDABLE_SUBSYSTEM, SWATCH_DEFAULT, TYPE_PATHS, RECIPES,
   FLAGS, SAVE_CUSTOM_VERSION, COMP_FLAGS, PORT_TANGENT, FlowType, PortType,
   // Classes
-  FlowPort, Vector3D,
+  FlowPort, Vector3D, Quaternion: require('./lib/shared/Quaternion'),
   // ID & clearance
-  initSession, nextId, getClearance,
+  initSession, getSessionId, nextId, getClearance,
   // File I/O
   readFileAsArrayBuffer, writeSaveToFile,
   // Helpers
