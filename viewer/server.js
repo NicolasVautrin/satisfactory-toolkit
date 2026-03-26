@@ -326,40 +326,21 @@ app.post('/api/edit', (req, res) => {
 
     const result = editEntities(batch);
 
-    // Broadcast added entities
-    for (const ent of result.added) {
-      broadcast({
-        type: 'entityAdded',
-        index: ent.index,
-        item: ent.item,
-        classUpdate: ent.classUpdate,
-      });
-    }
-
-    // Broadcast updated entities
-    for (const ent of result.updated) {
-      broadcast({
-        type: 'entityAdded',
-        index: ent.index,
-        item: ent.item,
-        classUpdate: ent.classUpdate,
-      });
-    }
-
-    // Broadcast deleted entities
-    if (result.deleted.length > 0) {
-      broadcast({ type: 'entitiesDeleted', indices: result.deleted });
-    }
-
-    // Broadcast connection updates
+    // Build unified connections list (deduplicated by entity index)
+    const connMap = new Map();
     for (const conn of result.connections) {
-      if (conn.source && conn.target) {
-        broadcast({
-          type: 'connectionsUpdated',
-          entities: [conn.source, conn.target],
-        });
+      for (const ent of [conn.source, conn.target]) {
+        if (ent) connMap.set(ent.index, ent);
       }
     }
+
+    broadcast({
+      type: 'editResult',
+      added: result.added.map(e => ({ index: e.index, item: e.item, classUpdate: e.classUpdate })),
+      updated: result.updated.map(e => ({ index: e.index, item: e.item, classUpdate: e.classUpdate })),
+      deleted: result.deleted,
+      connections: [...connMap.values()],
+    });
 
     res.json({
       success: true,

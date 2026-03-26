@@ -103,9 +103,9 @@ belt.port(ConveyorBelt.Ports.INPUT).pos = { ...snap1 };
 belt.port(ConveyorBelt.Ports.INPUT).dir = topPole1.port(ConveyorPole.Ports.SIDE0).dir;
 belt.port(ConveyorBelt.Ports.OUTPUT).pos = { ...snap5 };
 belt.port(ConveyorBelt.Ports.OUTPUT).dir = topPole5.port(ConveyorPole.Ports.SIDE1).dir;
-belt.recalcSpline();
-topPole1.port(ConveyorPole.Ports.SIDE0).attach(belt.port(ConveyorBelt.Ports.INPUT));
-topPole5.port(ConveyorPole.Ports.SIDE1).attach(belt.port(ConveyorBelt.Ports.OUTPUT));
+belt.onPortSnapped();
+belt.port(ConveyorBelt.Ports.INPUT).attach(topPole1.port(ConveyorPole.Ports.SIDE0));
+belt.port(ConveyorBelt.Ports.OUTPUT).attach(topPole5.port(ConveyorPole.Ports.SIDE1));
 inject(...belt.allObjects());
 console.log(`  Belt from (${snap1.x.toFixed(0)},${snap1.y.toFixed(0)},${snap1.z.toFixed(0)}) to (${snap5.x.toFixed(0)},${snap5.y.toFixed(0)},${snap5.z.toFixed(0)})`);
 
@@ -142,8 +142,8 @@ console.log(`  Support 5 snap: Z=${psnap5.z.toFixed(0)}`);
 
 // Create pipe: support1 side0 → support5 side1
 const pipe = Pipe.create(topPS1.port(PipeSupport.Ports.SIDE0), topPS5.port(PipeSupport.Ports.SIDE1));
-topPS1.port(PipeSupport.Ports.SIDE0).attach(pipe.port(Pipe.Ports.CONN0));
-topPS5.port(PipeSupport.Ports.SIDE1).attach(pipe.port(Pipe.Ports.CONN1));
+pipe.port(Pipe.Ports.CONN0).attach(topPS1.port(PipeSupport.Ports.SIDE0));
+pipe.port(Pipe.Ports.CONN1).attach(topPS5.port(PipeSupport.Ports.SIDE1));
 inject(...pipe.allObjects());
 console.log(`  Pipe from (${psnap1.x.toFixed(0)},${psnap1.y.toFixed(0)},${psnap1.z.toFixed(0)}) to (${psnap5.x.toFixed(0)},${psnap5.y.toFixed(0)},${psnap5.z.toFixed(0)})`);
 

@@ -50,8 +50,8 @@ console.log(`Support 2: 45° Z rotation at (${PLAYER.x}, ${PLAYER.y + 1500}, ${P
 // Pipe between the two supports
 const pipe = Pipe.create(s1.port(PipeSupport.Ports.SIDE0), s2.port(PipeSupport.Ports.SIDE1));
 addEntities(pipe);
-s1.port(PipeSupport.Ports.SIDE0).attach(pipe.port(Pipe.Ports.CONN0));
-s2.port(PipeSupport.Ports.SIDE1).attach(pipe.port(Pipe.Ports.CONN1));
+pipe.port(Pipe.Ports.CONN0).attach(s1.port(PipeSupport.Ports.SIDE0));
+pipe.port(Pipe.Ports.CONN1).attach(s2.port(PipeSupport.Ports.SIDE1));
 console.log(`Pipe between support 1 (port 0) and support 2 (port 1)`);
 
 // Add to save

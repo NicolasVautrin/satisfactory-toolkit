@@ -59,8 +59,8 @@ const pole3Top = poleStack3[poleStack3.length - 1];
 // Create belt between the two top poles
 // pole port('0') = +X side, port('1') = -X side
 const belt = ConveyorBelt.create(pole1Top.port(ConveyorPole.Ports.SIDE0), pole3Top.port(ConveyorPole.Ports.SIDE1));
-pole1Top.port(ConveyorPole.Ports.SIDE0).attach(belt.port(ConveyorBelt.Ports.INPUT));
-pole3Top.port(ConveyorPole.Ports.SIDE1).attach(belt.port(ConveyorBelt.Ports.OUTPUT));
+belt.port(ConveyorBelt.Ports.INPUT).attach(pole1Top.port(ConveyorPole.Ports.SIDE0));
+belt.port(ConveyorBelt.Ports.OUTPUT).attach(pole3Top.port(ConveyorPole.Ports.SIDE1));
 
 console.log('Belt created between pole stack(1) and pole stack(3)');
 
@@ -91,8 +91,8 @@ const ps2 = PipeSupport.create(PLAYER.x + 1500, PIPE_Y, PLAYER.z);
 
 // Create pipe between the two supports
 const pipe = Pipe.create(ps1.port(PipeSupport.Ports.SIDE0), ps2.port(PipeSupport.Ports.SIDE1));
-ps1.port(PipeSupport.Ports.SIDE0).attach(pipe.port(Pipe.Ports.CONN0));
-ps2.port(PipeSupport.Ports.SIDE1).attach(pipe.port(Pipe.Ports.CONN1));
+pipe.port(Pipe.Ports.CONN0).attach(ps1.port(PipeSupport.Ports.SIDE0));
+pipe.port(Pipe.Ports.CONN1).attach(ps2.port(PipeSupport.Ports.SIDE1));
 
 console.log('Pipe created between 2 supports');
 

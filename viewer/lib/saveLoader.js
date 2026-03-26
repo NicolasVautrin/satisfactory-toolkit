@@ -462,7 +462,14 @@ function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   const srcPort = srcMachine.port(sourcePort);
   const tgtPort = tgtMachine.port(targetPort);
 
-  srcPort.attach(tgtPort);
+  // Lift↔Lift: use dedicated attachLift (cardinal snap + positioning + wire)
+  const ConveyorLift = require('../../lib/logistic/ConveyorLift');
+  if (srcMachine instanceof ConveyorLift && tgtMachine instanceof ConveyorLift) {
+    // from=srcMachine (mobile), to=tgtMachine (fixed, adapts topTransform)
+    tgtMachine.attachLift(targetPort, srcPort);
+  } else {
+    tgtPort.attach(srcPort);
+  }
 
   // Update connection state in entityData for both entities
   updateEntityConnections(sourceIndex);
@@ -588,7 +595,7 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   // Wire: source → belt input, belt output → target
   const beltInput = belt.port(ConveyorBelt.Ports.INPUT);
   const beltOutput = belt.port(ConveyorBelt.Ports.OUTPUT);
-  srcPort.attach(beltInput);
+  beltInput.attach(srcPort);
   beltOutput.attach(tgtPort);
 
   updateEntityConnections(fromIdx);

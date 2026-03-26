@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, gameToViewer } from './scene.js';
+import { scene, gameToViewer, requestRender } from './scene.js';
 
 const GRID_COLOR = 0x888888;
 const EDGE_COLOR = 0xffaa00;
@@ -44,6 +44,7 @@ export function removeGrid(entityIndex) {
   if (entry) {
     scene.remove(entry.group);
     activeGrids.delete(entityIndex);
+    requestRender();
   }
 }
 
@@ -52,6 +53,7 @@ export function removeAllGrids() {
     scene.remove(entry.group);
   }
   activeGrids.clear();
+  requestRender();
 }
 
 function addGrid(entityIndex, entityData) {
@@ -150,4 +152,5 @@ function addGrid(entityIndex, entityData) {
 
   scene.add(group);
   activeGrids.set(entityIndex, { group, entityData });
+  requestRender();
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, gameToViewer } from './scene.js';
+import { scene, gameToViewer, requestRender } from './scene.js';
 
 // ── Constants ───────────────────────────────────────────────
 const GRID_BOUNDS = {
@@ -19,6 +19,7 @@ export function getGridSpacing() { return gridSpacing; }
 
 export function setGridVisible(visible) {
   if (gridGroup) gridGroup.visible = visible;
+  requestRender();
 }
 
 export function setGridSpacing(spacing) {
@@ -133,4 +134,5 @@ export function buildGrid() {
   makeLabel('Z', [xMin, yMin, zMax + step * 0.5], '#4488ff');
 
   scene.add(gridGroup);
+  requestRender();
 }

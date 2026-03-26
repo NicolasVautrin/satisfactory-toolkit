@@ -278,16 +278,16 @@ for (let ci = 0; ci < nukeConfigs.length; ci++) {
     const wpOutput = wp.port(WaterExtractor.Ports.OUTPUT);
     const pipe = Pipe.create(wpOutput, junctions[i].port(PipeJunction.Ports.CONN2));
     addEntities(pipe);
-    wpOutput.attach(pipe.port(Pipe.Ports.CONN0));
-    junctions[i].port(PipeJunction.Ports.CONN2).attach(pipe.port(Pipe.Ports.CONN1));
+    pipe.port(Pipe.Ports.CONN0).attach(wpOutput);
+    pipe.port(Pipe.Ports.CONN1).attach(junctions[i].port(PipeJunction.Ports.CONN2));
   }
 
   // Collector pipes between junctions
   for (let i = 0; i < WP_PER_CLUSTER - 1; i++) {
     const pipe = Pipe.create(junctions[i].port(PipeJunction.Ports.CONN0), junctions[i + 1].port(PipeJunction.Ports.CONN1));
     addEntities(pipe);
-    junctions[i].port(PipeJunction.Ports.CONN0).attach(pipe.port(Pipe.Ports.CONN0));
-    junctions[i + 1].port(PipeJunction.Ports.CONN1).attach(pipe.port(Pipe.Ports.CONN1));
+    pipe.port(Pipe.Ports.CONN0).attach(junctions[i].port(PipeJunction.Ports.CONN0));
+    pipe.port(Pipe.Ports.CONN1).attach(junctions[i + 1].port(PipeJunction.Ports.CONN1));
   }
 
   // Pipeline pump vertical, 800u (8m) above last junction
@@ -301,14 +301,14 @@ for (let ci = 0; ci < nukeConfigs.length; ci++) {
   const lastJunc = junctions[WP_PER_CLUSTER - 1];
   const pipeToPump = Pipe.create(lastJunc.port(PipeJunction.Ports.CONN0), pump.port(PipePump.Ports.INPUT));
   addEntities(pipeToPump);
-  lastJunc.port(PipeJunction.Ports.CONN0).attach(pipeToPump.port(Pipe.Ports.CONN0));
+  pipeToPump.port(Pipe.Ports.CONN0).attach(lastJunc.port(PipeJunction.Ports.CONN0));
   pump.attachPipe(pipeToPump.port(Pipe.Ports.CONN1), 'input');
 
   // Pipe: pump output -> pipe hole bottom (vertical/diagonal pipe)
   const vertPipe = Pipe.create(pump.port(PipePump.Ports.OUTPUT), pipeHole.port(PipeHole.Ports.BOTTOM));
   addEntities(vertPipe);
   pump.attachPipe(vertPipe.port(Pipe.Ports.CONN0), 'output');
-  pipeHole.port(PipeHole.Ports.BOTTOM).attach(vertPipe.port(Pipe.Ports.CONN1));
+  vertPipe.port(Pipe.Ports.CONN1).attach(pipeHole.port(PipeHole.Ports.BOTTOM));
 
   // Attach the existing nuke pipe (nuke -> pipe hole, single pipe)
   const nukePipeRef = nuke.port(NukePlant.Ports.PIPE).component.properties.mConnectedComponent?.value?.pathName;
@@ -316,8 +316,8 @@ for (let ci = 0; ci < nukeConfigs.length; ci++) {
     const nukePipeInst = nukePipeRef.split('.').slice(0, -1).join('.');
     const nukePipe = Pipe.fromSave(pl.objects.find(o => o.instanceName === nukePipeInst), pl.objects);
     const nukeConnIndex = nukePipeRef.endsWith('Connection0') ? 0 : 1;
-    nuke.port(NukePlant.Ports.PIPE).attach(nukeConnIndex === 0 ? nukePipe.port(Pipe.Ports.CONN0) : nukePipe.port(Pipe.Ports.CONN1));
-    pipeHole.port(PipeHole.Ports.TOP).attach(nukeConnIndex === 0 ? nukePipe.port(Pipe.Ports.CONN1) : nukePipe.port(Pipe.Ports.CONN0));
+    (nukeConnIndex === 0 ? nukePipe.port(Pipe.Ports.CONN0) : nukePipe.port(Pipe.Ports.CONN1)).attach(nuke.port(NukePlant.Ports.PIPE));
+    (nukeConnIndex === 0 ? nukePipe.port(Pipe.Ports.CONN1) : nukePipe.port(Pipe.Ports.CONN0)).attach(pipeHole.port(PipeHole.Ports.TOP));
   }
 
   // Save first extractor's power conn for grid connection

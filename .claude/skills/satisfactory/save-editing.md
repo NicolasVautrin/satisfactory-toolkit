@@ -384,7 +384,7 @@ portA.wire(portB);
 support.port('Top').snapTo(belt.port('ConveyorAny0'));
 
 // Wire + snap en une opération
-support.port('Top').attach(belt.port('ConveyorAny0'));
+belt.port('ConveyorAny0').attach(support.port('Top'));
 
 // Déconnecter
 portA.detach();
@@ -459,7 +459,7 @@ const belt = ConveyorBelt.create(
 );
 belt.port('ConveyorAny0');  // début (output)
 belt.port('ConveyorAny1');  // fin (input)
-belt.recalcSpline();        // recalculer après snap
+belt.onPortSnapped();        // recalculer après snap
 ```
 
 #### Pipe
@@ -471,7 +471,7 @@ const pipe = Pipe.create(
 );
 pipe.port('PipelineConnection0');  // début
 pipe.port('PipelineConnection1');  // fin
-pipe.recalcSpline();
+pipe.onPortSnapped();
 ```
 
 #### Supports et Poles
@@ -483,8 +483,8 @@ const pole = ConveyorPole.create(x, y, z, rot);
 // pole.port('Top') et pole.port('Bottom')
 // Quand on snap un belt sur Top et un autre sur Bottom, ils sont auto-wirés
 
-pole.port('Top').attach(belt1.port('ConveyorAny1'));
-pole.port('Bottom').attach(belt2.port('ConveyorAny0'));
+belt1.port('ConveyorAny1').attach(pole.port('Top'));
+belt2.port('ConveyorAny0').attach(pole.port('Bottom'));
 // → belt1 et belt2 sont maintenant connectés via le pole
 ```
 

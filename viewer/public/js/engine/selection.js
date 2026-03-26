@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { camera, renderer, gameToViewer, CAT_NAMES, HIGHLIGHT_COLOR } from './scene.js';
+import { camera, renderer, gameToViewer, CAT_NAMES, HIGHLIGHT_COLOR, requestRender } from './scene.js';
 import { getSaveData, getDisplayMeshes, getPortMeshes, getCatVisible, isPortsVisible } from './entities.js';
 
 // ── State ───────────────────────────────────────────────────
@@ -133,5 +133,6 @@ export function refreshColors() {
     }
     mesh.instanceColor.needsUpdate = true;
   }
+  requestRender();
   notify();
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, gameToViewer } from './scene.js';
+import { scene, gameToViewer, requestRender } from './scene.js';
 
 // ── Topo color stops ────────────────────────────────────────
 const TOPO_STOPS = [
@@ -36,6 +36,7 @@ let terrainMesh = null;
 
 export function setTerrainVisible(visible) {
   if (terrainMesh) terrainMesh.visible = visible;
+  requestRender();
 }
 
 // ── Build terrain mesh ──────────────────────────────────────
@@ -105,4 +106,5 @@ export function buildTerrain(terrain) {
   terrainMesh = new THREE.Mesh(geom, mat);
   terrainMesh.renderOrder = -1;
   scene.add(terrainMesh);
+  requestRender();
 }

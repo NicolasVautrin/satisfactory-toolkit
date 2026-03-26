@@ -45,6 +45,11 @@ const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
 dirLight2.position.set(-1, -1, -1);
 scene.add(dirLight2);
 
+// ── Render-on-demand ────────────────────────────────────────
+let _needsRender = true;
+export function requestRender() { _needsRender = true; }
+export function consumeRender() { const v = _needsRender; _needsRender = false; return v; }
+
 // ── Init & Resize ───────────────────────────────────────────
 let container = null;
 
@@ -61,6 +66,7 @@ export function resize() {
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  _needsRender = true;
 }
 
 window.addEventListener('resize', resize);

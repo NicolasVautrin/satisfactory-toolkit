@@ -92,8 +92,8 @@ const PERP_OFFSET = 500; // offset to avoid overlapping with originals
   const side2 = poleSideToward(pole2, pole1.port(ConveyorPole.Ports.SIDE0).pos);
 
   const belt = ConveyorBelt.create(pole1.port(side1), pole2.port(side2), 1);
-  pole1.port(side1).attach(belt.port(ConveyorBelt.Ports.INPUT));
-  pole2.port(side2).attach(belt.port(ConveyorBelt.Ports.OUTPUT));
+  belt.port(ConveyorBelt.Ports.INPUT).attach(pole1.port(side1));
+  belt.port(ConveyorBelt.Ports.OUTPUT).attach(pole2.port(side2));
 
   add(pole1, pole2, belt);
 
@@ -129,8 +129,8 @@ const PERP_OFFSET = 500; // offset to avoid overlapping with originals
   const side2 = poleSideToward(pole2, pole1.port(ConveyorPole.Ports.SIDE0).pos);
 
   const belt = ConveyorBelt.create(pole1.port(side1), pole2.port(side2), 1);
-  pole1.port(side1).attach(belt.port(ConveyorBelt.Ports.INPUT));
-  pole2.port(side2).attach(belt.port(ConveyorBelt.Ports.OUTPUT));
+  belt.port(ConveyorBelt.Ports.INPUT).attach(pole1.port(side1));
+  belt.port(ConveyorBelt.Ports.OUTPUT).attach(pole2.port(side2));
 
   add(pole1, pole2, belt);
 

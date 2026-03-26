@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { renderer, scene, camera, resize, initRenderer } from './engine/scene.js';
+import { renderer, scene, camera, resize, initRenderer, consumeRender } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState } from './engine/camera.js';
-import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible, addEntityToScene, rebuildEntityPorts } from './engine/entities.js';
-import { selectedIndices, onSelectionChange, pickAt, pickPortAt, pickRect, toggleSelection, addSelection, clearSelection, removeClassFromSelection } from './engine/selection.js';
+import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible } from './engine/entities.js';
+import { selectedIndices, onSelectionChange, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildTerrain, setTerrainVisible } from './engine/terrain.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
 import { gameToViewer } from './engine/scene.js';
@@ -14,11 +14,13 @@ import { createSelPanel } from './ui/selPanel.js';
 import { createPropsPanel } from './ui/propsPanel.js';
 import { isPlacementActive, startPlacement, stopPlacement, handleKey as placementKey, getTransform } from './engine/placement.js';
 import { initUpload, uploadFile } from './upload.js';
+import { downloadBlob, downloadBase64, filenameFromResponse } from './download.js';
+import { initMouseHandlers } from './engine/mouse.js';
+import { initWebSocket } from './webSocket.js';
 
 // ── DOM refs ────────────────────────────────────────────────
 const loadingEl = document.getElementById('loading');
 const canvasEl = document.getElementById('canvas');
-const selRect = document.getElementById('selection-rect');
 
 // ── Loading helper ──────────────────────────────────────────
 function setLoading(text) {
@@ -80,18 +82,10 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
         return;
       }
       const blob = await res.blob();
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename="(.+)"/);
-      const filename = match ? match[1] : 'merged_edit.sav';
+      const filename = filenameFromResponse(res, 'merged_edit.sav');
       const entityCount = res.headers.get('X-Entity-Count') || '?';
       const totalCount = res.headers.get('X-Total-Count') || '?';
-
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(a.href);
-
+      downloadBlob(blob, filename);
       setLoading(null);
       alert(`Merge complete: ${entityCount} entities (${totalCount} total objects) injected.\nDownloaded: ${filename}`);
     } catch (err) {
@@ -103,14 +97,7 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
       const res = await fetch('/api/download-save');
       if (!res.ok) { alert('Download failed'); return; }
       const blob = await res.blob();
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename="(.+)"/);
-      const filename = match ? match[1] : 'save_edit.sav';
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      downloadBlob(blob, filenameFromResponse(res, 'save_edit.sav'));
     } catch (err) {
       alert('Download error: ' + err.message);
     }
@@ -150,16 +137,8 @@ const selPanel = createSelPanel(document.getElementById('sel-panel'), {
     });
     const result = await res.json();
     if (!result.success) { alert(`Export failed: ${result.error}`); return; }
-    // Download .sbp
-    const sbpBlob = new Blob([Uint8Array.from(atob(result.sbp), c => c.charCodeAt(0))]);
-    const a1 = document.createElement('a');
-    a1.href = URL.createObjectURL(sbpBlob); a1.download = `${name}.sbp`; a1.click();
-    URL.revokeObjectURL(a1.href);
-    // Download .sbpcfg
-    const cfgBlob = new Blob([Uint8Array.from(atob(result.sbpcfg), c => c.charCodeAt(0))]);
-    const a2 = document.createElement('a');
-    a2.href = URL.createObjectURL(cfgBlob); a2.download = `${name}.sbpcfg`; a2.click();
-    URL.revokeObjectURL(a2.href);
+    downloadBase64(result.sbp, `${name}.sbp`);
+    downloadBase64(result.sbpcfg, `${name}.sbpcfg`);
     const lwMsg = result.lwCount ? ` + ${result.lwCount} lightweight` : '';
     alert(`Blueprint exported: ${result.count} entities${lwMsg}`);
   },
@@ -168,14 +147,15 @@ const selPanel = createSelPanel(document.getElementById('sel-panel'), {
     if (!confirm(`Delete ${selectedIndices.size} entities from save?`)) return;
     setLoading('Deleting...');
     try {
-      const res = await fetch('/api/delete', {
+      const entities = [...selectedIndices].map(index => ({ index, deleted: true }));
+      const res = await fetch('/api/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ indices: [...selectedIndices] }),
+        body: JSON.stringify({ entities }),
       });
       const result = await res.json();
       if (!result.success) { setLoading('Delete error: ' + result.error); return; }
-      // Scene rebuild handled by WS 'entitiesDeleted' message
+      // Scene rebuild handled by WS 'editResult' message
       clearSelection();
       setLoading(null);
     } catch (err) {
@@ -213,7 +193,6 @@ function onCbpLoaded(data, filename) {
   // If it's a blueprint (.sbp), start placement mode
   if (filename.endsWith('.sbp')) {
     // Compute camera target position in Unreal coords for initial placement
-    // Camera looks at: position + forward * some distance
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const target = camera.position.clone().addScaledVector(fwd, 5000);
     // Viewer → Unreal: flip X back
@@ -271,103 +250,6 @@ function onCbpLoaded(data, filename) {
   toolbar.setFileLabel('cbp', filename);
 }
 
-// ── Mouse interaction (selection) ───────────────────────────
-let dragStart = null;
-let isDragging = false;
-let pointerDownPos = null;
-const CLICK_THRESHOLD = 5;
-
-let rightDownPos = null;
-
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button === 2) {
-    rightDownPos = { x: e.clientX, y: e.clientY };
-    return;
-  }
-  if (e.button !== 0) return;
-  pointerDownPos = { x: e.clientX, y: e.clientY };
-  if (e.shiftKey) {
-    isDragging = true;
-    dragStart = { x: e.clientX, y: e.clientY };
-    selRect.style.display = 'block';
-    selRect.style.left = e.clientX + 'px';
-    selRect.style.top = e.clientY + 'px';
-    selRect.style.width = '0px';
-    selRect.style.height = '0px';
-    e.preventDefault();
-  }
-});
-
-window.addEventListener('pointermove', (e) => {
-  if (!isDragging) return;
-  const x = Math.min(dragStart.x, e.clientX);
-  const y = Math.min(dragStart.y, e.clientY);
-  selRect.style.left = x + 'px';
-  selRect.style.top = y + 'px';
-  selRect.style.width = Math.abs(e.clientX - dragStart.x) + 'px';
-  selRect.style.height = Math.abs(e.clientY - dragStart.y) + 'px';
-});
-
-window.addEventListener('pointerup', (e) => {
-  // Right-click without drag = close props panel
-  if (e.button === 2 && rightDownPos) {
-    const dx = Math.abs(e.clientX - rightDownPos.x);
-    const dy = Math.abs(e.clientY - rightDownPos.y);
-    if (dx < CLICK_THRESHOLD && dy < CLICK_THRESHOLD) {
-      propsPanel.hide();
-      requestAnimationFrame(resize);
-    }
-    rightDownPos = null;
-    return;
-  }
-
-  if (isDragging) {
-    isDragging = false;
-    selRect.style.display = 'none';
-
-    const rect = renderer.domElement.getBoundingClientRect();
-    const x1 = Math.round(Math.min(dragStart.x, e.clientX) - rect.left);
-    const y1 = Math.round(Math.min(dragStart.y, e.clientY) - rect.top);
-    const x2 = Math.round(Math.max(dragStart.x, e.clientX) - rect.left);
-    const y2 = Math.round(Math.max(dragStart.y, e.clientY) - rect.top);
-
-    if (x2 - x1 > 2 && y2 - y1 > 2) {
-      const found = pickRect(x1, y1, x2, y2);
-      if (!e.ctrlKey) selectedIndices.clear();
-      addSelection(found);
-    }
-    dragStart = null;
-    return;
-  }
-
-  if (e.button === 0 && !e.shiftKey && pointerDownPos) {
-    const dx = Math.abs(e.clientX - pointerDownPos.x);
-    const dy = Math.abs(e.clientY - pointerDownPos.y);
-    if (dx < CLICK_THRESHOLD && dy < CLICK_THRESHOLD) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const idx = pickAt(x, y);
-      if (e.ctrlKey) {
-        // Ctrl+click = toggle selection (skip ports)
-        if (idx >= 0) toggleSelection(idx);
-      } else {
-        // Click = inspect properties (ports first, then entities)
-        const portEntityIdx = pickPortAt(x, y);
-        const inspectIdx = portEntityIdx >= 0 ? portEntityIdx : idx;
-        if (inspectIdx >= 0) {
-          propsPanel.show(inspectIdx, getSaveData() || getCbpData());
-          requestAnimationFrame(resize);
-        } else {
-          propsPanel.hide();
-          requestAnimationFrame(resize);
-        }
-      }
-    }
-    pointerDownPos = null;
-  }
-});
-
 // ── Keyboard handler for blueprint placement ────────────────
 window.addEventListener('keydown', (e) => {
   // Don't intercept when typing in an input
@@ -386,6 +268,9 @@ initCameraControls();
 buildGrid();
 updateStatus();
 
+// Mouse interaction
+initMouseHandlers({ propsPanel });
+
 // Upload (drag & drop)
 initUpload({ onSaveLoaded, onCbpLoaded, setLoading });
 
@@ -401,57 +286,8 @@ fetch('/api/entities')
   })
   .catch(() => {});
 
-// ── WebSocket ──────────────────────────────────────────────
-const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(`${wsProto}//${location.host}`);
-ws.onopen = () => {
-  console.log('[WS] connected');
-  // Send camera position periodically
-  setInterval(() => {
-    if (ws.readyState === 1) {
-      const p = camera.position;
-      // Viewer → Unreal: flip X, convert yaw to UE convention (0°=+X)
-      const ueYaw = camState.yaw * 180 / Math.PI + 90;
-      ws.send(JSON.stringify({
-        type: 'camera',
-        position: { x: -p.x, y: p.y, z: p.z },
-        yaw: ueYaw,
-        pitch: camState.pitch * 180 / Math.PI,
-      }));
-    }
-  }, 1000);
-};
-ws.onclose = () => console.log('[WS] disconnected');
-ws.onmessage = (event) => {
-  try {
-    const msg = JSON.parse(event.data);
-    if (msg.type === 'entityAdded' && getSaveData()) {
-      addEntityToScene(msg.item, msg.classUpdate);
-      updateStatus();
-      console.log(`[WS] Entity added at index ${msg.index}`);
-    } else if (msg.type === 'entitiesDeleted' && getSaveData()) {
-      // Indices shifted after delete — full refresh needed
-      fetch('/api/entities')
-        .then(r => r.ok ? r.json() : null)
-        .then(result => {
-          if (result?.save) onSaveLoaded(result.save, result.saveName || getSaveData()?.filename || 'save');
-        });
-      console.log(`[WS] ${msg.indices.length} entities deleted, refreshing`);
-    } else if (msg.type === 'connectionsUpdated' && getSaveData()) {
-      // Update connection state and rebuild port meshes
-      for (const ent of msg.entities) {
-        const e = getSaveData().entities[ent.index];
-        if (e) {
-          e.cn = ent.connections;
-          rebuildEntityPorts(ent.index, e, getSaveData().portLayouts);
-        }
-      }
-      console.log(`[WS] Connections updated for ${msg.entities.map(e => e.index).join(', ')}`);
-    }
-  } catch (err) {
-    console.error('[WS] message error:', err);
-  }
-};
+// WebSocket
+initWebSocket({ onEditResult: () => updateStatus() });
 
 // Load terrain
 fetch('/api/terrain')
@@ -459,10 +295,10 @@ fetch('/api/terrain')
   .then(terrain => { if (terrain) buildTerrain(terrain); })
   .catch(() => {});
 
-// Animation loop
+// Animation loop (render on demand)
 function animate() {
   requestAnimationFrame(animate);
-  renderer.render(scene, camera);
+  if (consumeRender()) renderer.render(scene, camera);
 }
 resize();
 animate();

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, gameToViewer } from './scene.js';
+import { scene, gameToViewer, requestRender } from './scene.js';
 
 // ── Placement state ─────────────────────────────────────────
 let active = false;

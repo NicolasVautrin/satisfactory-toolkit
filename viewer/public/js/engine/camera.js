@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { camera, renderer } from './scene.js';
+import { camera, renderer, requestRender } from './scene.js';
 
 // ── Camera state ────────────────────────────────────────────
 export const camState = {
@@ -19,6 +19,7 @@ export function updateCameraRotation() {
   );
   const target = camera.position.clone().add(dir);
   camera.lookAt(target);
+  requestRender();
 }
 
 // ── Fit camera to bounding box ──────────────────────────────
@@ -56,6 +57,7 @@ export function initCameraControls() {
     camera.getWorldDirection(fwd);
     const step = camState.flyStep * (e.deltaY < 0 ? 1 : -1);
     camera.position.addScaledVector(fwd, step);
+    requestRender();
   }, { passive: false });
 
   dom.addEventListener('pointerdown', (e) => {
@@ -76,6 +78,7 @@ export function initCameraControls() {
       camState.pitch -= dy * camState.rotateSpeed;
       camState.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, camState.pitch));
       updateCameraRotation();
+      requestRender();
     } else if (activeButton === 2) {
       const fwd = new THREE.Vector3();
       camera.getWorldDirection(fwd);
@@ -84,6 +87,7 @@ export function initCameraControls() {
       const scale = camState.panSpeed * camState.flyStep / 500;
       camera.position.addScaledVector(right, -dx * scale);
       camera.position.addScaledVector(up, dy * scale);
+      requestRender();
     }
   });
 
