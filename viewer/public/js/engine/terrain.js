@@ -1,110 +1,210 @@
 import * as THREE from 'three';
-import { scene, gameToViewer, requestRender } from './scene.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { scene, requestRender } from './scene.js';
 
-// ── Topo color stops ────────────────────────────────────────
-const TOPO_STOPS = [
-  { z: -5000,  r: 0.176, g: 0.314, b: 0.086 },
-  { z: -1700,  r: 0.290, g: 0.478, b: 0.157 },
-  { z:  1900,  r: 0.478, g: 0.647, b: 0.235 },
-  { z:  9000,  r: 0.722, g: 0.788, b: 0.353 },
-  { z: 14000,  r: 0.831, g: 0.753, b: 0.478 },
-  { z: 20000,  r: 0.910, g: 0.855, b: 0.627 },
-  { z: 30000,  r: 0.961, g: 0.929, b: 0.816 },
-];
-const SHALLOW_WATER_TOPO = { r: 0.165, g: 0.478, b: 0.710 };
-const DEEP_WATER_TOPO    = { r: 0.082, g: 0.282, b: 0.455 };
-const OFFMAP_TOPO        = { r: 0.067, g: 0.067, b: 0.067 };
+// ── Terrain-specific transform ──────────────────────────
+const TERRAIN_SCALE = 10000;
+const _terrainToViewer = new THREE.Matrix4().set(
+  -TERRAIN_SCALE,             0,              0,   0,
+               0,             0,  TERRAIN_SCALE,   0,
+               0, TERRAIN_SCALE,              0,   0,
+               0,             0,              0,   1,
+);
 
-function topoColor(z, out) {
-  if (z === null) { out.r = OFFMAP_TOPO.r; out.g = OFFMAP_TOPO.g; out.b = OFFMAP_TOPO.b; return; }
-  const stops = TOPO_STOPS;
-  if (z <= stops[0].z) { out.r = stops[0].r; out.g = stops[0].g; out.b = stops[0].b; return; }
-  if (z >= stops[stops.length - 1].z) { const s = stops[stops.length - 1]; out.r = s.r; out.g = s.g; out.b = s.b; return; }
-  for (let i = 0; i < stops.length - 1; i++) {
-    if (z >= stops[i].z && z < stops[i + 1].z) {
-      const t = (z - stops[i].z) / (stops[i + 1].z - stops[i].z);
-      out.r = stops[i].r + t * (stops[i + 1].r - stops[i].r);
-      out.g = stops[i].g + t * (stops[i + 1].g - stops[i].g);
-      out.b = stops[i].b + t * (stops[i + 1].b - stops[i].b);
-      return;
-    }
-  }
-}
+const TILE_SIZE = 50800;
+// Offset applied to UE tile worldMin coords — compensates for proxy actor origin shift in UE levels
+const TILE_PROXY_OFFSET = 4 * 12700; // 50800
 
-// ── State ───────────────────────────────────────────────────
-let terrainMesh = null;
+// ── State ───────────────────────────────────────────────
+const gltfLoader = new GLTFLoader();
+const textureLoader = new THREE.TextureLoader();
+const terrainMeshes = [];
+let terrainVisible = true;
 
 export function setTerrainVisible(visible) {
-  if (terrainMesh) terrainMesh.visible = visible;
+  terrainVisible = visible;
+  for (const m of terrainMeshes) m.visible = visible;
   requestRender();
 }
 
-// ── Build terrain mesh ──────────────────────────────────────
-export function buildTerrain(terrain) {
-  if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); terrainMesh.material.dispose(); }
+// ── Load and build terrain from GLB tiles ───────────────
+export async function buildTerrain() {
+  for (const m of terrainMeshes) {
+    scene.remove(m);
+    m.geometry.dispose();
+    if (m.material.map) m.material.map.dispose();
+    m.material.dispose();
+  }
+  terrainMeshes.length = 0;
 
-  const { gridSize, bounds, shallowWaterZ, deepWaterZ, data } = terrain;
-  const GS = gridSize;
-
-  const vertCount = GS * GS;
-  const positions = new Float32Array(vertCount * 3);
-  const colors = new Float32Array(vertCount * 3);
-  const col = { r: 0, g: 0, b: 0 };
-
-  for (let row = 0; row < GS; row++) {
-    for (let col_ = 0; col_ < GS; col_++) {
-      const vi = row * GS + col_;
-      const gameX = bounds.xMin + (col_ / (GS - 1)) * (bounds.xMax - bounds.xMin);
-      const gameY = bounds.yMin + (row / (GS - 1)) * (bounds.yMax - bounds.yMin);
-      const gi = row * GS + col_;
-      const z = data[gi];
-      const v = gameToViewer(gameX, gameY, (z === null) ? deepWaterZ : z);
-
-      positions[vi * 3]     = v.x;
-      positions[vi * 3 + 1] = v.y;
-      positions[vi * 3 + 2] = v.z;
-
-      if (z === deepWaterZ) {
-        col.r = DEEP_WATER_TOPO.r; col.g = DEEP_WATER_TOPO.g; col.b = DEEP_WATER_TOPO.b;
-      } else if (z === shallowWaterZ) {
-        col.r = SHALLOW_WATER_TOPO.r; col.g = SHALLOW_WATER_TOPO.g; col.b = SHALLOW_WATER_TOPO.b;
-      } else {
-        topoColor(z, col);
-      }
-      colors[vi * 3]     = col.r;
-      colors[vi * 3 + 1] = col.g;
-      colors[vi * 3 + 2] = col.b;
-    }
+  const res = await fetch('/api/terrain-tiles');
+  const { tiles } = await res.json();
+  if (!tiles || tiles.length === 0) {
+    console.warn('[Terrain] No tiles available');
+    return;
   }
 
-  const indices = [];
-  for (let row = 0; row < GS - 1; row++) {
-    for (let col_ = 0; col_ < GS - 1; col_++) {
-      const a = row * GS + col_;
-      const b = a + 1;
-      const c = a + GS;
-      const d = c + 1;
-      indices.push(a, c, b);
-      indices.push(b, c, d);
+  console.log(`[Terrain] Loading ${tiles.length} tiles...`);
+
+  // Load in batches to avoid ERR_INSUFFICIENT_RESOURCES
+  const BATCH = 50;
+  let loaded = 0;
+  for (let i = 0; i < tiles.length; i += BATCH) {
+    const batch = tiles.slice(i, i + BATCH);
+    const results = await Promise.allSettled(batch.map(tile => loadTile(tile)));
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) loaded++;
     }
+    requestRender();
   }
 
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geom.setIndex(indices);
-  geom.computeVertexNormals();
-
-  const mat = new THREE.MeshLambertMaterial({
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.7,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-
-  terrainMesh = new THREE.Mesh(geom, mat);
-  terrainMesh.renderOrder = -1;
-  scene.add(terrainMesh);
+  console.log(`[Terrain] ${loaded}/${tiles.length} tiles loaded`);
+  // Debug: expose + log first tile info
+  if (terrainMeshes.length > 0) {
+    const m = terrainMeshes[0];
+    m.geometry.computeBoundingBox();
+    const bb = m.geometry.boundingBox;
+    console.log(`[Terrain] First tile: pos(${m.position.x.toFixed(0)},${m.position.y.toFixed(0)},${m.position.z.toFixed(0)}) bbox min(${bb.min.x.toFixed(0)},${bb.min.y.toFixed(0)},${bb.min.z.toFixed(0)}) max(${bb.max.x.toFixed(0)},${bb.max.y.toFixed(0)},${bb.max.z.toFixed(0)}) visible=${m.visible} inScene=${m.parent?.type}`);
+  }
+  window._terrainMeshes = terrainMeshes;
   requestRender();
+}
+
+async function loadTile(tile) {
+  try {
+    const gltf = await gltfLoader.loadAsync(`/meshes/terrain/${tile.glb}`);
+
+    const geometries = [];
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.traverse(child => {
+      if (!child.isMesh) return;
+      const geom = child.geometry.clone();
+      if (!child.matrixWorld.equals(new THREE.Matrix4())) {
+        geom.applyMatrix4(child.matrixWorld);
+      }
+      geometries.push(geom);
+    });
+
+    if (geometries.length === 0) return null;
+
+    const merged = geometries.length === 1
+      ? geometries[0]
+      : mergeGeometries(geometries, false);
+    if (!merged) return null;
+
+    // Generate UVs from vertex positions BEFORE transform (glTF local coords)
+    // Tile vertices span roughly 0..5.08 in X and Z (glTF space)
+    generateUVs(merged);
+
+    // glTF coords: X,Z = horizontal (meters, may have world offset), Y = height
+    // We need to shift geometry to tile-local origin before scaling
+    merged.computeBoundingBox();
+    const bb = merged.boundingBox;
+
+    // Shift to origin: subtract glTF min X and min Z so geometry starts at (0,0)
+    const shiftX = -bb.min.x;
+    const shiftZ = -bb.min.z;
+    const S = TERRAIN_SCALE;
+
+    // Combined: shift to origin, scale, convert axes: glTF(x,y,z) → viewer(-S*(x+shiftX), S*(z+shiftZ), S*y)
+    const tileMat = new THREE.Matrix4().set(
+      -S,  0,  0, -S * shiftX,
+       0,  0,  S,  S * shiftZ,
+       0,  S,  0,  0,
+       0,  0,  0,  1,
+    );
+    merged.applyMatrix4(tileMat);
+
+    // Fix face winding after X flip
+    const index = merged.getIndex();
+    if (index) {
+      const arr = index.array;
+      for (let i = 0; i < arr.length; i += 3) {
+        const tmp = arr[i];
+        arr[i] = arr[i + 2];
+        arr[i + 2] = tmp;
+      }
+      index.needsUpdate = true;
+    }
+
+    merged.computeVertexNormals();
+
+    // Try loading the baked texture PNG
+    let material;
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = `/meshes/terrain/${tile.img}`;
+      });
+      const texture = new THREE.Texture(image);
+      texture.needsUpdate = true;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      material = new THREE.MeshLambertMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+      });
+    } catch {
+      // No PNG texture, fallback to flat green
+      material = new THREE.MeshLambertMaterial({
+        color: 0x5a7d3a,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      });
+    }
+
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.renderOrder = -2;
+    mesh.visible = terrainVisible;
+    if (tile.worldMinX !== undefined) {
+      const ueX = tile.worldMinX - TILE_PROXY_OFFSET;
+      const ueY = tile.worldMinY - TILE_PROXY_OFFSET;
+      mesh.position.set(-ueX, ueY, 0);
+    }
+
+    scene.add(mesh);
+    terrainMeshes.push(mesh);
+
+    return mesh;
+  } catch (err) {
+    console.warn(`[Terrain] Failed to load ${tile.file}:`, err.message);
+    return null;
+  }
+}
+
+function generateUVs(geometry) {
+  const pos = geometry.getAttribute('position');
+  if (!pos) return;
+
+  // Compute bounds in glTF XZ plane (horizontal)
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+
+  const rangeX = maxX - minX || 1;
+  const rangeZ = maxZ - minZ || 1;
+  const uvs = new Float32Array(pos.count * 2);
+
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    // U = X normalized, V = 1 - Z normalized (PNG Y is top-down)
+    uvs[i * 2]     = (x - minX) / rangeX;
+    uvs[i * 2 + 1] = 1.0 - (z - minZ) / rangeZ;
+  }
+
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 }

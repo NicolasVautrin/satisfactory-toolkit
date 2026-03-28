@@ -1,6 +1,6 @@
 import { renderer, resize } from './scene.js';
 import { getSaveData, getCbpData } from './entities.js';
-import { selectedIndices, pickAt, pickPortAt, pickRect, toggleSelection, addSelection } from './selection.js';
+import { selectedIndices, pickAt, pickPortAt, pickSceneryAt, pickRect, toggleSelection, addSelection } from './selection.js';
 
 const CLICK_THRESHOLD = 5;
 
@@ -92,6 +92,8 @@ export function initMouseHandlers({ propsPanel }) {
             propsPanel.show(inspectIdx, getSaveData() || getCbpData());
             requestAnimationFrame(resize);
           } else {
+            // Try scenery pick (console log only)
+            pickSceneryAt(x, y);
             propsPanel.hide();
             requestAnimationFrame(resize);
           }

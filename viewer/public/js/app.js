@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { renderer, scene, camera, resize, initRenderer, consumeRender } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState } from './engine/camera.js';
-import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, setCatVisible, setCbpVisible, setPortsVisible } from './engine/entities.js';
+import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, rebuildSaveScene, setCatVisible, setCbpVisible, setPortsVisible, setRenderMode } from './engine/entities.js';
+import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable } from './engine/meshCatalog.js';
 import { selectedIndices, onSelectionChange, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildTerrain, setTerrainVisible } from './engine/terrain.js';
+import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
 import { gameToViewer } from './engine/scene.js';
 
@@ -94,12 +96,49 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
   },
   async onDownloadSave() {
     try {
+      // Open file picker FIRST (must be in direct user gesture, before any await)
+      let fileHandle = null;
+      if (window.showSaveFilePicker) {
+        try {
+          fileHandle = await window.showSaveFilePicker({
+            suggestedName: 'TEST_edit.sav',
+            types: [{ description: 'Satisfactory Save', accept: { 'application/octet-stream': ['.sav'] } }],
+          });
+        } catch (e) {
+          if (e.name === 'AbortError') return; // user cancelled
+          // fallback to classic download
+        }
+      }
       const res = await fetch('/api/download-save');
       if (!res.ok) { alert('Download failed'); return; }
       const blob = await res.blob();
-      downloadBlob(blob, filenameFromResponse(res, 'save_edit.sav'));
+      if (fileHandle) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        downloadBlob(blob, filenameFromResponse(res, 'save_edit.sav'));
+      }
     } catch (err) {
       alert('Download error: ' + err.message);
+    }
+  },
+  async onDisplayChange({ display }) {
+    if (display === 'boxes') {
+      setRenderMode('boxes');
+      rebuildSaveScene();
+      return;
+    }
+    // LOD mode: use meshes with textures
+    setRenderMode('textured');
+    const data = getSaveData();
+    await setLod(display);
+    setSceneryLod(display); // async, runs in background
+    if (data) {
+      if (!hasMeshesAvailable()) {
+        await initMeshCatalog(data.classNames);
+      }
+      rebuildSaveScene();
     }
   },
 });
@@ -109,6 +148,7 @@ createFilters(toolbar.layersMenu, {
   onCategoryToggle: setCatVisible,
   onCbpToggle: setCbpVisible,
   onTerrainToggle: setTerrainVisible,
+  onSceneryToggle: setSceneryVisible,
   onGridToggle: setGridVisible,
   onPortsToggle: setPortsVisible,
 });
@@ -176,8 +216,17 @@ onSelectionChange(() => {
 });
 
 // ── Data load handlers ──────────────────────────────────────
-function onSaveLoaded(data, filename) {
+async function onSaveLoaded(data, filename) {
   data.filename = filename;
+  // Apply saved display mode
+  const display = localStorage.getItem('viewer_display') || 'lod2';
+  if (display !== 'boxes') {
+    setRenderMode('textured');
+    await setLod(display);
+    await initMeshCatalog(data.classNames);
+  } else {
+    setRenderMode('boxes');
+  }
   buildSaveScene(data);
   clearSelection();
   if (!restoreCameraState(camKey())) fitCamera(data.entities, gameToViewer);
@@ -265,6 +314,8 @@ window.addEventListener('keydown', (e) => {
 // ── Init ────────────────────────────────────────────────────
 initRenderer(canvasEl);
 initCameraControls();
+// Restore camera position immediately (before save loads)
+restoreCameraState('save');
 buildGrid();
 updateStatus();
 
@@ -277,23 +328,34 @@ initUpload({ onSaveLoaded, onCbpLoaded, setLoading });
 // Camera persistence
 setInterval(() => saveCameraState(camKey()), 3000);
 
+// Populate LOD options in Display menu
+getAvailableLods().then(lods => toolbar.populateLods(lods));
+
 // Auto-refresh if server already has data loaded
 fetch('/api/entities')
   .then(r => r.ok ? r.json() : null)
-  .then(result => {
-    if (result?.save) onSaveLoaded(result.save, result.saveName || 'save');
+  .then(async result => {
+    if (result?.save) await onSaveLoaded(result.save, result.saveName || 'save');
     if (result?.cbp) onCbpLoaded(result.cbp, result.cbpName || 'cbp');
   })
   .catch(() => {});
 
 // WebSocket
-initWebSocket({ onEditResult: () => updateStatus() });
+initWebSocket({
+  onEditResult: () => updateStatus(),
+  onSaveLoaded: async (name) => {
+    const res = await fetch('/api/entities');
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result?.save) await onSaveLoaded(result.save, result.saveName || name);
+  },
+});
 
-// Load terrain
-fetch('/api/terrain')
-  .then(r => r.ok ? r.json() : null)
-  .then(terrain => { if (terrain) buildTerrain(terrain); })
-  .catch(() => {});
+// Load terrain first, then scenery (needs terrain for projection bake)
+buildTerrain()
+  .then(() => buildScenery())
+  .then(() => { window._sceneryReady = true; })
+  .catch(err => console.warn('[Terrain/Scenery]', err.message));
 
 // Animation loop (render on demand)
 function animate() {

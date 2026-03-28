@@ -60,6 +60,26 @@ export function pickPortAt(cssX, cssY) {
   return -1;
 }
 
+// ── Scenery picking (info only) ────────────────────────────
+export function pickSceneryAt(cssX, cssY) {
+  const sceneryGroup = window._sceneryGroup;
+  if (!sceneryGroup || !sceneryGroup.visible) return null;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = (cssX / rect.width) * 2 - 1;
+  pointer.y = -(cssY / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(pointer, camera);
+  const intersects = raycaster.intersectObjects(sceneryGroup.children, false);
+  if (intersects.length === 0) return null;
+
+  const hit = intersects[0];
+  const name = hit.object.name || 'unknown';
+  const instanceId = hit.instanceId ?? 0;
+  console.log(`[pick scenery] mesh=${name} instance=${instanceId}/${hit.object.count} dist=${Math.round(hit.distance)}`);
+  return { name, instanceId, distance: hit.distance };
+}
+
 // ── Box select ──────────────────────────────────────────────
 export function pickRect(x1, y1, x2, y2) {
   const rect = renderer.domElement.getBoundingClientRect();
