@@ -1,6 +1,6 @@
 ---
 name: satisfactory
-description: Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib, viewer 3D d'entités
+description: Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib, viewer 3D d'entités, pak-tool (extraction d'assets .pak)
 user-invocable: true
 allowed-tools: Read, WebSearch, WebFetch
 argument-hint: [sujet]
@@ -37,6 +37,11 @@ Lis le fichier `${CLAUDE_SKILL_DIR}/optimization.md` pour obtenir toutes les inf
 Pour toute question sur le viewer Three.js, la visualisation de saves en 3D, les contrôles caméra, la sélection d'entités, l'export blueprint depuis le viewer, l'API du serveur, ou les modifications du viewer :
 
 Lis le fichier `${CLAUDE_SKILL_DIR}/viewer.md` pour obtenir toutes les informations sur le viewer 3D.
+
+### pak-tool (extraction d'assets .pak)
+Pour toute question sur l'extraction de meshes, textures, landscape ou placements d'acteurs depuis les fichiers .pak de Satisfactory, ou sur l'utilisation de CUE4Parse :
+
+Lis le fichier `${CLAUDE_SKILL_DIR}/pak-tool.md` pour obtenir toutes les informations sur pak-tool.
 
 ### Autres sujets
 Pour les sujets non couverts par les fichiers de référence, utilise WebSearch pour trouver des informations à jour sur le wiki officiel (satisfactory.wiki.gg) ou les guides communautaires.
