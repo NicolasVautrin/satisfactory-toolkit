@@ -33,8 +33,13 @@ Pour toute question sur l'optimisation du placement de gares ferroviaires, le cl
 
 Lis le fichier `${CLAUDE_SKILL_DIR}/optimization.md` pour obtenir toutes les informations sur les outils d'optimisation.
 
-### Viewer 3D d'entités
-Pour toute question sur le viewer Three.js, la visualisation de saves en 3D, les contrôles caméra, la sélection d'entités, l'export blueprint depuis le viewer, l'API du serveur, ou les modifications du viewer :
+### Serveur Express (API + WebSocket)
+Pour toute question sur les endpoints API REST, le WebSocket, le chargement/manipulation de saves côté serveur, l'endpoint edit, le batch GLB, les alias de types, ou les données serveur → client :
+
+Lis le fichier `${CLAUDE_SKILL_DIR}/server.md` pour obtenir toutes les informations sur le serveur.
+
+### Viewer 3D d'entités (client)
+Pour toute question sur le viewer Three.js, la visualisation de saves en 3D, les contrôles caméra, la sélection d'entités, le rendu landscape/scenery, l'export/import de blueprints, ou les modifications du viewer :
 
 Lis le fichier `${CLAUDE_SKILL_DIR}/viewer.md` pour obtenir toutes les informations sur le viewer 3D.
 

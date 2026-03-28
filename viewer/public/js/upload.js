@@ -16,7 +16,7 @@ export async function uploadFile(file, { onSaveLoaded, onCbpLoaded, setLoading }
   setLoading(`Uploading ${file.name}...`);
 
   try {
-    const res = await fetch('/api/upload', {
+    const res = await fetch('/api/game/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream', 'X-Save-Name': file.name },
       body: file,

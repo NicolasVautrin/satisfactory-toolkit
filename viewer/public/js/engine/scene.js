@@ -5,6 +5,10 @@ export function gameToViewer(x, y, z) {
   return new THREE.Vector3(-x, y, z);
 }
 
+export function gameToViewer2D(x, y) {
+  return { x: -x, y: y };
+}
+
 // Box offset in entity-local UE space → viewer space
 const _boxOffset = new THREE.Vector3();
 export function boxLocalOffset(box, quat) {

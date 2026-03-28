@@ -65,7 +65,7 @@ Le serveur démarre sans save — charger les fichiers `.sav` et `.cbp` via le b
 - Après modification de `viewer/public/`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
 - **Relancer le serveur automatiquement** après modification de fichiers serveur — l'utilisateur a une confirmation via le tool approval
 - **Ne pas supprimer les entités de test avant un restart** — le restart perd la save de toute façon, supprimer avant est inutile
-- **Après le démarrage du serveur**, toujours charger la save TEST : `curl -s -X POST http://localhost:3000/api/load-file -H "Content-Type: application/json" -d '{"filePath":"C:/Users/nicolasv/AppData/Local/FactoryGame/Saved/SaveGames/76561198036887614/TEST.sav"}'`
+- **Après le démarrage du serveur**, toujours charger la save TEST : `curl -s -X POST http://localhost:3000/api/game/load-file -H "Content-Type: application/json" -d '{"filePath":"C:/Users/nicolasv/AppData/Local/FactoryGame/Saved/SaveGames/76561198036887614/TEST.sav"}'`
 
 ### Contrôles caméra
 

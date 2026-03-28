@@ -20,16 +20,12 @@ let currentLod = (() => {
   const d = typeof localStorage !== 'undefined' && localStorage.getItem('viewer_display');
   return (d && d !== 'boxes') ? d : 'lod2';
 })();
-let availableLods = null;
+const availableLods = ['lod0', 'lod1', 'lod2', 'lod3', 'lod4', 'lod5'];
 let classNamesUsed = [];
 
 // ── Public API ─────────────────────────────────────────────────
 
-export async function getAvailableLods() {
-  if (availableLods) return availableLods;
-  const res = await fetch('/api/mesh-lods');
-  const data = await res.json();
-  availableLods = data.lods;
+export function getAvailableLods() {
   return availableLods;
 }
 
@@ -67,7 +63,7 @@ export function hasMeshesAvailable() {
 // ── Internal ───────────────────────────────────────────────────
 
 async function loadLod(lod, classNames) {
-  const res = await fetch(`/api/mesh-catalog?lod=${lod}`);
+  const res = await fetch(`/api/viewer/mesh-catalog?lod=${lod}`);
   const data = await res.json();
 
   // Only load meshes for classNames actually used in the save

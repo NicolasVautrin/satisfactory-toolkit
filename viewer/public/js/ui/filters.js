@@ -15,11 +15,11 @@ function saveState(state) {
 
 // ── Layers dropdown menu ────────────────────────────────────
 
-export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onTerrainToggle, onSceneryToggle, onGridToggle, onPortsToggle }) {
+export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onLandscapeToggle, onSceneryToggle, onGridToggle, onPortsToggle }) {
   const saved = loadState() || {};
   const state = {
     cats: saved.cats || [true, true, true, true, true, true, true, true],
-    terrain: saved.terrain !== undefined ? saved.terrain : true,
+    landscape: saved.landscape !== undefined ? saved.landscape : (saved.terrain !== undefined ? saved.terrain : true),
     scenery: saved.scenery !== undefined ? saved.scenery : true,
     grid: saved.grid !== undefined ? saved.grid : true,
     ports: saved.ports || false,
@@ -53,21 +53,21 @@ export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onT
   // Separator
   menuDropdown.appendChild(Object.assign(document.createElement('div'), { className: 'menu-separator' }));
 
-  // Terrain toggle
-  const terrainLabel = document.createElement('label');
-  terrainLabel.className = 'menu-toggle';
-  terrainLabel.innerHTML = `
-    <input type="checkbox" ${state.terrain ? 'checked' : ''}>
+  // Landscape toggle
+  const landscapeLabel = document.createElement('label');
+  landscapeLabel.className = 'menu-toggle';
+  landscapeLabel.innerHTML = `
+    <input type="checkbox" ${state.landscape ? 'checked' : ''}>
     <span class="menu-dot" style="background:#4a7a28"></span>
-    Terrain
+    Landscape
   `;
-  terrainLabel.querySelector('input').addEventListener('change', (e) => {
-    state.terrain = e.target.checked;
+  landscapeLabel.querySelector('input').addEventListener('change', (e) => {
+    state.landscape = e.target.checked;
     persist();
-    onTerrainToggle(e.target.checked);
+    onLandscapeToggle(e.target.checked);
   });
-  menuDropdown.appendChild(terrainLabel);
-  if (!state.terrain) onTerrainToggle(false);
+  menuDropdown.appendChild(landscapeLabel);
+  if (!state.landscape) onLandscapeToggle(false);
 
   // Scenery toggle
   const sceneryLabel = document.createElement('label');

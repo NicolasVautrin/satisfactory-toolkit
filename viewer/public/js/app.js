@@ -4,7 +4,7 @@ import { camState, initCameraControls, fitCamera, saveCameraState, restoreCamera
 import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, rebuildSaveScene, setCatVisible, setCbpVisible, setPortsVisible, setRenderMode } from './engine/entities.js';
 import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable } from './engine/meshCatalog.js';
 import { selectedIndices, onSelectionChange, clearSelection, removeClassFromSelection } from './engine/selection.js';
-import { buildTerrain, setTerrainVisible } from './engine/terrain.js';
+import { buildLandscape, setLandscapeVisible, layoutLoaded, updateStreaming } from './engine/landscape.js';
 import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
 import { gameToViewer } from './engine/scene.js';
@@ -63,7 +63,7 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
   async onRefresh() {
     setLoading('Refreshing...');
     try {
-      const res = await fetch('/api/entities');
+      const res = await fetch('/api/game/entities');
       if (!res.ok) { setLoading(null); return; }
       const result = await res.json();
       if (result.save) onSaveLoaded(result.save, result.saveName || getSaveData()?.filename || 'save');
@@ -77,7 +77,7 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
     if (!confirm('Merge CBP into save? This will download a new _edit.sav file.')) return;
     setLoading('Merging CBP into save...');
     try {
-      const res = await fetch('/api/merge', { method: 'POST' });
+      const res = await fetch('/api/game/merge-cbp', { method: 'POST' });
       if (!res.ok) {
         const err = await res.json();
         setLoading('Merge error: ' + err.error);
@@ -109,7 +109,7 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
           // fallback to classic download
         }
       }
-      const res = await fetch('/api/download-save');
+      const res = await fetch('/api/game/download');
       if (!res.ok) { alert('Download failed'); return; }
       const blob = await res.blob();
       if (fileHandle) {
@@ -147,7 +147,7 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
 createFilters(toolbar.layersMenu, {
   onCategoryToggle: setCatVisible,
   onCbpToggle: setCbpVisible,
-  onTerrainToggle: setTerrainVisible,
+  onLandscapeToggle: setLandscapeVisible,
   onSceneryToggle: setSceneryVisible,
   onGridToggle: setGridVisible,
   onPortsToggle: setPortsVisible,
@@ -170,7 +170,7 @@ const selPanel = createSelPanel(document.getElementById('sel-panel'), {
     if (!selectedIndices.size) return;
     const name = prompt('Blueprint name:', 'my_blueprint');
     if (!name) return;
-    const res = await fetch('/api/export', {
+    const res = await fetch('/api/game/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ indices: [...selectedIndices], name }),
@@ -188,7 +188,7 @@ const selPanel = createSelPanel(document.getElementById('sel-panel'), {
     setLoading('Deleting...');
     try {
       const entities = [...selectedIndices].map(index => ({ index, deleted: true }));
-      const res = await fetch('/api/edit', {
+      const res = await fetch('/api/game/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entities }),
@@ -257,7 +257,7 @@ function onCbpLoaded(data, filename) {
         setLoading('Injecting...');
         try {
           const t = getTransform();
-          const res = await fetch('/api/inject-blueprint', {
+          const res = await fetch('/api/game/inject-blueprint', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ transform: t }),
@@ -329,10 +329,10 @@ initUpload({ onSaveLoaded, onCbpLoaded, setLoading });
 setInterval(() => saveCameraState(camKey()), 3000);
 
 // Populate LOD options in Display menu
-getAvailableLods().then(lods => toolbar.populateLods(lods));
+toolbar.populateLods(getAvailableLods());
 
 // Auto-refresh if server already has data loaded
-fetch('/api/entities')
+fetch('/api/game/entities')
   .then(r => r.ok ? r.json() : null)
   .then(async result => {
     if (result?.save) await onSaveLoaded(result.save, result.saveName || 'save');
@@ -344,22 +344,23 @@ fetch('/api/entities')
 initWebSocket({
   onEditResult: () => updateStatus(),
   onSaveLoaded: async (name) => {
-    const res = await fetch('/api/entities');
+    const res = await fetch('/api/game/entities');
     if (!res.ok) return;
     const result = await res.json();
     if (result?.save) await onSaveLoaded(result.save, result.saveName || name);
   },
 });
 
-// Load terrain first, then scenery (needs terrain for projection bake)
-buildTerrain()
+// Load landscape base plane, then scenery, then enable landscape tile streaming
+buildLandscape()
   .then(() => buildScenery())
-  .then(() => { window._sceneryReady = true; })
-  .catch(err => console.warn('[Terrain/Scenery]', err.message));
+  .then(() => { window._sceneryReady = true; layoutLoaded(); })
+  .catch(err => console.warn('[Landscape/Scenery]', err.message));
 
 // Animation loop (render on demand)
 function animate() {
   requestAnimationFrame(animate);
+  updateStreaming();
   if (consumeRender()) renderer.render(scene, camera);
 }
 resize();

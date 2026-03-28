@@ -1,6 +1,8 @@
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
+const compression = require('compression');
 const { WebSocketServer } = require('ws');
 const { initSession } = require('../satisfactoryLib');
 const Blueprint = require('../lib/Blueprint');
@@ -9,6 +11,7 @@ const { mergeCbpIntoSave } = require('./lib/merge');
 
 // ── Express ────────────────────────────────────────────────────────
 const app = express();
+app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 // Serve meshes with LOD fallback: if lod2/X.glb missing, try lod1/X.glb, then lod0/X.glb
@@ -30,16 +33,7 @@ app.use('/meshes', (req, res, next) => {
 // ── Mesh catalog endpoints ─────────────────────────────────────────
 const MESHES_DIR = path.join(__dirname, '..', 'data', 'meshes');
 
-app.get('/api/mesh-lods', (req, res) => {
-  if (!fs.existsSync(MESHES_DIR)) return res.json({ lods: [] });
-  const lods = fs.readdirSync(MESHES_DIR, { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name.startsWith('lod'))
-    .map(d => d.name)
-    .sort();
-  res.json({ lods });
-});
-
-app.get('/api/mesh-catalog', (req, res) => {
+app.get('/api/viewer/mesh-catalog', (req, res) => {
   const lod = req.query.lod || 'lod1';
   const lodNum = parseInt(lod.replace('lod', ''), 10);
   // Union of all meshes available at requested LOD or below (fallback)
@@ -82,8 +76,7 @@ wss.on('connection', (ws) => {
 });
 
 // ── Load save from disk ──────────────────────────────────────────────
-const fs = require('fs');
-app.post('/api/load-file', (req, res) => {
+app.post('/api/game/load-file', (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'filePath required' });
   try {
@@ -106,7 +99,7 @@ app.post('/api/load-file', (req, res) => {
 });
 
 // ── Upload save/CBP ────────────────────────────────────────────────
-app.post('/api/upload', express.raw({ type: 'application/octet-stream', limit: '500mb' }), (req, res) => {
+app.post('/api/game/upload', express.raw({ type: 'application/octet-stream', limit: '500mb' }), (req, res) => {
   const fileName = req.headers['x-save-name'] || 'uploaded';
   const ext = path.extname(fileName).toLowerCase();
   const name = path.basename(fileName, ext);
@@ -131,7 +124,7 @@ app.post('/api/upload', express.raw({ type: 'application/octet-stream', limit: '
 });
 
 // ── Get current entity data (for refresh) ──────────────────────────
-app.get('/api/entities', (req, res) => {
+app.get('/api/game/entities', (req, res) => {
   const result = {};
   const saveState = getSaveState();
   const cbpState = getCbpState();
@@ -142,7 +135,7 @@ app.get('/api/entities', (req, res) => {
 });
 
 // ── Inspect entity ─────────────────────────────────────────────────
-app.get('/api/inspect/:index', (req, res) => {
+app.get('/api/game/entity/:index', (req, res) => {
   const saveState = getSaveState();
   if (!saveState) return res.status(400).json({ error: 'No save loaded' });
   const idx = parseInt(req.params.index);
@@ -179,14 +172,8 @@ app.get('/api/inspect/:index', (req, res) => {
   });
 });
 
-// ── Terrain ────────────────────────────────────────────────────────
-app.get('/api/terrain', (req, res) => {
-  const heightmapData = getHeightmapData();
-  if (!heightmapData) return res.status(404).json({ error: 'No heightmap. Run: node tools/generateHeightmap.js' });
-  res.json(heightmapData);
-});
-
-app.get('/api/scenery', (req, res) => {
+// ── Landscape ──────────────────────────────────────────────────────
+app.get('/api/viewer/scenery', (req, res) => {
   const placementsPath = path.join(MESHES_DIR, 'scenery_placements.json');
   const streamingPath = path.join(MESHES_DIR, 'scenery_streaming.json');
   const data = fs.existsSync(placementsPath) ? JSON.parse(fs.readFileSync(placementsPath, 'utf8')) : { staticMeshes: [], bpActors: [] };
@@ -210,18 +197,18 @@ app.get('/api/scenery', (req, res) => {
   res.json({ ...data, streaming, availableMeshes, availableTextures });
 });
 
-app.get('/api/terrain-tiles', (req, res) => {
-  const terrainDir = path.join(MESHES_DIR, 'terrain');
-  const glbDir = path.join(terrainDir, 'glb');
+app.get('/api/viewer/landscape-data', (req, res) => {
+  const landscapeDir = path.join(MESHES_DIR, 'terrain');
+  const glbDir = path.join(landscapeDir, 'glb');
   if (!fs.existsSync(glbDir)) return res.json({ tiles: [] });
 
   // Use metadata.json if available (has world coordinates)
-  const metaPath = path.join(terrainDir, 'metadata.json');
+  const metaPath = path.join(landscapeDir, 'metadata.json');
   if (fs.existsSync(metaPath)) {
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     const tiles = meta
       .filter(m => fs.existsSync(path.join(glbDir, m.tile + '.glb')))
-      .map(m => ({ glb: 'glb/' + m.tile + '.glb', img: 'img/' + m.tile + '.png',
+      .map(m => ({ glb: 'glb/' + m.tile + '.glb',
         x: m.x, y: m.y,
         worldMinX: m.worldMinX, worldMinY: m.worldMinY,
         worldMaxX: m.worldMaxX, worldMaxY: m.worldMaxY }));
@@ -233,14 +220,110 @@ app.get('/api/terrain-tiles', (req, res) => {
     .filter(f => f.endsWith('.glb'))
     .map(f => {
       const m = f.match(/^comp_(-?\d+)_(-?\d+)\.glb$/);
-      return m ? { glb: 'glb/' + f, img: 'img/' + f.replace('.glb', '.png'), x: parseInt(m[1]), y: parseInt(m[2]) } : null;
+      return m ? { glb: 'glb/' + f, x: parseInt(m[1]), y: parseInt(m[2]) } : null;
     })
     .filter(Boolean);
   res.json({ tiles });
 });
 
+// ── Landscape assembled map (on-demand stitching) ──────────────────
+let landscapeMapCache = null;
+app.get('/api/viewer/landscape-map', async (req, res) => {
+  if (landscapeMapCache) {
+    res.type('image/jpeg').send(landscapeMapCache);
+    return;
+  }
+
+  const landscapeDir = path.join(MESHES_DIR, 'terrain');
+  const imgDir = path.join(landscapeDir, 'img');
+  const metaPath = path.join(landscapeDir, 'metadata.json');
+  if (!fs.existsSync(metaPath) || !fs.existsSync(imgDir)) {
+    return res.status(404).json({ error: 'No landscape tiles' });
+  }
+
+  try {
+    const { createCanvas, loadImage } = require('canvas');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const xs = meta.map(m => m.x), ys = meta.map(m => m.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const step = 127;
+    const TILE_PX = 128;
+    const cols = (maxX - minX) / step + 1;
+    const rows = (maxY - minY) / step + 1;
+    const W = cols * TILE_PX, H = rows * TILE_PX;
+
+    console.log(`[Landscape] Assembling map ${W}x${H} from ${meta.length} tiles...`);
+    const t0 = Date.now();
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, W, H);
+
+    await Promise.all(meta.map(async m => {
+      const file = path.join(imgDir, m.tile + '.png');
+      if (!fs.existsSync(file)) return;
+      const img = await loadImage(file);
+      const col = (m.x - minX) / step;
+      const row = (m.y - minY) / step;
+      ctx.drawImage(img, col * TILE_PX, row * TILE_PX, TILE_PX, TILE_PX);
+    }));
+
+    landscapeMapCache = canvas.toBuffer('image/jpeg', { quality: 0.85 });
+    console.log(`[Landscape] Map assembled in ${Date.now() - t0}ms (${(landscapeMapCache.length / 1024 / 1024).toFixed(1)} MB)`);
+    res.type('image/jpeg').send(landscapeMapCache);
+  } catch (err) {
+    console.error('[Landscape] Map assembly error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Batch GLB endpoint ────────────────────────────────────────────
+// POST /api/glb { prefix: "terrain/glb", files: ["comp_X_Y", ...] }
+// Returns binary: [uint32 count][uint32 nameLen][name][uint32 glbLen][glb]...
+function resolveGlbPath(prefix, name) {
+  const base = path.join(MESHES_DIR, prefix, name + '.glb');
+  if (fs.existsSync(base)) return base;
+  // LOD fallback: if prefix contains lodN, try lodN-1 ... lod0
+  const lodMatch = prefix.match(/^(.*)lod(\d+)(.*)$/);
+  if (!lodMatch) return null;
+  const [, before, lodStr, after] = lodMatch;
+  for (let lod = parseInt(lodStr, 10) - 1; lod >= 0; lod--) {
+    const fallback = path.join(MESHES_DIR, `${before}lod${lod}${after}`, name + '.glb');
+    if (fs.existsSync(fallback)) return fallback;
+  }
+  return null;
+}
+
+app.post('/api/viewer/glb', (req, res) => {
+  const { prefix, files } = req.body;
+  if (!prefix || !Array.isArray(files) || files.length === 0) {
+    return res.status(400).json({ error: 'prefix and files[] required' });
+  }
+  if (/\.\./.test(prefix)) return res.status(400).json({ error: 'invalid prefix' });
+
+  const buffers = [];
+  for (const name of files) {
+    if (/[\/\\]|\.\./.test(name)) continue;
+    const filePath = resolveGlbPath(prefix, name);
+    if (!filePath) continue;
+    const data = fs.readFileSync(filePath);
+    const nameBytes = Buffer.from(name, 'utf8');
+    const nameHeader = Buffer.alloc(4);
+    nameHeader.writeUInt32LE(nameBytes.length, 0);
+    const glbHeader = Buffer.alloc(4);
+    glbHeader.writeUInt32LE(data.length, 0);
+    buffers.push(nameHeader, nameBytes, glbHeader, data);
+  }
+
+  const countBuf = Buffer.alloc(4);
+  countBuf.writeUInt32LE(buffers.length / 4); // 4 buffers per entry (nameHeader, name, glbHeader, data)
+  res.type('application/octet-stream');
+  res.send(Buffer.concat([countBuf, ...buffers]));
+});
+
 // ── Export blueprint ───────────────────────────────────────────────
-app.post('/api/export', (req, res) => {
+app.post('/api/game/export', (req, res) => {
   try {
     const saveState = getSaveState();
     if (!saveState) return res.status(400).json({ error: 'No save loaded' });
@@ -350,7 +433,7 @@ app.post('/api/export', (req, res) => {
 });
 
 // ── Inject blueprint into save ──────────────────────────────────────
-app.post('/api/inject-blueprint', (req, res) => {
+app.post('/api/game/inject-blueprint', (req, res) => {
   try {
     const { transform } = req.body;
     if (!transform) return res.status(400).json({ error: 'transform required' });
@@ -363,7 +446,7 @@ app.post('/api/inject-blueprint', (req, res) => {
 });
 
 // ── Download modified save ──────────────────────────────────────────
-app.get('/api/download-save', (req, res) => {
+app.get('/api/game/download', (req, res) => {
   const saveState = getSaveState();
   if (!saveState) return res.status(400).json({ error: 'No save loaded' });
   const { serializeSave } = require('./lib/saveLoader');
@@ -375,7 +458,7 @@ app.get('/api/download-save', (req, res) => {
 });
 
 // ── Merge CBP into save ────────────────────────────────────────────
-app.post('/api/merge', (req, res) => {
+app.post('/api/game/merge-cbp', (req, res) => {
   try {
     const result = mergeCbpIntoSave();
     const { outputName, outputBuf, entityCount, totalCount } = result;
@@ -391,13 +474,13 @@ app.post('/api/merge', (req, res) => {
 });
 
 // ── Camera state ─────────────────────────────────────────────────────
-app.get('/api/camera', (req, res) => {
+app.get('/api/viewer/camera', (req, res) => {
   if (!cameraState) return res.status(404).json({ error: 'No camera data (open viewer first)' });
   res.json(cameraState);
 });
 
 // ── Edit entities (add/update/delete + connections) ─────────────────
-app.post('/api/edit', (req, res) => {
+app.post('/api/game/edit', (req, res) => {
   try {
     const batch = req.body;
     if (!batch?.entities?.length) {
@@ -452,7 +535,7 @@ app.post('/api/edit', (req, res) => {
 });
 
 // ── Move player (deferred — applied on save export) ─────────────────
-app.post('/api/move-player', (req, res) => {
+app.post('/api/game/move-player', (req, res) => {
   try {
     const { position } = req.body;
     if (!position) return res.status(400).json({ error: 'position {x, y, z} required' });
