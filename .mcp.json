@@ -9,6 +9,10 @@
         "chrome-devtools-mcp@latest",
         "--isolated"
       ]
+    },
+    "zen": {
+      "command": "C:\\Users\\nicolasv\\.zen-mcp-server\\venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\nicolasv\\.zen-mcp-server\\server.py"]
     }
   }
 }

@@ -1,0 +1,52 @@
+[14:28:24 INF] Output: C:\Users\nicolasv\satisfactory-toolkit\data\meshes
+[14:28:25 INF] Pak "FactoryGame-Windows.pak": 13251 files, order 3, version 11 in 00:00:00.0831639
+[14:28:25 INF] IoStore "FactoryGame-Windows.utoc": 37056 files, order 3, version 5 in 00:00:00.2098938
+[14:28:25 INF] Loaded 50307 files from provider
+[14:28:26 INF] Path filter matched 30278 packages
+[14:28:29 WRN] Missing package import 0x0 for package /MovieRenderPipeline/Blueprints/M_MoviePipelineRenderPreview
+[14:28:29 WRN] Missing package import 0x0 for package /MovieRenderPipeline/Blueprints/M_MoviePipelineRenderPreview
+[14:28:31 WRN] Missing package import 0x200000004 for package /Game/FactoryGame/-Shared/Particle/Material/Splash_02
+[14:28:31 WRN] Missing package import 0x200000004 for package /Game/FactoryGame/-Shared/Particle/Material/Splash_02
+[14:28:42 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/Buildable/Factory/LandingPad/Material/LandingPad_Goo
+[14:28:42 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/Buildable/Factory/LandingPad/Material/LandingPad_Goo
+[14:28:47 WRN] Missing package import 0x10000000D for package /Game/FactoryGame/Buildable/Factory/ProjectAssembly/VFX/Shader/M_PA_Shockwave
+[14:28:47 WRN] Missing package import 0x10000000D for package /Game/FactoryGame/Buildable/Factory/ProjectAssembly/VFX/Shader/M_PA_Shockwave
+[14:29:05 WRN] Missing package import 0x0 for package /Game/FactoryGame/Events/Anniversary/Art/Balloon/Mesh/SK_FoilBalloon_01
+[14:29:05 WRN] Missing package import 0x100000000 for package /Game/FactoryGame/Events/Anniversary/Art/Balloon/Mesh/SK_FoilBalloon_02
+[14:29:05 WRN] Missing package import 0x0 for package /Game/FactoryGame/Events/Anniversary/Art/Balloon/Mesh/SK_SomerSloopBalloon_01
+[14:29:05 WRN] Missing package import 0x0 for package /Game/FactoryGame/Events/Anniversary/Art/DiscoBall/SM_DiscoBall
+[14:29:09 WRN] Missing package import 0x200000001 for package /Game/FactoryGame/Interface/UI/Material/MM_UI_DropShadow
+[14:29:09 WRN] Missing package import 0x200000001 for package /Game/FactoryGame/Interface/UI/Material/MM_UI_DropShadow
+[14:31:03 WRN] Missing package import 0x400000001 for package /Game/FactoryGame/MasterMaterials/MM_Factory
+[14:31:03 WRN] Missing package import 0x400000001 for package /Game/FactoryGame/MasterMaterials/MM_Factory
+[14:31:03 WRN] Missing package import 0xC00000000 for package /Game/FactoryGame/MasterMaterials/MM_Imposter_Master
+[14:31:03 WRN] Missing package import 0xE00000001 for package /Game/FactoryGame/MasterMaterials/MM_Imposter_Master
+[14:31:03 WRN] Missing package import 0x600000000 for package /Game/FactoryGame/MasterMaterials/MM_LODSmoke
+[14:31:03 WRN] Missing package import 0xB00000000 for package /Game/FactoryGame/MasterMaterials/MM_SimpleLODMaterial
+[14:31:03 WRN] Missing package import 0xC00000001 for package /Game/FactoryGame/MasterMaterials/MM_SimpleLODMaterial
+[14:31:03 WRN] Missing package import 0x200000003 for package /Game/FactoryGame/MasterMaterials/MM_Water_Translucent
+[14:31:03 WRN] Missing package import 0x200000003 for package /Game/FactoryGame/MasterMaterials/MM_Water_Translucent
+[14:31:05 WRN] Missing package import 0x10000000C for package /Game/FactoryGame/Resource/Parts/NuclearPasta/Material/MMU_SpaceCollapse
+[14:31:05 WRN] Missing package import 0x10000000C for package /Game/FactoryGame/Resource/Parts/NuclearPasta/Material/MMU_SpaceCollapse
+[14:31:08 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/VFX/Material/MM_FB_MV_Layered
+[14:31:08 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/VFX/Material/MM_FB_MV_Layered
+[14:31:08 WRN] Missing package import 0x600000005 for package /Game/FactoryGame/VFX/Material/MM_FB_MV
+[14:31:08 WRN] Missing package import 0x600000005 for package /Game/FactoryGame/VFX/Material/MM_FB_MV
+[14:31:10 WRN] Missing package import 0xE00000000 for package /Game/FactoryGame/World/Environment/-Shared/Material/Imposter_Master
+[14:31:10 WRN] Missing package import 0xF00000001 for package /Game/FactoryGame/World/Environment/-Shared/Material/Imposter_Master
+[14:31:12 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/World/Environment/HotSpring/Material/HotspringWater
+[14:31:12 WRN] Missing package import 0x700000008 for package /Game/FactoryGame/World/Environment/HotSpring/Material/HotspringWater
+[14:31:14 WRN] Missing package import 0x90000000B for package /Game/FactoryGame/World/Environment/Water/Material/Lake
+[14:31:14 WRN] Missing package import 0x100000006 for package /Game/FactoryGame/World/Environment/Water/Material/Lake
+[14:31:14 WRN] Missing package import 0x100000006 for package /Game/FactoryGame/World/Environment/Water/Material/Lake
+[14:31:14 WRN] Missing package import 0x90000000B for package /Game/FactoryGame/World/Environment/Water/Material/Lake
+[14:31:14 WRN] Missing package import 0x600000009 for package /Game/FactoryGame/World/Environment/Water/Material/River_Master
+[14:31:14 WRN] Missing package import 0x100000003 for package /Game/FactoryGame/World/Environment/Water/Material/River_Master
+[14:31:14 WRN] Missing package import 0x100000003 for package /Game/FactoryGame/World/Environment/Water/Material/River_Master
+[14:31:14 WRN] Missing package import 0x600000009 for package /Game/FactoryGame/World/Environment/Water/Material/River_Master
+[14:31:14 WRN] Missing package import 0x80000000A for package /Game/FactoryGame/World/Environment/Water/Material/UnderWaterSuface_Master
+[14:31:14 WRN] Missing package import 0x80000000A for package /Game/FactoryGame/World/Environment/Water/Material/UnderWaterSuface_Master
+[14:31:14 WRN] Missing package import 0x700000009 for package /Game/FactoryGame/World/Environment/Water/Ocean/Material/OceanWater
+[14:31:14 WRN] Missing package import 0x700000009 for package /Game/FactoryGame/World/Environment/Water/Ocean/Material/OceanWater
+[14:31:14 WRN] Missing package import 0x600000008 for package /Game/FactoryGame/World/Environment/Water/Translucent/Material/TranslucentWater
+[14:31:14 WRN] Missing package import 0x600000008 for package /Game/FactoryGame/World/Environment/Water/Translucent/Material/TranslucentWater
