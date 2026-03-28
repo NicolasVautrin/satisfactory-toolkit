@@ -11,6 +11,48 @@ const { mergeCbpIntoSave } = require('./lib/merge');
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve meshes with LOD fallback: if lod2/X.glb missing, try lod1/X.glb, then lod0/X.glb
+// Works for both /meshes/lod2/X.glb (buildings) and /meshes/scenery/lod2/X.glb (scenery)
+app.use('/meshes', (req, res, next) => {
+  // Match: /lod2/file.glb or /scenery/lod2/file.glb
+  const match = req.path.match(/^(\/(?:scenery\/)?)(lod(\d+))\/(.+\.glb)$/);
+  if (!match) return next();
+  const prefix = match[1]; // "/" or "/scenery/"
+  const requestedLod = parseInt(match[3], 10);
+  const file = match[4];
+  for (let lod = requestedLod; lod >= 0; lod--) {
+    const filePath = path.join(__dirname, '..', 'data', 'meshes', prefix, `lod${lod}`, file);
+    if (fs.existsSync(filePath)) return res.sendFile(filePath);
+  }
+  next();
+}, express.static(path.join(__dirname, '..', 'data', 'meshes')));
+
+// ── Mesh catalog endpoints ─────────────────────────────────────────
+const MESHES_DIR = path.join(__dirname, '..', 'data', 'meshes');
+
+app.get('/api/mesh-lods', (req, res) => {
+  if (!fs.existsSync(MESHES_DIR)) return res.json({ lods: [] });
+  const lods = fs.readdirSync(MESHES_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory() && d.name.startsWith('lod'))
+    .map(d => d.name)
+    .sort();
+  res.json({ lods });
+});
+
+app.get('/api/mesh-catalog', (req, res) => {
+  const lod = req.query.lod || 'lod1';
+  const lodNum = parseInt(lod.replace('lod', ''), 10);
+  // Union of all meshes available at requested LOD or below (fallback)
+  const meshSet = new Set();
+  for (let l = lodNum; l >= 0; l--) {
+    const lodDir = path.join(MESHES_DIR, `lod${l}`);
+    if (!fs.existsSync(lodDir)) continue;
+    for (const f of fs.readdirSync(lodDir)) {
+      if (f.endsWith('.glb')) meshSet.add(f.replace('.glb', ''));
+    }
+  }
+  res.json({ lod, meshes: [...meshSet].sort() });
+});
 
 // ── WebSocket ──────────────────────────────────────────────────────
 const server = http.createServer(app);
@@ -54,6 +96,7 @@ app.post('/api/load-file', (req, res) => {
       res.json({ success: true, type: 'cbp', name });
     } else {
       loadSave(name, arrayBuf);
+      broadcast({ type: 'saveLoaded', name });
       res.json({ success: true, type: 'save', name });
     }
   } catch (err) {
@@ -141,6 +184,59 @@ app.get('/api/terrain', (req, res) => {
   const heightmapData = getHeightmapData();
   if (!heightmapData) return res.status(404).json({ error: 'No heightmap. Run: node tools/generateHeightmap.js' });
   res.json(heightmapData);
+});
+
+app.get('/api/scenery', (req, res) => {
+  const placementsPath = path.join(MESHES_DIR, 'scenery_placements.json');
+  const streamingPath = path.join(MESHES_DIR, 'scenery_streaming.json');
+  const data = fs.existsSync(placementsPath) ? JSON.parse(fs.readFileSync(placementsPath, 'utf8')) : { staticMeshes: [], bpActors: [] };
+  const streaming = fs.existsSync(streamingPath) ? JSON.parse(fs.readFileSync(streamingPath, 'utf8')) : [];
+  const lod = req.query.lod || 'lod0';
+  const lodNum = parseInt(lod.replace('lod', ''), 10);
+  // Union of scenery meshes at requested LOD or below (fallback)
+  const meshSet = new Set();
+  for (let l = lodNum; l >= 0; l--) {
+    const lodDir = path.join(MESHES_DIR, 'scenery', `lod${l}`);
+    if (!fs.existsSync(lodDir)) continue;
+    for (const f of fs.readdirSync(lodDir)) {
+      if (f.endsWith('.glb')) meshSet.add(f.replace('.glb', ''));
+    }
+  }
+  const availableMeshes = [...meshSet];
+  const texDir = path.join(MESHES_DIR, 'scenery', 'textures');
+  const availableTextures = fs.existsSync(texDir)
+    ? fs.readdirSync(texDir).filter(f => f.endsWith('.png')).map(f => f.replace('.png', ''))
+    : [];
+  res.json({ ...data, streaming, availableMeshes, availableTextures });
+});
+
+app.get('/api/terrain-tiles', (req, res) => {
+  const terrainDir = path.join(MESHES_DIR, 'terrain');
+  const glbDir = path.join(terrainDir, 'glb');
+  if (!fs.existsSync(glbDir)) return res.json({ tiles: [] });
+
+  // Use metadata.json if available (has world coordinates)
+  const metaPath = path.join(terrainDir, 'metadata.json');
+  if (fs.existsSync(metaPath)) {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    const tiles = meta
+      .filter(m => fs.existsSync(path.join(glbDir, m.tile + '.glb')))
+      .map(m => ({ glb: 'glb/' + m.tile + '.glb', img: 'img/' + m.tile + '.png',
+        x: m.x, y: m.y,
+        worldMinX: m.worldMinX, worldMinY: m.worldMinY,
+        worldMaxX: m.worldMaxX, worldMaxY: m.worldMaxY }));
+    return res.json({ tiles });
+  }
+
+  // Fallback: list GLB files in glb/
+  const tiles = fs.readdirSync(glbDir)
+    .filter(f => f.endsWith('.glb'))
+    .map(f => {
+      const m = f.match(/^comp_(-?\d+)_(-?\d+)\.glb$/);
+      return m ? { glb: 'glb/' + f, img: 'img/' + f.replace('.glb', '.png'), x: parseInt(m[1]), y: parseInt(m[2]) } : null;
+    })
+    .filter(Boolean);
+  res.json({ tiles });
 });
 
 // ── Export blueprint ───────────────────────────────────────────────

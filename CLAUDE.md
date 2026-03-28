@@ -10,6 +10,10 @@ Node.js est installé via nvm4w. Il faut ajouter le chemin au PATH avant d'exéc
 export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
 ```
 
+## Browser automation
+
+Pour interagir avec le navigateur (console, screenshots, debug), utiliser le MCP **chrome-devtools** (`mcp__chrome-devtools__*`), PAS `claude-in-chrome`.
+
 ## Organisation du projet
 
 ```

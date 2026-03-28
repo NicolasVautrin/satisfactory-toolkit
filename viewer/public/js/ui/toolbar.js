@@ -46,7 +46,7 @@ function createMenu(container, label) {
   return dropdown;
 }
 
-export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloadSave }) {
+export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloadSave, onDisplayChange }) {
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = '.sav,.cbp,.sbp';
@@ -101,6 +101,44 @@ export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloa
   downloadItem.addEventListener('click', () => { closeAll(); onDownloadSave(); });
   fileMenu.appendChild(downloadItem);
 
+  // ── Display menu ────────────────────────────────────────
+  const displayMenu = createMenu(container, 'Display');
+
+  // Unified display options: Boxes (no meshes) + LOD levels
+  let currentDisplay = localStorage.getItem('viewer_display') || 'lod2';
+  const displayItems = {};
+
+  function addDisplayOption(key, label) {
+    const item = document.createElement('div');
+    item.className = 'menu-item' + (key === currentDisplay ? ' checked' : '');
+    item.textContent = label;
+    item.addEventListener('click', () => {
+      if (key === currentDisplay) return;
+      currentDisplay = key;
+      localStorage.setItem('viewer_display', key);
+      for (const el of Object.values(displayItems)) el.classList.remove('checked');
+      item.classList.add('checked');
+      closeAll();
+      if (onDisplayChange) onDisplayChange({ display: currentDisplay });
+    });
+    displayMenu.appendChild(item);
+    displayItems[key] = item;
+  }
+
+  addDisplayOption('boxes', 'Boxes');
+
+  function populateLods(lods) {
+    // Add LOD items in reverse order (highest detail first after boxes)
+    const sorted = [...lods].sort((a, b) => {
+      const na = parseInt(a.replace('lod', ''), 10);
+      const nb = parseInt(b.replace('lod', ''), 10);
+      return na - nb;
+    });
+    for (const lod of sorted) {
+      addDisplayOption(lod, lod.toUpperCase());
+    }
+  }
+
   // ── Layers menu ─────────────────────────────────────────
   const layersMenu = createMenu(container, 'Layers');
 
@@ -119,6 +157,7 @@ export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloa
   return {
     layersMenu,
     cameraMenu,
+    populateLods,
 
     updateStatus(text) {
       status.textContent = text;

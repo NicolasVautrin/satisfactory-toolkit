@@ -2,7 +2,7 @@ import { camera } from './engine/scene.js';
 import { camState } from './engine/camera.js';
 import { getSaveData, applyEditResult } from './engine/entities.js';
 
-export function initWebSocket({ onEditResult }) {
+export function initWebSocket({ onEditResult, onSaveLoaded }) {
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${wsProto}//${location.host}`);
 
@@ -33,6 +33,9 @@ export function initWebSocket({ onEditResult }) {
         applyEditResult(msg);
         onEditResult(msg);
         console.log(`[WS] editResult: +${msg.added.length} ~${msg.updated.length} -${msg.deleted.length}, ${msg.connections.length} conn`);
+      } else if (msg.type === 'saveLoaded') {
+        console.log(`[WS] saveLoaded: ${msg.name}`);
+        if (onSaveLoaded) onSaveLoaded(msg.name);
       }
     } catch (err) {
       console.error('[WS] message error:', err);

@@ -1,3 +1,26 @@
 node_modules/
 *.sav
 ~$*
+
+# IDE / tools
+.idea/
+FModel.exe
+Output/
+
+# Generated assets (meshes, textures, heightmaps)
+data/meshes/
+data/heightmap.json
+data/water_mask.png
+data/water_mask_d3.svg
+data/water_mask_potrace.svg
+
+# Debug screenshots
+*.png
+
+# .NET build artifacts
+bin/
+obj/
+
+# Local config
+.claude/settings.local.json
+.mcp.json

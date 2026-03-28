@@ -58,6 +58,8 @@ body {
 }
 .menu-item:hover { background: #3a3a3a; }
 .menu-item.disabled { opacity: 0.4; pointer-events: none; }
+.menu-item.checked::before { content: '✓'; margin-right: 2px; font-size: 11px; }
+.menu-item.checked { color: #6cf; }
 
 .menu-separator {
   height: 1px; background: #444; margin: 4px 0;

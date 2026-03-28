@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { scene, camera, gameToViewer, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
+import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog } from './meshCatalog.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;
@@ -10,6 +11,10 @@ const portMeshes = [];
 const catVisible = [true, true, true, true, true, true, true, true];
 let cbpVisible = true;
 let portsVisible = false;
+let currentRenderMode = 'boxes'; // 'boxes' | 'textured'
+
+export function getRenderMode() { return currentRenderMode; }
+export function setRenderMode(mode) { currentRenderMode = mode; }
 
 export function getSaveData() { return saveEntityData; }
 export function getCbpData() { return cbpEntityData; }
@@ -107,6 +112,13 @@ function boxMatrix(e, box) {
   _m.compose(_pos, _quat, _scale);
 }
 
+function meshMatrix(e) {
+  _pos.copy(gameToViewer(e.tx, e.ty, e.tz));
+  _quat.set(e.rx, -e.ry, -e.rz, e.rw);
+  _scale.set(1, 1, 1);
+  _m.compose(_pos, _quat, _scale);
+}
+
 function splineMatrix(p1, p2, section) {
   const v1 = gameToViewer(p1[0], p1[1], p1[2]);
   const v2 = gameToViewer(p2[0], p2[1], p2[2]);
@@ -171,27 +183,29 @@ function computePorts(ei, e, portLayouts) {
 
 // ── InstancedMesh creation from bucket ──────────────────────
 
-function createInstancedMesh(geom, matOptions, count, userData) {
-  const mat = new THREE.MeshLambertMaterial(matOptions);
+function createInstancedMesh(geom, matOrOptions, count, userData) {
+  const mat = matOrOptions.isMaterial ? matOrOptions : new THREE.MeshLambertMaterial(matOrOptions);
   const mesh = new THREE.InstancedMesh(geom, mat, count);
   mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
   mesh.userData = userData;
   return mesh;
 }
 
-function flushBucket(bucket, geom, matOptions, computeMatrix, meshArray, cat) {
+function flushBucket(bucket, geom, matOrOptions, computeMatrix, meshArray, cat) {
   const count = bucket.length;
   if (count === 0) return;
-  const mesh = createInstancedMesh(geom, matOptions, count, {
+  const isRawMat = matOrOptions.isMaterial;
+  const bucketColor = isRawMat ? 0xffffff : (matOrOptions._bucketColor || 0xffffff);
+  const mesh = createInstancedMesh(geom, matOrOptions, count, {
     cat,
     instanceToEntity: new Array(count),
-    baseColor: new THREE.Color(matOptions._bucketColor || 0xffffff),
+    baseColor: new THREE.Color(bucketColor),
   });
   for (let j = 0; j < count; j++) {
     mesh.userData.instanceToEntity[j] = bucket[j].ei;
     computeMatrix(bucket[j]);
     mesh.setMatrixAt(j, _m);
-    _color.set(matOptions._bucketColor || 0xffffff);
+    _color.set(bucketColor);
     mesh.setColorAt(j, _color);
   }
   mesh.instanceMatrix.needsUpdate = true;
@@ -230,11 +244,15 @@ function flushPortBucket(bucket, geom, computeMatrix, meshArray) {
 
 // ── Collect + flush: single pipeline for batch and single ───
 
-function buildEntityMeshes(entities, clearance, portLayouts, displayArray, portArray, colorMode) {
+function buildEntityMeshes(entities, classNames, clearance, portLayouts, displayArray, portArray, colorMode) {
+  const renderMode = currentRenderMode;
+  const useMeshes = renderMode !== 'boxes';
+
   // ── Collect into buckets ──────────────────────────────────
   const catBoxBuckets = Array.from({ length: 8 }, () => []);
   const catBeltBuckets = Array.from({ length: 8 }, () => []);
   const catPipeBuckets = Array.from({ length: 8 }, () => []);
+  const meshBuckets = {}; // className → { cat, items[] }
   const portMarkerBuckets = {};
   const portConeBuckets = {};
 
@@ -242,7 +260,7 @@ function buildEntityMeshes(entities, clearance, portLayouts, displayArray, portA
     const e = entities[i];
     const ei = e._ei !== undefined ? e._ei : i; // allow override for incremental
 
-    // Boxes
+    // Splines first (belts/pipes always use spline rendering)
     if (e.boxes) {
       for (const box of e.boxes) catBoxBuckets[e.cat].push({ ei, e, box });
     } else if (e.sp && e.sp.length >= 2) {
@@ -252,7 +270,13 @@ function buildEntityMeshes(entities, clearance, portLayouts, displayArray, portA
       }
     } else if (e.box) {
       catBoxBuckets[e.cat].push({ ei, e, box: e.box });
+    } else if (useMeshes && classNames && getMeshGeometry(classNames[e.c])) {
+      // Mesh bucket (per className)
+      const cn = classNames[e.c];
+      if (!meshBuckets[cn]) meshBuckets[cn] = { cat: e.cat, items: [] };
+      meshBuckets[cn].items.push({ ei, e });
     } else {
+      // Box fallback
       const boxes = clearance[e.c];
       if (boxes && boxes.length > 0) {
         for (const box of boxes) catBoxBuckets[e.cat].push({ ei, e, box });
@@ -304,6 +328,32 @@ function buildEntityMeshes(entities, clearance, portLayouts, displayArray, portA
     }
   }
 
+  // ── Flush mesh buckets (per className) ─────────────────────
+  for (const [className, bucket] of Object.entries(meshBuckets)) {
+    const geom = getMeshGeometry(className);
+    if (!geom) continue;
+    const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[bucket.cat]);
+
+    // Use textured material if available, convert PBR to Lambert for visibility
+    const srcMat = getMeshMaterial(className);
+    if (srcMat && srcMat.map) {
+      const mat = new THREE.MeshLambertMaterial({
+        map: srcMat.map,
+        transparent: true,
+        opacity,
+      });
+      flushBucket(bucket.items, geom, mat,
+        (inst) => meshMatrix(inst.e),
+        displayArray, bucket.cat);
+      continue;
+    }
+    // Fallback: flat color
+    flushBucket(bucket.items, geom,
+      { color: 0xffffff, transparent: true, opacity, _bucketColor: catColor },
+      (inst) => meshMatrix(inst.e),
+      displayArray, bucket.cat);
+  }
+
   // ── Flush port meshes ─────────────────────────────────────
   for (const bucket of Object.values(portMarkerBuckets)) {
     const geom = bucket[0].ptype === 0 ? _boxGeom : _sphereGeom;
@@ -326,15 +376,32 @@ export function buildSaveScene(data) {
   saveEntityData = data;
   clearMeshes(displayMeshes);
   clearMeshes(portMeshes);
-  buildEntityMeshes(data.entities, data.clearance, data.portLayouts, displayMeshes, portMeshes, 'save');
+  buildEntityMeshes(data.entities, data.classNames, data.clearance, data.portLayouts, displayMeshes, portMeshes, 'save');
   requestRender();
   console.log('[Ports] built for', data.entities.length, 'entities');
+
+  // Async mesh loading (if render mode uses meshes)
+  if (currentRenderMode !== 'boxes') {
+    initMeshCatalog(data.classNames).then(() => {
+      if (hasMeshesAvailable()) {
+        rebuildSaveScene();
+      }
+    });
+  }
+}
+
+export function rebuildSaveScene() {
+  if (!saveEntityData) return;
+  clearMeshes(displayMeshes);
+  clearMeshes(portMeshes);
+  buildEntityMeshes(saveEntityData.entities, saveEntityData.classNames, saveEntityData.clearance, saveEntityData.portLayouts, displayMeshes, portMeshes, 'save');
+  requestRender();
 }
 
 export function buildCbpScene(data) {
   cbpEntityData = data;
   clearMeshes(cbpMeshes);
-  buildEntityMeshes(data.entities, data.clearance, data.portLayouts || {}, cbpMeshes, [], 'cbp');
+  buildEntityMeshes(data.entities, data.classNames, data.clearance, data.portLayouts || {}, cbpMeshes, [], 'cbp');
   requestRender();
 }
 
@@ -416,7 +483,7 @@ export function applyEditResult(msg) {
     }
   }
   if (toRebuild.length > 0) {
-    buildEntityMeshes(toRebuild, saveEntityData.clearance, saveEntityData.portLayouts, displayMeshes, portMeshes, 'save');
+    buildEntityMeshes(toRebuild, saveEntityData.classNames, saveEntityData.clearance, saveEntityData.portLayouts, displayMeshes, portMeshes, 'save');
   }
   requestRender();
 }

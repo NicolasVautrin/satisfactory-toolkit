@@ -15,11 +15,12 @@ function saveState(state) {
 
 // ── Layers dropdown menu ────────────────────────────────────
 
-export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onTerrainToggle, onGridToggle, onPortsToggle }) {
+export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onTerrainToggle, onSceneryToggle, onGridToggle, onPortsToggle }) {
   const saved = loadState() || {};
   const state = {
     cats: saved.cats || [true, true, true, true, true, true, true, true],
     terrain: saved.terrain !== undefined ? saved.terrain : true,
+    scenery: saved.scenery !== undefined ? saved.scenery : true,
     grid: saved.grid !== undefined ? saved.grid : true,
     ports: saved.ports || false,
     cbp: saved.cbp !== undefined ? saved.cbp : true,
@@ -67,6 +68,22 @@ export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onT
   });
   menuDropdown.appendChild(terrainLabel);
   if (!state.terrain) onTerrainToggle(false);
+
+  // Scenery toggle
+  const sceneryLabel = document.createElement('label');
+  sceneryLabel.className = 'menu-toggle';
+  sceneryLabel.innerHTML = `
+    <input type="checkbox" ${state.scenery ? 'checked' : ''}>
+    <span class="menu-dot" style="background:#886644"></span>
+    Scenery
+  `;
+  sceneryLabel.querySelector('input').addEventListener('change', (e) => {
+    state.scenery = e.target.checked;
+    persist();
+    onSceneryToggle(e.target.checked);
+  });
+  menuDropdown.appendChild(sceneryLabel);
+  if (!state.scenery) onSceneryToggle(false);
 
   // Grid toggle
   const gridLabel = document.createElement('label');
