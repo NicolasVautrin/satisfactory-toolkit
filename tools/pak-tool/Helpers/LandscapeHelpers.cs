@@ -63,7 +63,7 @@ public static class LandscapeHelpers
                 if (tex == null) continue;
                 var decoded = tex.Decode();
                 if (decoded == null) continue;
-                using var bmp = decoded;
+                using var bmp = decoded.ToSKBitmap();
                 long rSum = 0, gSum = 0, bSum = 0;
                 int count = 0;
                 for (int y = 0; y < bmp.Height; y += 4)

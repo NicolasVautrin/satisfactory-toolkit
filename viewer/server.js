@@ -198,7 +198,7 @@ app.get('/api/viewer/scenery', (req, res) => {
 });
 
 app.get('/api/viewer/landscape-data', (req, res) => {
-  const landscapeDir = path.join(MESHES_DIR, 'terrain');
+  const landscapeDir = path.join(MESHES_DIR, 'landscape');
   const glbDir = path.join(landscapeDir, 'glb');
   if (!fs.existsSync(glbDir)) return res.json({ tiles: [] });
 
@@ -234,7 +234,7 @@ app.get('/api/viewer/landscape-map', async (req, res) => {
     return;
   }
 
-  const landscapeDir = path.join(MESHES_DIR, 'terrain');
+  const landscapeDir = path.join(MESHES_DIR, 'landscape');
   const imgDir = path.join(landscapeDir, 'img');
   const metaPath = path.join(landscapeDir, 'metadata.json');
   if (!fs.existsSync(metaPath) || !fs.existsSync(imgDir)) {
@@ -279,7 +279,7 @@ app.get('/api/viewer/landscape-map', async (req, res) => {
 });
 
 // ── Batch GLB endpoint ────────────────────────────────────────────
-// POST /api/glb { prefix: "terrain/glb", files: ["comp_X_Y", ...] }
+// POST /api/glb { prefix: "landscape/glb", files: ["comp_X_Y", ...] }
 // Returns binary: [uint32 count][uint32 nameLen][name][uint32 glbLen][glb]...
 function resolveGlbPath(prefix, name) {
   const base = path.join(MESHES_DIR, prefix, name + '.glb');

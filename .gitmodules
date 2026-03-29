@@ -1,0 +1,3 @@
+[submodule "tools/pak-tool/lib/CUE4Parse"]
+	path = tools/pak-tool/lib/CUE4Parse
+	url = https://github.com/FabianFG/CUE4Parse.git

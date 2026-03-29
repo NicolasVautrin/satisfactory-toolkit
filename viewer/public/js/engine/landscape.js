@@ -222,7 +222,7 @@ export function updateStreaming() {
 // ── Load a batch of tiles ─────────────────────────────────
 async function loadBatchAsync(fileNames, tileByName) {
   try {
-    const entries = await fetchBatchGlb('terrain/glb', fileNames, 'low');
+    const entries = await fetchBatchGlb('landscape/glb', fileNames, 'low');
 
     for (const { name, glb } of entries) {
       const tile = tileByName.get(name);

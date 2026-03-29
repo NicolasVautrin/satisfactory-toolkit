@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Objects.Core.Math;
+using CUE4Parse_Conversion.Meshes.PSK;
 using CUE4Parse_Conversion.Textures;
 using g3;
 using Serilog;
@@ -97,7 +98,7 @@ public static class LandscapeConverter
         var decoded = heightmapTex.Decode();
         if (decoded == null) return null;
 
-        using var bmp = decoded;
+        using var bmp = decoded.ToSKBitmap();
         var vertsPerSide = componentSizeQuads + 1;
         var subsectionSizeVerts = subsectionSizeQuads + 1;
         var heights = new float[vertsPerSide * vertsPerSide];
@@ -154,6 +155,75 @@ public static class LandscapeConverter
         catch
         {
             return new FVector(0, 0, 0);
+        }
+    }
+
+    /// <summary>
+    /// Parse an existing GLB (possibly interleaved), simplify with geometry3Sharp,
+    /// and write a minimal GLB with only positions + indices.
+    /// </summary>
+    public static byte[]? SimplifyGlb(byte[] glbBytes, double simplifyRatio)
+    {
+        try
+        {
+            // Parse GLB: header(12) + JSON chunk(8+data) + BIN chunk(8+data)
+            var jsonChunkLen = BitConverter.ToInt32(glbBytes, 12);
+            var jsonStr = System.Text.Encoding.UTF8.GetString(glbBytes, 20, jsonChunkLen).Trim();
+            var json = System.Text.Json.JsonDocument.Parse(jsonStr);
+
+            var accessors = json.RootElement.GetProperty("accessors");
+            var bufferViews = json.RootElement.GetProperty("bufferViews");
+
+            // Find POSITION accessor (first one named POSITION, or index 0)
+            var posAccessor = accessors[0];
+            var posViewIdx = posAccessor.GetProperty("bufferView").GetInt32();
+            var posView = bufferViews[posViewIdx];
+            var posViewOffset = posView.TryGetProperty("byteOffset", out var pvo) ? pvo.GetInt32() : 0;
+            var posAccOffset = posAccessor.TryGetProperty("byteOffset", out var pao) ? pao.GetInt32() : 0;
+            var posCount = posAccessor.GetProperty("count").GetInt32();
+            var byteStride = posView.TryGetProperty("byteStride", out var bs) ? bs.GetInt32() : 12;
+
+            // Find index accessor (last one, type SCALAR)
+            var idxAccessor = accessors[accessors.GetArrayLength() - 1];
+            var idxViewIdx = idxAccessor.GetProperty("bufferView").GetInt32();
+            var idxView = bufferViews[idxViewIdx];
+            var idxViewOffset = idxView.TryGetProperty("byteOffset", out var ivo) ? ivo.GetInt32() : 0;
+            var idxAccOffset = idxAccessor.TryGetProperty("byteOffset", out var iao) ? iao.GetInt32() : 0;
+            var idxCount = idxAccessor.GetProperty("count").GetInt32();
+            var idxComponentType = idxAccessor.GetProperty("componentType").GetInt32();
+
+            // BIN chunk starts after JSON chunk header + padded JSON data + BIN chunk header
+            var jsonPadded = jsonChunkLen + ((4 - jsonChunkLen % 4) % 4);
+            var binStart = 20 + jsonPadded + 8;
+
+            // Read vertices (handle interleaved layout via byteStride)
+            var vertices = new List<float>(posCount * 3);
+            for (int i = 0; i < posCount; i++)
+            {
+                var off = binStart + posViewOffset + posAccOffset + i * byteStride;
+                vertices.Add(BitConverter.ToSingle(glbBytes, off));
+                vertices.Add(BitConverter.ToSingle(glbBytes, off + 4));
+                vertices.Add(BitConverter.ToSingle(glbBytes, off + 8));
+            }
+
+            // Read indices (uint16 or uint32)
+            var indices = new List<int>(idxCount);
+            var idxBase = binStart + idxViewOffset + idxAccOffset;
+            for (int i = 0; i < idxCount; i++)
+            {
+                if (idxComponentType == 5123) // UNSIGNED_SHORT
+                    indices.Add(BitConverter.ToUInt16(glbBytes, idxBase + i * 2));
+                else // 5125 = UNSIGNED_INT
+                    indices.Add((int)BitConverter.ToUInt32(glbBytes, idxBase + i * 4));
+            }
+
+            SimplifyMesh(vertices, indices, simplifyRatio);
+            return WriteGlb(vertices, indices);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug("SimplifyGlb failed: {Msg}", ex.Message);
+            return null;
         }
     }
 

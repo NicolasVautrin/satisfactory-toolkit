@@ -1,5 +1,4 @@
-using CUE4Parse.UE4.Assets.Exports;
-using CUE4Parse.UE4.Assets.Exports.Texture;
+using CUE4Parse.UE4.Assets.Exports.Component.Landscape;
 using CUE4Parse_Conversion.Textures;
 using Serilog;
 
@@ -7,36 +6,30 @@ namespace PakTool.Helpers;
 
 /// <summary>
 /// Bakes landscape tile textures from weightmap data.
-/// Reads properties via GetOrDefault — no fork-specific types needed.
+/// Uses typed ULandscapeComponent API from CUE4Parse source.
 /// </summary>
 public static class LandscapeTextureBaker
 {
-    public static void BakeTile(UObject component, Dictionary<string, (byte r, byte g, byte b)> layerColors, string outPath)
+    public static void BakeTile(ULandscapeComponent comp, Dictionary<string, (byte r, byte g, byte b)> layerColors, string outPath)
     {
         try
         {
-            var componentSizeQuads = component.GetOrDefault("ComponentSizeQuads", 0);
-            if (componentSizeQuads == 0) return;
+            var wmSize = comp.ComponentSizeQuads + 1;
 
-            var wmSize = componentSizeQuads + 1;
+            var allocations = comp.GetWeightmapLayerAllocations();
+            var weightmaps = comp.GetWeightmapTextures();
 
-            // Read weightmap textures and layer allocations from properties
-            var weightmapTextures = component.GetOrDefault<UTexture2D[]>("WeightmapTextures", []);
-            var allocations = ReadWeightmapAllocations(component);
-
-            if (weightmapTextures.Length == 0 || allocations.Length == 0)
+            if (weightmaps.Length == 0 || allocations.Length == 0)
             {
-                // Write a solid default color tile
                 WriteSolidTile(outPath, wmSize, wmSize, (106, 130, 58));
                 return;
             }
 
-            // Decode weightmap textures
-            var wmBitmaps = new SkiaSharp.SKBitmap?[weightmapTextures.Length];
-            for (int i = 0; i < weightmapTextures.Length; i++)
+            var wmBitmaps = new SkiaSharp.SKBitmap?[weightmaps.Length];
+            for (int i = 0; i < weightmaps.Length; i++)
             {
-                var decoded = weightmapTextures[i]?.Decode();
-                wmBitmaps[i] = decoded;
+                var decoded = weightmaps[i]?.Decode();
+                wmBitmaps[i] = decoded?.ToSKBitmap();
             }
 
             using var bmp = new SkiaSharp.SKBitmap(wmSize, wmSize);
@@ -48,17 +41,20 @@ public static class LandscapeTextureBaker
 
                 foreach (var alloc in allocations)
                 {
-                    if (alloc.wmIndex >= wmBitmaps.Length || wmBitmaps[alloc.wmIndex] == null) continue;
+                    var wmIdx = alloc.WeightmapTextureIndex;
+                    var ch = alloc.WeightmapTextureChannel;
+                    if (wmIdx >= wmBitmaps.Length || wmBitmaps[wmIdx] == null) continue;
 
-                    var wmBmp = wmBitmaps[alloc.wmIndex]!;
+                    var wmBmp = wmBitmaps[wmIdx]!;
                     var sx = Math.Min(lx, wmBmp.Width - 1);
                     var sy = Math.Min(ly, wmBmp.Height - 1);
                     var pixel = wmBmp.GetPixel(sx, sy);
 
-                    byte weight = alloc.channel switch { 0 => pixel.Red, 1 => pixel.Green, 2 => pixel.Blue, 3 => pixel.Alpha, _ => 0 };
+                    byte weight = ch switch { 0 => pixel.Red, 1 => pixel.Green, 2 => pixel.Blue, 3 => pixel.Alpha, _ => 0 };
                     if (weight == 0) continue;
 
-                    if (!layerColors.TryGetValue(alloc.layerName, out var col))
+                    var layerName = alloc.GetLayerName();
+                    if (!layerColors.TryGetValue(layerName, out var col))
                         col = (106, 130, 58);
 
                     float w = weight / 255f;
@@ -89,34 +85,6 @@ public static class LandscapeTextureBaker
         catch (Exception ex)
         {
             Log.Debug("BakeTile failed: {Msg}", ex.Message);
-        }
-    }
-
-    private record struct WeightmapAlloc(string layerName, int wmIndex, int channel);
-
-    private static WeightmapAlloc[] ReadWeightmapAllocations(UObject component)
-    {
-        try
-        {
-            // Use GetOrDefault to get the array of struct values
-            var allocArray = component.GetOrDefault<CUE4Parse.UE4.Assets.Objects.FStructFallback[]>("WeightmapLayerAllocations");
-            if (allocArray == null || allocArray.Length == 0) return [];
-
-            var allocs = new List<WeightmapAlloc>();
-            foreach (var structVal in allocArray)
-            {
-                var wmIdx = structVal.GetOrDefault("WeightmapTextureIndex", (byte)0);
-                var wmCh = structVal.GetOrDefault("WeightmapTextureChannel", (byte)0);
-                var layerInfo = structVal.GetOrDefault<CUE4Parse.UE4.Objects.UObject.FPackageIndex>("LayerInfo");
-                var layerName = layerInfo?.ResolvedObject?.Name.Text ?? "None";
-                allocs.Add(new WeightmapAlloc(layerName, wmIdx, wmCh));
-            }
-
-            return allocs.ToArray();
-        }
-        catch
-        {
-            return [];
         }
     }
 

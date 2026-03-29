@@ -91,8 +91,11 @@ switch (mode)
                 ExportCommand.Streaming(provider, outputDir);
                 break;
             }
+            case "connectors":
+                ConnectorsCommand.Export(outputDir, parallelism);
+                break;
             default:
-                Log.Error("Unknown export sub-command: {Sub}. Use: buildings, scenery, landscape, texture, mesh, actors, streaming", subMode);
+                Log.Error("Unknown export sub-command: {Sub}. Use: buildings, scenery, landscape, texture, mesh, actors, streaming, connectors", subMode);
                 break;
         }
         break;
@@ -119,6 +122,7 @@ switch (mode)
             [--type <regex>]            Filter by entry type
           export actors                 Persistent_Level placements → JSON
           export streaming              Streaming cell placements → JSON
+          export connectors             All building port offsets → JSON
 
         GLOBAL OPTIONS:
           --offset N                    Pagination offset (default: 0)

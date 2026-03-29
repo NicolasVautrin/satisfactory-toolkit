@@ -1,14 +1,20 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using CUE4Parse.UE4.Assets.Exports.Actor;
+using CUE4Parse.UE4.Assets.Exports.Component;
+using CUE4Parse.UE4.Assets.Exports.Component.Landscape;
 using CUE4Parse.UE4.Assets.Exports.Component.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Objects.UObject;
+using CUE4Parse.UE4.Writers;
 using CUE4Parse_Conversion;
+using CUE4Parse_Conversion.Landscape;
 using CUE4Parse_Conversion.Meshes;
+using CUE4Parse_Conversion.Meshes.glTF;
 using CUE4Parse_Conversion.Textures;
 using CUE4Parse_Conversion.UEFormat.Enums;
 using PakTool.Helpers;
@@ -251,9 +257,12 @@ public static class ExportCommand
         Directory.CreateDirectory(imgDir);
 
         var watch = Stopwatch.StartNew();
-        var seen = new ConcurrentDictionary<string, byte>();
         var tileResults = new ConcurrentBag<(string tile, int x, int y, long wMinX, long wMinY, long wMaxX, long wMaxY, int comps)>();
         var exported = 0;
+
+        // Clean existing GLB/PNG
+        if (Directory.Exists(glbDir)) foreach (var f in Directory.GetFiles(glbDir, "*.glb")) File.Delete(f);
+        if (Directory.Exists(imgDir)) foreach (var f in Directory.GetFiles(imgDir, "*.png")) File.Delete(f);
 
         var queue = new BlockingCollection<string>();
         foreach (var p in landscapePaths) queue.Add(p);
@@ -272,24 +281,29 @@ public static class ExportCommand
                     var cleanPath = pkgPath.Replace(".uasset", "").Replace(".umap", "");
                     var exports = myProvider.LoadPackage(cleanPath).GetExports().ToList();
 
-                    // Find landscape components (by ExportType, no fork-specific types needed)
-                    var landscapeComps = exports.Where(e => e.ExportType == "LandscapeComponent").ToList();
-                    if (landscapeComps.Count == 0) continue;
+                    var proxy = exports.OfType<ALandscapeProxy>().FirstOrDefault();
+                    if (proxy == null) continue;
 
-                    foreach (var comp in landscapeComps)
+                    foreach (var comp in exports.OfType<ULandscapeComponent>())
                     {
-                        var bx = comp.GetOrDefault("SectionBaseX", 0);
-                        var by = comp.GetOrDefault("SectionBaseY", 0);
-                        var sq = comp.GetOrDefault("ComponentSizeQuads", 0);
-                        if (sq == 0) continue;
+                        var tileName = $"comp_{comp.SectionBaseX}_{comp.SectionBaseY}";
+                        var bx = comp.SectionBaseX;
+                        var by = comp.SectionBaseY;
+                        var sq = comp.ComponentSizeQuads;
 
-                        var tileName = $"comp_{bx}_{by}";
-                        if (!seen.TryAdd(tileName, 0)) continue;
+                        // 1. Export GLB via CUE4Parse Gltf class + geometry3Sharp simplification
+                        if (proxy.TryConvert(new[] { comp }, ELandscapeExportFlags.Mesh, out var mesh, out _, out _) && mesh != null)
+                        {
+                            using var ar = new FArchiveWriter();
+                            new Gltf(tileName, mesh.LODs.First(), null, options).Save(options.MeshFormat, ar);
+                            var rawGlb = ar.GetBuffer();
 
-                        // 1. Export GLB (with in-process simplification)
-                        var glbBytes = LandscapeConverter.ConvertToGlb(comp, simplifyRatioVal);
-                        if (glbBytes != null)
-                            File.WriteAllBytes(Path.Combine(glbDir, $"{tileName}.glb"), glbBytes);
+                            var finalGlb = simplifyRatioVal < 1.0
+                                ? LandscapeConverter.SimplifyGlb(rawGlb, simplifyRatioVal) ?? rawGlb
+                                : rawGlb;
+
+                            File.WriteAllBytes(Path.Combine(glbDir, $"{tileName}.glb"), finalGlb);
+                        }
 
                         // 2. Bake PNG (weightmaps)
                         var pngPath = Path.Combine(imgDir, $"{tileName}.png");
