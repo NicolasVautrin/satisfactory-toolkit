@@ -11,6 +11,8 @@ Node.js toolkit for Satisfactory 1.0 save editing, blueprint manipulation, logis
 - **Port Visualization** - See belt/pipe connection points, directions, and connection state
 - **Entity Operations** - Select, inspect, delete, and export entities from the viewer
 
+![3D Entity Viewer](viewer.png)
+
 ## Quick Start
 
 ```bash
