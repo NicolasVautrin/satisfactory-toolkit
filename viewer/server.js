@@ -281,6 +281,86 @@ app.get('/api/game/entity/:index', (req, res) => {
   res.json(result);
 });
 
+// ── Nearby entities ───────────────────────────────────────────────
+app.get('/api/game/nearby', (req, res) => {
+  const saveState = getSaveState();
+  if (!saveState) return res.status(400).json({ error: 'No save loaded' });
+
+  const x = parseFloat(req.query.x);
+  const y = parseFloat(req.query.y);
+  const z = parseFloat(req.query.z);
+  const radius = parseFloat(req.query.radius) || 5000;
+  if (isNaN(x) || isNaN(y) || isNaN(z)) {
+    return res.status(400).json({ error: 'x, y, z required' });
+  }
+
+  const r2 = radius * radius;
+  const Registry = require('../lib/Registry');
+  const registry = Registry.default();
+  const results = [];
+
+  for (let idx = 0; idx < saveState.items.length; idx++) {
+    const item = saveState.items[idx];
+    if (!item || item.type !== 'entity') continue;
+    const entity = item.entity;
+    const t = entity.transform.translation;
+    const dx = t.x - x, dy = t.y - y, dz = t.z - z;
+    if (dx * dx + dy * dy + dz * dz > r2) continue;
+
+    const cls = entity.typePath.split('.').pop();
+    const Builder = registry.get(cls);
+
+    // Ports with connection status
+    let ports = null;
+    if (Builder?.getPorts) {
+      const info = Builder.getPorts(entity);
+      if (info?.ports) {
+        // Enrich ports with connection status
+        const compMap = {};
+        for (const ref of (entity.components || [])) {
+          const comp = saveState.allObjects.find(o => o.instanceName === ref.pathName);
+          if (comp) compMap[ref.pathName.split('.').pop()] = comp;
+        }
+        ports = info.ports.map(p => ({
+          name: p.name,
+          pos: p.pos,
+          flow: p.flow,
+          type: p.type,
+          connected: !!(compMap[p.name]?.properties?.mConnectedComponent?.value?.pathName),
+        }));
+      }
+    } else if (Builder?.PORT_LAYOUT) {
+      const Vector3D = require('../lib/shared/Vector3D');
+      const t = entity.transform.translation;
+      const r = entity.transform.rotation;
+      ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => {
+        const pos = new Vector3D(p.offset).rotate(r).add(new Vector3D(t));
+        const compPath = `${entity.instanceName}.${name}`;
+        const comp = saveState.allObjects.find(o => o.instanceName === compPath);
+        return {
+          name,
+          pos,
+          flow: p.flow,
+          type: p.type,
+          connected: !!(comp?.properties?.mConnectedComponent?.value?.pathName),
+        };
+      });
+    }
+
+    const entry = {
+      index: idx,
+      className: cls,
+      position: t,
+      distance: Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz)),
+    };
+    if (ports) entry.ports = ports;
+    results.push(entry);
+  }
+
+  results.sort((a, b) => a.distance - b.distance);
+  res.json({ center: { x, y, z }, radius, count: results.length, entities: results });
+});
+
 // ── Landscape ──────────────────────────────────────────────────────
 app.get('/api/viewer/scenery', (req, res) => {
   const placementsPath = path.join(MESHES_DIR, 'scenery_placements.json');

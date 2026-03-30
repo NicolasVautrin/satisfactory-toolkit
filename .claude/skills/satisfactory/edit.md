@@ -19,7 +19,7 @@ Implémentation : `viewer/lib/editor.js` → `editEntities(batch)`.
 |-------|-------------|
 | `anchor` | Position absolue `{x,y,z}` ou relative caméra `{fromCamera: distance_uu}`. Toutes les positions d'entités sont relatives à l'anchor. |
 | `rotation` | Yaw global en degrés (optionnel). Tourne toutes les positions relatives autour de l'anchor et s'ajoute aux rotations individuelles. |
-| `entities` | Opérations sur les entités (add, alias, modify, delete). |
+| `entities` | Opérations sur les entités (add, alias, delete). |
 | `connections` | Connexions entre entités (direct, belt, pipe, insertion). |
 
 ## Système d'identifiants (alias)
@@ -38,7 +38,6 @@ Cet alias ne modifie pas l'entité — il crée juste un id utilisable dans `fro
 |---|---|---|
 | **Add** | `{id, type, position}` | Crée une entité. `type` = alias wiki (ex: `constructor`, `splitter`). `position` relative à `anchor`. |
 | **Alias** | `{id, index}` | Crée un alias sur une entité existante (pour les connexions). |
-| **Modify** | `{index, position?, rotation?, properties?}` | Modifie une entité existante. |
 | **Delete** | `{index, deleted: true}` | Soft delete (le slot devient null, indices stables). |
 
 ### Alias de types (typeAliases.js)

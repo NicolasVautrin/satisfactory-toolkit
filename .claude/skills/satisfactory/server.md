@@ -53,6 +53,7 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 | `/api/game/upload` | POST | Upload et parse un fichier `.sav`, `.cbp` ou `.sbp` (binaire, header `X-Save-Name`) |
 | `/api/game/entities` | GET | Retourne les entity data en mémoire (pour refresh sans re-upload) |
 | `/api/game/entity/:index` | GET | Détails d'une entité (transform, clearance, ports world-space, splineLength, properties, components) |
+| `/api/game/nearby` | GET | Entités dans un rayon : `?x=&y=&z=&radius=5000` → `{entities: [{index, className, position, distance, ports}]}` |
 | `/api/game/export` | POST | Exporte une sélection en blueprint (`{ indices, name }`) |
 | `/api/game/edit` | POST | Endpoint unifié add/update/delete d'entités + connections (fonctionne sans save) |
 | `/api/game/inject-blueprint` | POST | Injecte un blueprint dans la save avec un transform |

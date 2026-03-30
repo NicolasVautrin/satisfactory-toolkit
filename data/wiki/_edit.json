@@ -2,7 +2,8 @@
   "description": "Guide complet de l'éditeur d'entités — créer, inspecter, connecter, modifier, supprimer",
   "endpoint": "POST /api/game/edit",
   "workflow": [
-    "1. Inspecter la zone : GET /api/game/entity/:index pour voir les ports et positions des entités existantes",
+    "1. Explorer la zone : GET /api/game/nearby?x=&y=&z=&radius= pour voir les entités proches et leurs ports libres",
+    "1b. Inspecter une entité : GET /api/game/entity/:index pour le détail complet (ports world-space, propriétés)",
     "2. Consulter les pages wiki des types à utiliser (ex: ?page=constructor) pour connaître les noms de ports",
     "3. Construire le batch JSON : anchor + entities[] + connections[]",
     "4. Envoyer POST /api/game/edit avec le batch",
@@ -25,6 +26,16 @@
     "GET /api/viewer/camera": {
       "description": "Position et orientation de la caméra du viewer",
       "response": "{ position: {x,y,z}, yaw, pitch } en coordonnées Unreal"
+    },
+    "GET /api/game/nearby": {
+      "description": "Entités dans un rayon autour d'un point. Utiliser pour explorer la zone avant de construire.",
+      "params": "x, y, z (requis), radius (optionnel, défaut 5000 UU)",
+      "response": {
+        "center": "{x, y, z}",
+        "radius": "rayon en UU",
+        "count": "nombre d'entités trouvées",
+        "entities": "[{index, className, position, distance, ports: [{name, pos, flow, type, connected}]}]"
+      }
     }
   },
   "request": {
@@ -34,7 +45,6 @@
     "entities": {
       "add": "{id, type, position} — type = alias wiki (ex: constructor, splitter, belt). position relative à l'anchor.",
       "alias": "{id, index} — référence une entité existante sans la modifier. Obligatoire pour la cibler dans connections.",
-      "modify": "{index, position?, rotation?, properties?} — modifie une entité existante.",
       "delete": "{index, deleted: true} — soft delete (indices stables)."
     },
     "connections": {
@@ -129,11 +139,6 @@
     "delete_entity": {
       "description": "Supprimer une entité existante",
       "entities": [{ "index": 42, "deleted": true }]
-    },
-    "move_existing_entity": {
-      "description": "Déplacer une entité existante à une nouvelle position",
-      "anchor": { "x": 1000, "y": 2000, "z": 500 },
-      "entities": [{ "index": 42, "position": { "x": 0, "y": 0, "z": 0 } }]
     }
   }
 }
