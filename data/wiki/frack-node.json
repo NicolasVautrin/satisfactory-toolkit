@@ -1,0 +1,37 @@
+{
+  "alias": "frack-node",
+  "className": "Build_FrackingExtractor_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/FrackingExtractor/Build_FrackingExtractor.Build_FrackingExtractor_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -250,
+        "y": -250,
+        "z": 0
+      },
+      "max": {
+        "x": 250,
+        "y": 250,
+        "z": 570
+      }
+    }
+  ],
+  "ports": [
+    {
+      "name": "FGPipeConnectionFactory",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 375
+      },
+      "dir": {
+        "x": 50,
+        "y": 0,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "pipe"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

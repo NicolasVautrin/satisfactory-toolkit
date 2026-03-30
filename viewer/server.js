@@ -134,6 +134,20 @@ app.get('/api/game/entities', (req, res) => {
   res.json(result);
 });
 
+// ── Wiki ──────────────────────────────────────────────────────────
+const WIKI_DIR = path.join(__dirname, '..', 'data', 'wiki');
+app.get('/api/wiki', (req, res) => {
+  const page = req.query.page;
+  if (!page) {
+    const indexPath = path.join(WIKI_DIR, '_index.json');
+    if (!fs.existsSync(indexPath)) return res.status(404).json({ error: 'Wiki not generated' });
+    return res.json(JSON.parse(fs.readFileSync(indexPath, 'utf8')));
+  }
+  const filePath = path.join(WIKI_DIR, `${page}.json`);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: `Unknown page: ${page}` });
+  res.json(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+});
+
 // ── Inspect entity ─────────────────────────────────────────────────
 app.get('/api/game/entity/:index', (req, res) => {
   const saveState = getSaveState();
@@ -163,10 +177,33 @@ app.get('/api/game/entity/:index', (req, res) => {
     else if (v?.value !== undefined) props[k] = v.value;
   }
 
+  // Clearance box
+  const cls = entity.typePath.split('.').pop();
+  const clearanceData = require('../data/clearanceData.json');
+  const clearance = clearanceData[cls]?.boxes || null;
+
+  // Port layout from Registry
+  const Registry = require('../lib/Registry');
+  const registry = Registry.default();
+  const Builder = registry.get(cls);
+  let ports = null;
+  if (Builder?.PORT_LAYOUT) {
+    ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => ({
+      name,
+      offset: p.offset,
+      dir: p.dir,
+      flow: p.flow,
+      type: p.type,
+    }));
+  }
+
   res.json({
     instanceName: entity.instanceName,
     typePath: entity.typePath,
-    parentObjectName: entity.parentObjectName,
+    className: cls,
+    transform: entity.transform,
+    clearance,
+    ports,
     properties: props,
     components: comps,
   });

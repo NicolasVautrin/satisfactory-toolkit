@@ -1,0 +1,190 @@
+{
+  "alias": "encoder",
+  "className": "Build_QuantumEncoder_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/QuantumEncoder/Build_QuantumEncoder.Build_QuantumEncoder_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -800,
+        "y": -2100,
+        "z": 0
+      },
+      "max": {
+        "x": 800,
+        "y": -1000,
+        "z": 450
+      }
+    },
+    {
+      "min": {
+        "x": -1100,
+        "y": -1000,
+        "z": 0
+      },
+      "max": {
+        "x": 1100,
+        "y": 1000,
+        "z": 1400
+      }
+    },
+    {
+      "min": {
+        "x": -450,
+        "y": -2700,
+        "z": 0
+      },
+      "max": {
+        "x": 450,
+        "y": -2100,
+        "z": 500
+      }
+    },
+    {
+      "min": {
+        "x": -600,
+        "y": 1000,
+        "z": 0
+      },
+      "max": {
+        "x": 600,
+        "y": 2300,
+        "z": 500
+      }
+    },
+    {
+      "min": {
+        "x": -50,
+        "y": -30,
+        "z": 0
+      },
+      "max": {
+        "x": 30,
+        "y": 30,
+        "z": 270
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": 860,
+          "y": -2030,
+          "z": 250
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -200,
+        "y": -2000,
+        "z": 0
+      },
+      "max": {
+        "x": 500,
+        "y": -1700,
+        "z": 270
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": -690,
+          "y": 20,
+          "z": 450
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input1",
+      "offset": {
+        "x": 200,
+        "y": -2460,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input2",
+      "offset": {
+        "x": -200,
+        "y": -2460,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input3",
+      "offset": {
+        "x": -600,
+        "y": -2400,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output0",
+      "offset": {
+        "x": -200,
+        "y": 2100,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    },
+    {
+      "name": "PipeInput1",
+      "offset": {
+        "x": 600,
+        "y": -2090,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "pipe"
+    },
+    {
+      "name": "PipeOutput1",
+      "offset": {
+        "x": 200,
+        "y": 2160,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "pipe"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

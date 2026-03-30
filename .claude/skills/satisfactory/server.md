@@ -51,13 +51,29 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 | `/api/game/load-file` | POST | Charge un fichier .sav/.cbp depuis le disque (`{ filePath }`) |
 | `/api/game/upload` | POST | Upload et parse un fichier `.sav`, `.cbp` ou `.sbp` (binaire, header `X-Save-Name`) |
 | `/api/game/entities` | GET | Retourne les entity data en mémoire (pour refresh sans re-upload) |
-| `/api/game/entity/:index` | GET | Retourne les détails d'une entité (instanceName, properties, components) |
+| `/api/game/entity/:index` | GET | Détails d'une entité (transform, clearance, ports, properties, components) |
 | `/api/game/export` | POST | Exporte une sélection en blueprint (`{ indices, name }`) |
-| `/api/game/edit` | POST | Endpoint unifié add/update/delete d'entités + connections |
+| `/api/game/edit` | POST | Endpoint unifié add/update/delete d'entités + connections (fonctionne sans save) |
 | `/api/game/inject-blueprint` | POST | Injecte un blueprint dans la save avec un transform |
 | `/api/game/download` | GET | Télécharge la save modifiée en `_edit.sav` |
 | `/api/game/merge-cbp` | POST | Merge le CBP chargé dans la save |
 | `/api/game/move-player` | POST | Déplace le joueur dans la save |
+
+### Wiki (`/api/wiki`)
+
+| Endpoint | Méthode | Description |
+|---|---|---|
+| `/api/wiki` | GET | Index du wiki — liste des pages avec description courte |
+| `/api/wiki?page=<name>` | GET | Page wiki — détail d'un type d'entité ou page système |
+
+Pages système : `_general` (règles positionnement/connexion), `_edit` (doc API edit), `_query` (doc API consultation).
+Pages entités : un alias par type (ex: `constructor`, `splitter`, `belt-6`, `lift`).
+
+Chaque page entité contient : `className`, `typePath`, `clearance` (bounding boxes), `ports` (offset/dir/flow/type en espace local), `snapBehavior`.
+
+Les fichiers JSON sont dans `data/wiki/` et relus à chaque requête (pas de cache) — éditables sans restart serveur.
+
+Régénération : `node tools/generateEntityWiki.js`
 
 ### Système
 

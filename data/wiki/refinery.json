@@ -1,0 +1,163 @@
+{
+  "alias": "refinery",
+  "className": "Build_OilRefinery_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/OilRefinery/Build_OilRefinery.Build_OilRefinery_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -500,
+        "y": -1100,
+        "z": 0
+      },
+      "max": {
+        "x": 500,
+        "y": 1100,
+        "z": 1500
+      }
+    },
+    {
+      "min": {
+        "x": -250,
+        "y": -450,
+        "z": 0
+      },
+      "max": {
+        "x": 250,
+        "y": 1000,
+        "z": 400
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0,
+          "z": 1500
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -250,
+        "y": -1000,
+        "z": 0
+      },
+      "max": {
+        "x": 250,
+        "y": -450,
+        "z": 600
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0,
+          "z": 1500
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -100,
+        "y": -970,
+        "z": 0
+      },
+      "max": {
+        "x": 100,
+        "y": -800,
+        "z": 1100
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 1837.624198,
+          "z": 1900
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -20,
+        "y": -20,
+        "z": 0
+      },
+      "max": {
+        "x": 20,
+        "y": 20,
+        "z": 180
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": 85,
+          "y": -930,
+          "z": 2100
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input0",
+      "offset": {
+        "x": 200,
+        "y": 1200,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output1",
+      "offset": {
+        "x": 200,
+        "y": -1200,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    },
+    {
+      "name": "PipeInputFactory",
+      "offset": {
+        "x": -200,
+        "y": 900,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "pipe"
+    },
+    {
+      "name": "PipeOutputFactory",
+      "offset": {
+        "x": -200,
+        "y": -900,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "pipe"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

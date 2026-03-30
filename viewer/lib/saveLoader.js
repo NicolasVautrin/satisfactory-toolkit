@@ -607,9 +607,27 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   return { beltId, beltIndex, instanceName: belt.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
 }
 
+// ── Ensure a minimal saveState exists (for edit without save) ──────
+function ensureSaveState() {
+  if (saveState) return;
+  const { initSession } = require('../../satisfactoryLib');
+  initSession();
+  const level = { objects: [], collectables: [] };
+  saveState = {
+    name: '(no save)',
+    save: { levels: { Persistent_Level: level } },
+    items: [],
+    entities: [],
+    allObjects: [],
+    mainLevel: level,
+    entityData: { classNames: [], clearance: {}, entities: [], portLayouts: {} },
+  };
+  console.log('Initialized empty saveState for editing without save');
+}
+
 // ── Edit entities (add/update/delete) with connections ───────────────
 function editEntities(batch) {
-  if (!saveState) throw new Error('No save loaded');
+  ensureSaveState();
   const { resolveTypePath } = require('./typeAliases');
 
   const anchor = batch.anchor || { x: 0, y: 0, z: 0 };

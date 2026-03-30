@@ -1,0 +1,157 @@
+{
+  "alias": "manufacturer",
+  "className": "Build_ManufacturerMk1_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/ManufacturerMk1/Build_ManufacturerMk1.Build_ManufacturerMk1_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -900,
+        "y": -300,
+        "z": 0
+      },
+      "max": {
+        "x": 900,
+        "y": 900,
+        "z": 1100
+      }
+    },
+    {
+      "min": {
+        "x": -900,
+        "y": -400,
+        "z": -400
+      },
+      "max": {
+        "x": 900,
+        "y": 400,
+        "z": -20
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": -700,
+          "z": 400
+        }
+      }
+    },
+    {
+      "min": {
+        "x": -250,
+        "y": 200,
+        "z": -400
+      },
+      "max": {
+        "x": 0,
+        "y": 350,
+        "z": -70
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": -500,
+          "y": 250,
+          "z": 1529.104455
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -400,
+        "y": 100,
+        "z": -400
+      },
+      "max": {
+        "x": 400,
+        "y": 400,
+        "z": 125.133385
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": -693.911698,
+          "z": 781.658355
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input0",
+      "offset": {
+        "x": 600,
+        "y": -875,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input1",
+      "offset": {
+        "x": 200,
+        "y": -875,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input2",
+      "offset": {
+        "x": -200,
+        "y": -875,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input3",
+      "offset": {
+        "x": -600,
+        "y": -875,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output0",
+      "offset": {
+        "x": 0,
+        "y": 800,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

@@ -1,0 +1,8 @@
+{
+  "alias": "belt-4",
+  "className": "Build_ConveyorBeltMk4_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk4/Build_ConveyorBeltMk4.Build_ConveyorBeltMk4_C",
+  "clearance": null,
+  "ports": null,
+  "snapBehavior": "Ne se repositionne pas — recalcule sa spline entre les deux endpoints après connexion."
+}

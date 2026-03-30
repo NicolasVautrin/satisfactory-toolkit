@@ -1,0 +1,85 @@
+{
+  "alias": "miner-1",
+  "className": "Build_MinerMk1_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/MinerMK1/Build_MinerMk1.Build_MinerMk1_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -300,
+        "y": -700,
+        "z": 0
+      },
+      "max": {
+        "x": 300,
+        "y": 700,
+        "z": 400
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 200,
+          "z": 0
+        }
+      }
+    },
+    {
+      "min": {
+        "x": -300,
+        "y": -700,
+        "z": 0
+      },
+      "max": {
+        "x": 300,
+        "y": 300,
+        "z": 1230
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 200,
+          "z": 400
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -50,
+        "y": -30,
+        "z": 0
+      },
+      "max": {
+        "x": 50,
+        "y": 30,
+        "z": 205
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": 125,
+          "y": 20,
+          "z": 1630
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Output0",
+      "offset": {
+        "x": 0,
+        "y": 800,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

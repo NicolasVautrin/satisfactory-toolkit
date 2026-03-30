@@ -1,0 +1,114 @@
+{
+  "alias": "foundry",
+  "className": "Build_FoundryMk1_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/FoundryMk1/Build_FoundryMk1.Build_FoundryMk1_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -500,
+        "y": -500,
+        "z": 0
+      },
+      "max": {
+        "x": 500,
+        "y": 500,
+        "z": 450
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": -50,
+          "z": 0
+        }
+      }
+    },
+    {
+      "min": {
+        "x": 0,
+        "y": -500,
+        "z": 0
+      },
+      "max": {
+        "x": 500,
+        "y": 500,
+        "z": 450
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": -50,
+          "z": 450
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -20,
+        "y": -20,
+        "z": 0
+      },
+      "max": {
+        "x": 20,
+        "y": 20,
+        "z": 230
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": -390,
+          "y": 200,
+          "z": 450
+        }
+      }
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input0",
+      "offset": {
+        "x": 200,
+        "y": -300,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input1",
+      "offset": {
+        "x": -200,
+        "y": -300,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output2",
+      "offset": {
+        "x": -200,
+        "y": 200,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

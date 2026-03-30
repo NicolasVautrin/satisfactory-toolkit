@@ -1,0 +1,90 @@
+{
+  "alias": "prio-merger",
+  "className": "Build_ConveyorAttachmentMergerPriority_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/CA_MergerPriority/Build_ConveyorAttachmentMergerPriority.Build_ConveyorAttachmentMergerPriority_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -200,
+        "y": -200,
+        "z": -130
+      },
+      "max": {
+        "x": 200,
+        "y": 200,
+        "z": 130
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0,
+          "z": 50
+        }
+      }
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input1",
+      "offset": {
+        "x": -100,
+        "y": 0,
+        "z": 0
+      },
+      "dir": {
+        "x": -1,
+        "y": 0,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input2",
+      "offset": {
+        "x": 0,
+        "y": 100,
+        "z": 0
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input3",
+      "offset": {
+        "x": 0,
+        "y": -100,
+        "z": 0
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output1",
+      "offset": {
+        "x": 100,
+        "y": 0,
+        "z": 0
+      },
+      "dir": {
+        "x": 1,
+        "y": 0,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité qui s'adapte. Lift se connecte verticalement sur ports alignés (même XY)."
+}

@@ -1,0 +1,8 @@
+{
+  "alias": "power-line",
+  "className": "Build_PowerLine_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/PowerLine/Build_PowerLine.Build_PowerLine_C",
+  "clearance": null,
+  "ports": null,
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

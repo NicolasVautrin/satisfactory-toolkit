@@ -1,0 +1,115 @@
+{
+  "alias": "assembler",
+  "className": "Build_AssemblerMk1_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/AssemblerMk1/Build_AssemblerMk1.Build_AssemblerMk1_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -450,
+        "y": -800,
+        "z": 0
+      },
+      "max": {
+        "x": 450,
+        "y": 800,
+        "z": 300
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": -50,
+          "z": 0
+        }
+      }
+    },
+    {
+      "min": {
+        "x": -450,
+        "y": -200,
+        "z": 0
+      },
+      "max": {
+        "x": 450,
+        "y": 350,
+        "z": 500
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0,
+          "z": 300
+        }
+      },
+      "excludeForSnapping": true
+    },
+    {
+      "min": {
+        "x": -20,
+        "y": -20,
+        "z": 0
+      },
+      "max": {
+        "x": 20,
+        "y": 20,
+        "z": 275
+      },
+      "type": "CT_Soft",
+      "relativeTransform": {
+        "translation": {
+          "x": 175,
+          "y": -60,
+          "z": 800
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input0",
+      "offset": {
+        "x": 200,
+        "y": -600,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input1",
+      "offset": {
+        "x": -200,
+        "y": -600,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output0",
+      "offset": {
+        "x": 0,
+        "y": 500,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

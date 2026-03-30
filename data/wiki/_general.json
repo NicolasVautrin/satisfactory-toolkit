@@ -1,0 +1,15 @@
+{
+  "description": "Règles générales de positionnement et connexion des entités",
+  "rules": [
+    "Les offsets et directions des ports sont en espace local de l'entité",
+    "Les rotations se font uniquement autour de l'axe Z (yaw)",
+    "La rotation Z transforme les offsets et directions des ports dans le plan XY, le Z ne change jamais",
+    "La clearance box suit la rotation de l'entité",
+    "Deux ports connectés doivent être en opposition (dot product des directions < 0)",
+    "Un port belt ne peut se connecter qu'à un port belt, un port pipe qu'à un port pipe",
+    "Un port input se connecte à un port output (pas input↔input ni output↔output)",
+    "Les connexions sont bidirectionnelles (si A→B alors B→A)",
+    "Les positions des ports power n'ont pas de direction (null) — seul le câblage compte",
+    "Unités : 100 UU = 1 mètre. Une fondation 8m = 800 UU"
+  ]
+}

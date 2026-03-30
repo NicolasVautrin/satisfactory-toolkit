@@ -1,0 +1,8 @@
+{
+  "alias": "lift-4",
+  "className": "Build_ConveyorLiftMk4_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk4/Build_ConveyorLiftMk4.Build_ConveyorLiftMk4_C",
+  "clearance": null,
+  "ports": null,
+  "snapBehavior": "Se repositionne et tourne pour que le port snappé coïncide avec le port cible. L'autre port reste en place. Snap en directions cardinales uniquement (±X, ±Y)."
+}

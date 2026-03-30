@@ -1,0 +1,55 @@
+{
+  "alias": "oil-pump",
+  "className": "Build_OilPump_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/OilPump/Build_OilPump.Build_OilPump_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -400,
+        "y": -650,
+        "z": -900
+      },
+      "max": {
+        "x": 400,
+        "y": 650,
+        "z": 900
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 140,
+          "z": 920
+        }
+      }
+    }
+  ],
+  "ports": [
+    {
+      "name": "FGPipeConnectionFactory",
+      "offset": {
+        "x": 0,
+        "y": 760,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": 50,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "pipe"
+    },
+    {
+      "name": "PowerInput",
+      "offset": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "dir": null,
+      "flow": "output",
+      "type": "power"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}

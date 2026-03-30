@@ -1,0 +1,102 @@
+{
+  "alias": "converter",
+  "className": "Build_Converter_C",
+  "typePath": "/Game/FactoryGame/Buildable/Factory/Converter/Build_Converter.Build_Converter_C",
+  "clearance": [
+    {
+      "min": {
+        "x": -800,
+        "y": -800,
+        "z": 0
+      },
+      "max": {
+        "x": 800,
+        "y": 800,
+        "z": 400
+      }
+    },
+    {
+      "min": {
+        "x": -750,
+        "y": -750,
+        "z": 0
+      },
+      "max": {
+        "x": 750,
+        "y": 750,
+        "z": 1350
+      },
+      "relativeTransform": {
+        "translation": {
+          "x": 0,
+          "y": 0,
+          "z": 400
+        }
+      },
+      "excludeForSnapping": true
+    }
+  ],
+  "ports": [
+    {
+      "name": "Input0",
+      "offset": {
+        "x": -200,
+        "y": -680,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Input1",
+      "offset": {
+        "x": 200,
+        "y": -680,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": -1,
+        "z": 0
+      },
+      "flow": "input",
+      "type": "belt"
+    },
+    {
+      "name": "Output0",
+      "offset": {
+        "x": 200,
+        "y": 660,
+        "z": 100
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "belt"
+    },
+    {
+      "name": "FGPipeConnectionFactory",
+      "offset": {
+        "x": -200,
+        "y": 700,
+        "z": 175
+      },
+      "dir": {
+        "x": 0,
+        "y": 1,
+        "z": 0
+      },
+      "flow": "output",
+      "type": "pipe"
+    }
+  ],
+  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+}
