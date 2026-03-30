@@ -17,7 +17,7 @@
       "pipe": "{from:\"id:port\", to:\"id:port\", pipe:tier} — auto-crée un pipe (tier 1-2) entre les deux ports pipe. Les deux ports peuvent être fixes.",
       "insertion": "{from:\"id\", on:\"id\", position:{x,y,z}} — insère l'entité \"from\" (splitter/merger/junction/pump vierge) sur le belt/pipe \"on\", coupe la spline en deux. position = point de coupure projeté sur la spline.",
       "portNames_fixed": "Noms de ports des entités fixes : voir la page wiki de chaque entité (ex: Input0, Output0 pour un constructor).",
-      "portNames_virtual": "Noms de ports des entités virtuelles : belt=ConveyorAny0/ConveyorAny1, pipe=PipelineConnection0/PipelineConnection1, lift=bottom/top."
+      "portNames_virtual": "Noms de ports des entités virtuelles : belt=ConveyorAny0(input)/ConveyorAny1(output), pipe=PipelineConnection0/PipelineConnection1, lift=bottom/top (polarisés par la première connexion)."
     }
   },
   "snap_rules": [

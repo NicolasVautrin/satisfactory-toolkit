@@ -454,6 +454,8 @@ this._ports = FlowPort.fromLayout(componentMap, entity.transform, PORTS);
 
 ### Règles de snap (snapTo / attach)
 
+Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe. `srcPort.attach(tgtPort)` → `srcPort` snappe sur `tgtPort`.
+
 | Entité qui snappe (from) | Peut snapper sur (to) | Condition |
 |---|---|---|
 | belt / pipe / lift / track | tout port compatible | toujours (recalcule spline) |
@@ -535,8 +537,8 @@ const belt = ConveyorBelt.create(
   { pos: endPos,   dir: endDir },
   { tier: 5 },  // Mk.1 à Mk.6
 );
-belt.port('ConveyorAny0');  // début (output)
-belt.port('ConveyorAny1');  // fin (input)
+belt.port('ConveyorAny0');  // début (input)
+belt.port('ConveyorAny1');  // fin (output)
 belt.onPortSnapped();        // recalculer après snap
 ```
 
@@ -575,11 +577,31 @@ wirePowerLine(pl, fromPowerPort, toPowerPort);
 // pl.entity pour l'injection
 ```
 
+#### ConveyorLift
+
+```js
+const lift = ConveyorLift.create(bottomPos, height, bottomRot, topRot, tier);
+lift.port('bottom');  // port bas
+lift.port('top');     // port haut
+```
+
+**Polarité** : Les ports d'un lift sont bidirectionnels (`flowType = null`) à la création. La première connexion à un port polarisé (producer Input/Output, belt ConveyorAny0/1) fixe la polarité du lift :
+- `lift.bottom` connecté à un `Output` → bottom = INPUT, top = OUTPUT
+- `lift.bottom` connecté à un `Input` → bottom = OUTPUT, top = INPUT
+
+`fromSave` restaure la polarité en inspectant le nom du composant connecté (y compris à travers un belt : `ConveyorAny0` = input, `ConveyorAny1` = output).
+
+Deux lifts top↔top ne peuvent se connecter que si leurs polarités sont opposées (un OUTPUT, un INPUT).
+
+**Méthodes de connexion** :
+- `lift.attachBelt(portName, beltPort)` — snap le lift sur un port belt (repositionne + wire)
+- `toLift.attachLift(portName, fromLiftPort)` — connexion lift↔lift (cardinal snap, valide la polarité)
+
 #### Autres logistiques
 
 | Classe | Description |
 |--------|-------------|
-| `ConveyorLift` | Élévateur de convoyeur |
+| `ConveyorLift` | Élévateur — ports `bottom`/`top`, polarisés par la première connexion |
 | `ConveyorMerger` | Merger (3 inputs → 1 output) |
 | `ConveyorSplitter` | Splitter (1 input → 3 outputs) |
 | `ConveyorPoleSimple` | Pole simple (1 seul côté) |
