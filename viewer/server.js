@@ -182,22 +182,17 @@ app.get('/api/game/entity/:index', (req, res) => {
   const clearanceData = require('../data/clearanceData.json');
   const clearance = clearanceData[cls]?.boxes || null;
 
-  // Port layout from Registry
+  // Ports (world space) and spline length
   const Registry = require('../lib/Registry');
   const registry = Registry.default();
   const Builder = registry.get(cls);
-  let ports = null;
-  if (Builder?.PORT_LAYOUT) {
-    ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => ({
-      name,
-      offset: p.offset,
-      dir: p.dir,
-      flow: p.flow,
-      type: p.type,
-    }));
+  let ports = null, splineLength = null;
+  if (Builder?.getPorts) {
+    const info = Builder.getPorts(entity);
+    if (info) { ports = info.ports; splineLength = info.splineLength; }
   }
 
-  res.json({
+  const result = {
     instanceName: entity.instanceName,
     typePath: entity.typePath,
     className: cls,
@@ -206,7 +201,9 @@ app.get('/api/game/entity/:index', (req, res) => {
     ports,
     properties: props,
     components: comps,
-  });
+  };
+  if (splineLength != null) result.splineLength = splineLength;
+  res.json(result);
 });
 
 // ── Landscape ──────────────────────────────────────────────────────
@@ -579,6 +576,17 @@ app.post('/api/game/edit', (req, res) => {
     });
   } catch (err) {
     console.error('Edit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Get player position ──────────────────────────────────────────────
+app.get('/api/game/player-position', (req, res) => {
+  try {
+    const { getPlayerPosition } = require('./lib/saveLoader');
+    const position = getPlayerPosition();
+    res.json({ success: true, position });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

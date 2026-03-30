@@ -9,7 +9,8 @@
         "className": "Nom court de la classe (ex: Build_ConstructorMk1_C)",
         "transform": "Position {translation: {x,y,z}} et rotation {rotation: {x,y,z,w}}",
         "clearance": "Bounding boxes [{min:{x,y,z}, max:{x,y,z}}] ou null",
-        "ports": "Port layout [{name, offset, dir, flow, type}] ou null",
+        "ports": "Ports world-space [{name, pos, dir, flow, type}] ou null (calculés depuis PORT_LAYOUT ou spline/mTopTransform)",
+        "splineLength": "Longueur de la spline en UU (belt, pipe, rail uniquement) ou absent",
         "properties": "Propriétés de l'entité (recette, inventaire, etc.)",
         "components": "Composants enfants avec leurs propriétés (connexions, etc.)"
       }

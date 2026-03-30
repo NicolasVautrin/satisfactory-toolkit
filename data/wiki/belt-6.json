@@ -3,6 +3,7 @@
   "className": "Build_ConveyorBeltMk6_C",
   "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk6/Build_ConveyorBeltMk6.Build_ConveyorBeltMk6_C",
   "clearance": null,
-  "ports": null,
-  "snapBehavior": "Ne se repositionne pas — recalcule sa spline entre les deux endpoints après connexion."
+  "ports": "virtual",
+  "snapBehavior": "Recalcule sa spline entre les deux endpoints après connexion.",
+  "portsDescription": "Ports virtuels calculés depuis les données d'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space."
 }

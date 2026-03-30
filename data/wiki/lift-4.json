@@ -3,6 +3,7 @@
   "className": "Build_ConveyorLiftMk4_C",
   "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorLiftMk4/Build_ConveyorLiftMk4.Build_ConveyorLiftMk4_C",
   "clearance": null,
-  "ports": null,
-  "snapBehavior": "Se repositionne et tourne pour que le port snappé coïncide avec le port cible. L'autre port reste en place. Snap en directions cardinales uniquement (±X, ±Y)."
+  "ports": "virtual",
+  "snapBehavior": "Se repositionne (port bottom) et tourne pour aligner son port sur le port cible. Snap cardinal uniquement (±X, ±Y).",
+  "portsDescription": "Ports virtuels calculés depuis les données d'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space."
 }

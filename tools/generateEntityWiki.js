@@ -17,25 +17,6 @@ const WIKI_DIR = path.join(__dirname, '..', 'data', 'wiki');
 const registry = Registry.default();
 const aliases = getAliases();
 
-// ── Snap behavior per category ────────────────────────────────────
-const SNAP_BEHAVIORS = {
-  lift: 'Se repositionne et tourne pour que le port snappé coïncide avec le port cible. L\'autre port reste en place. Snap en directions cardinales uniquement (±X, ±Y).',
-  belt: 'Ne se repositionne pas — recalcule sa spline entre les deux endpoints après connexion.',
-  pipe: 'Ne se repositionne pas — recalcule sa spline entre les deux endpoints après connexion.',
-  producer: 'Position fixe — c\'est l\'autre entité (belt, lift) qui s\'adapte lors d\'un attach.',
-  splitter: 'Position fixe — c\'est l\'autre entité qui s\'adapte. Lift se connecte verticalement sur ports alignés (même XY).',
-  merger: 'Position fixe — c\'est l\'autre entité qui s\'adapte. Lift se connecte verticalement sur ports alignés (même XY).',
-};
-
-function getSnapBehavior(alias) {
-  if (/^lift/.test(alias)) return SNAP_BEHAVIORS.lift;
-  if (/^belt/.test(alias)) return SNAP_BEHAVIORS.belt;
-  if (/^pipe/.test(alias)) return SNAP_BEHAVIORS.pipe;
-  if (/splitter/.test(alias)) return SNAP_BEHAVIORS.splitter;
-  if (/merger/.test(alias)) return SNAP_BEHAVIORS.merger;
-  return SNAP_BEHAVIORS.producer;
-}
-
 // ── Generate entity pages ─────────────────────────────────────────
 const index = {};
 
@@ -46,8 +27,9 @@ for (const [alias, className] of Object.entries(aliases)) {
   const Builder = registry.get(className);
   const clearance = clearanceData[className]?.boxes || null;
 
-  // Ports from PORT_LAYOUT
+  // Ports from PORT_LAYOUT or virtual (spline/lift)
   let ports = null;
+  let portsVirtual = false;
   if (Builder?.PORT_LAYOUT) {
     ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => ({
       name,
@@ -56,6 +38,9 @@ for (const [alias, className] of Object.entries(aliases)) {
       flow: p.flow,
       type: p.type,
     }));
+  } else if (Builder?.getPorts && Builder.getPorts !== require('../lib/shared/Builder').getPorts) {
+    // Builder has a custom getPorts override (spline or lift) — ports are virtual
+    portsVirtual = true;
   }
 
   // Build summary for index
@@ -63,7 +48,9 @@ for (const [alias, className] of Object.entries(aliases)) {
     ? `${Math.round(clearance[0].max.x - clearance[0].min.x)}x${Math.round(clearance[0].max.y - clearance[0].min.y)}x${Math.round(clearance[0].max.z - clearance[0].min.z)}`
     : '?';
   const portCounts = [];
-  if (ports) {
+  if (portsVirtual) {
+    portCounts.push('virtual');
+  } else if (ports) {
     const belts = ports.filter(p => p.type === 'belt').length;
     const pipes = ports.filter(p => p.type === 'pipe').length;
     const power = ports.filter(p => p.type === 'power').length;
@@ -80,9 +67,12 @@ for (const [alias, className] of Object.entries(aliases)) {
     className,
     typePath,
     clearance,
-    ports,
-    snapBehavior: getSnapBehavior(alias),
+    ports: portsVirtual ? 'virtual' : ports,
+    snapBehavior: Builder?.SNAP_BEHAVIOR || 'Position fixe.',
   };
+  if (portsVirtual) {
+    page.portsDescription = 'Ports virtuels calculés depuis les données d\'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space.';
+  }
 
   // Write page
   fs.writeFileSync(
@@ -185,7 +175,8 @@ const query = {
         className: 'Nom court de la classe (ex: Build_ConstructorMk1_C)',
         transform: 'Position {translation: {x,y,z}} et rotation {rotation: {x,y,z,w}}',
         clearance: 'Bounding boxes [{min:{x,y,z}, max:{x,y,z}}] ou null',
-        ports: 'Port layout [{name, offset, dir, flow, type}] ou null',
+        ports: 'Ports world-space [{name, pos, dir, flow, type}] ou null (calculés depuis PORT_LAYOUT ou spline/mTopTransform)',
+        splineLength: 'Longueur de la spline en UU (belt, pipe, rail uniquement) ou absent',
         properties: 'Propriétés de l\'entité (recette, inventaire, etc.)',
         components: 'Composants enfants avec leurs propriétés (connexions, etc.)',
       },

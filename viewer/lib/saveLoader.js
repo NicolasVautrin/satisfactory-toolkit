@@ -865,6 +865,15 @@ function updateEntity(index, def, anchor, bpYawDeg, cosB, sinB, bpQuat) {
   return { item: viewerItem, classUpdate: isNewClass ? classUpdate : null };
 }
 
+// ── Get player position ───────────────────────────────────────────
+function getPlayerPosition() {
+  if (!saveState) throw new Error('No save loaded');
+  const charObj = saveState.allObjects.find(o => o.typePath?.includes('Char_Player_C') && o.transform);
+  if (!charObj) throw new Error('Player character not found in save');
+  const t = charObj.transform.translation;
+  return { x: t.x, y: t.y, z: t.z };
+}
+
 // ── Move player position ───────────────────────────────────────────
 function setPlayerPosition(position) {
   if (!saveState) throw new Error('No save loaded');
@@ -883,4 +892,4 @@ function serializeSave() {
   return Buffer.concat([headerBuf, ...bodyChunks]);
 }
 
-module.exports = { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, deleteEntities, injectBlueprint, addEntity, attachPorts, wirePorts, editEntities, setPlayerPosition, serializeSave };
+module.exports = { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, deleteEntities, injectBlueprint, addEntity, attachPorts, wirePorts, editEntities, getPlayerPosition, setPlayerPosition, serializeSave };

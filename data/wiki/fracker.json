@@ -17,5 +17,5 @@
     }
   ],
   "ports": null,
-  "snapBehavior": "Position fixe — c'est l'autre entité (belt, lift) qui s'adapte lors d'un attach."
+  "snapBehavior": "Position fixe."
 }

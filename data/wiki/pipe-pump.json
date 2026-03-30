@@ -48,5 +48,5 @@
       "type": "pipe"
     }
   ],
-  "snapBehavior": "Ne se repositionne pas — recalcule sa spline entre les deux endpoints après connexion."
+  "snapBehavior": "Position fixe."
 }

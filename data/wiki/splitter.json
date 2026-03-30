@@ -86,5 +86,5 @@
       "type": "belt"
     }
   ],
-  "snapBehavior": "Position fixe — c'est l'autre entité qui s'adapte. Lift se connecte verticalement sur ports alignés (même XY)."
+  "snapBehavior": "Position fixe. Lift se connecte verticalement sur ports alignes (meme XY)."
 }
