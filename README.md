@@ -64,7 +64,7 @@ Hold **Shift** for fine movement (10u / 1deg), **Ctrl** for grid snap (800u / 90
 
 ### Selection Panel
 
-![Selection](docs/panel-selection.png)
+<img src="docs/panel-selection.png" width="350">
 
 Export selection as blueprint, delete entities, grouped class list with counts and color-coded categories.
 
