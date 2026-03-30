@@ -9,6 +9,7 @@ using CUE4Parse.UE4.Assets.Exports.Material;
 using CUE4Parse.UE4.Assets.Exports.StaticMesh;
 using CUE4Parse.UE4.Assets.Exports.Texture;
 using CUE4Parse.UE4.Assets.Objects;
+using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Writers;
 using CUE4Parse_Conversion;
@@ -468,7 +469,7 @@ public static class ExportCommand
         // BP actors
         var bpActorTypes = new HashSet<string> {
             "BP_ResourceNode_C", "BP_ResourceNodeGeyser_C", "BP_FrackingSatellite_C",
-            "BP_FrackingCore_C", "BP_ResourceDeposit_C", "BP_Water_C",
+            "BP_FrackingCore_C", "BP_ResourceDeposit_C",
         };
         var bpPlacements = new List<object>();
 
@@ -570,6 +571,454 @@ public static class ExportCommand
         Log.Information("Wrote {Count} placements from {Scanned} cells to {Path}", placements.Count, scanned, outPath);
         JsonOutput.WriteExport("streaming", outputDir, placements.Count, "0", 0,
             new object[] { new { path = "scenery_streaming.json" } });
+    }
+
+    // ── export water (placements + meshes) ────────────────────
+    public static void Water(string outputDir, int parallelism)
+    {
+        var options = DefaultOptions;
+        var provider = ProviderFactory.CreateProvider();
+        Log.Information("Loaded {Count} files from provider", provider.Files.Count);
+
+        var waterTypes = new HashSet<string> { "BP_Water_C", "BP_LakeWater_C", "BP_TranslucentWater_C" };
+        var placements = new List<object>();
+        var meshNames = new HashSet<string>();
+
+        // ── 1. Persistent_Level (BP_Water_C) ────────────────
+        var pkg = provider.LoadPackage("FactoryGame/Content/FactoryGame/Map/GameLevel01/Persistent_Level");
+        var exports = pkg.GetExports().ToList();
+        Log.Information("Persistent_Level: {Count} exports", exports.Count);
+
+        foreach (var obj in exports)
+        {
+            if (!waterTypes.Contains(obj.ExportType)) continue;
+            var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
+            if (rootRef == null) continue;
+            var rootComp = rootRef.ResolvedObject?.Object?.Value as USceneComponent;
+            if (rootComp == null) continue;
+
+            var loc = rootComp.GetRelativeLocation();
+            var rot = rootComp.GetRelativeRotation();
+            var scale = rootComp.GetRelativeScale3D();
+            var (qx, qy, qz, qw) = MathHelpers.EulerToQuat(rot.Pitch, rot.Yaw, rot.Roll);
+
+            // Try to get the static mesh name from the component
+            var meshName = "WaterPlane";
+            if (rootComp is UStaticMeshComponent smc)
+            {
+                var meshRef = smc.GetStaticMesh();
+                if (meshRef != null) meshName = meshRef.Name;
+            }
+            else
+            {
+                // BP actors: look for a StaticMeshComponent child
+                foreach (var child in exports)
+                {
+                    if (child is not UStaticMeshComponent childSmc) continue;
+                    var outer = child.GetOrDefault<FPackageIndex>("Outer");
+                    if (outer?.ResolvedObject?.Object?.Value == obj)
+                    {
+                        var childMesh = childSmc.GetStaticMesh();
+                        if (childMesh != null) meshName = childMesh.Name;
+                        break;
+                    }
+                }
+            }
+
+            meshNames.Add(meshName);
+            placements.Add(new
+            {
+                mesh = meshName, type = obj.ExportType,
+                x = Math.Round(loc.X, 1), y = Math.Round(loc.Y, 1), z = Math.Round(loc.Z, 1),
+                qx = Math.Round(qx, 6), qy = Math.Round(qy, 6), qz = Math.Round(qz, 6), qw = Math.Round(qw, 6),
+                sx = Math.Round(scale.X, 3), sy = Math.Round(scale.Y, 3), sz = Math.Round(scale.Z, 3),
+            });
+        }
+
+        Log.Information("Found {Count} water actors in Persistent_Level", placements.Count);
+
+        // ── 2. Streaming cells (BP_LakeWater_C, BP_TranslucentWater_C) ──
+        var cellPaths = provider.Files.Keys
+            .Where(k => k.Contains("_Generated_", StringComparison.OrdinalIgnoreCase))
+            .Where(k => k.EndsWith(".umap"))
+            .ToList();
+
+        Log.Information("Scanning {Count} streaming cells for water actors...", cellPaths.Count);
+        var scanned = 0;
+
+        foreach (var cellPath in cellPaths)
+        {
+            scanned++;
+            if (scanned % 500 == 0) Log.Information("  scanned {N}/{Total}...", scanned, cellPaths.Count);
+
+            try
+            {
+                var cleanPath = cellPath.Replace(".umap", "");
+                var cellExports = provider.LoadPackage(cleanPath).GetExports().ToList();
+
+                foreach (var obj in cellExports)
+                {
+                    if (!waterTypes.Contains(obj.ExportType)) continue;
+                    var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
+                    if (rootRef == null) continue;
+                    var rootComp = rootRef.ResolvedObject?.Object?.Value as USceneComponent;
+                    if (rootComp == null) continue;
+
+                    var loc = rootComp.GetRelativeLocation();
+                    var rot = rootComp.GetRelativeRotation();
+                    var scale = rootComp.GetRelativeScale3D();
+                    var (qx, qy, qz, qw) = MathHelpers.EulerToQuat(rot.Pitch, rot.Yaw, rot.Roll);
+
+                    // Try to find mesh name from child StaticMeshComponent
+                    var meshName = "WaterPlane";
+                    foreach (var child in cellExports)
+                    {
+                        if (child is not UStaticMeshComponent childSmc) continue;
+                        var outer = child.GetOrDefault<FPackageIndex>("Outer");
+                        if (outer?.ResolvedObject?.Object?.Value == obj)
+                        {
+                            var childMesh = childSmc.GetStaticMesh();
+                            if (childMesh != null) meshName = childMesh.Name;
+                            break;
+                        }
+                    }
+
+                    meshNames.Add(meshName);
+                    placements.Add(new
+                    {
+                        mesh = meshName, type = obj.ExportType,
+                        x = Math.Round(loc.X, 1), y = Math.Round(loc.Y, 1), z = Math.Round(loc.Z, 1),
+                        qx = Math.Round(qx, 6), qy = Math.Round(qy, 6), qz = Math.Round(qz, 6), qw = Math.Round(qw, 6),
+                        sx = Math.Round(scale.X, 3), sy = Math.Round(scale.Y, 3), sz = Math.Round(scale.Z, 3),
+                    });
+                }
+            }
+            catch { }
+        }
+
+        // ── 3. Ocean HISM actors (BPW_OceanSplineTool_02_C) ──
+        var oceanType = "BPW_OceanSplineTool_02_C";
+        var oceanCount = 0;
+
+        // Helper: extract "WaterPlane Instances" HISM from exports
+        // Each HISM.Outer → parent actor → RootComponent → actor world location
+        void ExtractOceanHISM(IReadOnlyList<CUE4Parse.UE4.Assets.Exports.UObject> exps)
+        {
+            foreach (var obj in exps)
+            {
+                if (obj is not UInstancedStaticMeshComponent hism) continue;
+                if (!obj.Name.Contains("WaterPlane")) continue;
+
+                var instances = hism.GetInstances();
+                if (instances.Length == 0) continue;
+
+                var smRef = hism.GetStaticMesh();
+                var mName = smRef?.Name ?? "WaterPlane";
+                meshNames.Add(mName);
+
+                // Get parent actor location via Outer
+                var actorLoc = CUE4Parse.UE4.Objects.Core.Math.FVector.ZeroVector;
+                var outerActor = obj.Outer?.Object?.Value;
+                if (outerActor != null)
+                {
+                    var rootRef = outerActor.GetOrDefault<FPackageIndex>("RootComponent");
+                    if (rootRef?.ResolvedObject?.Object?.Value is USceneComponent rootSc)
+                        actorLoc = rootSc.GetRelativeLocation();
+                }
+
+                Log.Information("  HISM '{Name}': {Count} instances (mesh={Mesh})", obj.Name, instances.Length, mName);
+
+                foreach (var inst in instances)
+                {
+                    var t = inst.TransformData;
+                    var instLoc = t.Translation + actorLoc;
+                    var instRot = t.Rotation;
+                    var instScale = t.Scale3D;
+
+                    placements.Add(new
+                    {
+                        mesh = mName, type = "OceanHISM",
+                        x = Math.Round(instLoc.X, 1), y = Math.Round(instLoc.Y, 1), z = Math.Round(instLoc.Z, 1),
+                        qx = Math.Round(instRot.X, 6), qy = Math.Round(instRot.Y, 6),
+                        qz = Math.Round(instRot.Z, 6), qw = Math.Round(instRot.W, 6),
+                        sx = Math.Round(instScale.X, 3), sy = Math.Round(instScale.Y, 3), sz = Math.Round(instScale.Z, 3),
+                    });
+                    oceanCount++;
+                }
+            }
+        }
+
+        // Scan Persistent_Level + streaming cells for ocean HISM
+        ExtractOceanHISM(exports);
+
+        scanned = 0;
+        foreach (var cellPath in cellPaths)
+        {
+            scanned++;
+            if (scanned % 500 == 0) Log.Information("  ocean scan {N}/{Total}...", scanned, cellPaths.Count);
+            try
+            {
+                var cleanPath = cellPath.Replace(".umap", "");
+                var cellExports = provider.LoadPackage(cleanPath).GetExports().ToList();
+                ExtractOceanHISM(cellExports);
+            }
+            catch { }
+        }
+
+        Log.Information("Found {Count} ocean HISM instances", oceanCount);
+
+        // ── 4. Waterfalls (BP_WaterFallTool_02_C) — ISM instances ──
+        var waterfallCount = 0;
+
+        void ExtractWaterfallISM(IReadOnlyList<CUE4Parse.UE4.Assets.Exports.UObject> exps)
+        {
+            foreach (var obj in exps)
+            {
+                if (obj.ExportType != "BP_WaterFallTool_02_C") continue;
+
+                var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
+                if (rootRef == null) continue;
+                var rootComp = rootRef.ResolvedObject?.Object?.Value as USceneComponent;
+                if (rootComp == null) continue;
+                var actorLoc = rootComp.GetRelativeLocation();
+
+                // Find all ISM and StaticMeshComponent children
+                foreach (var child in exps)
+                {
+                    var outer = child.Outer?.Object?.Value;
+                    if (outer != obj) continue;
+
+                    if (child is UInstancedStaticMeshComponent ism)
+                    {
+                        var instances = ism.GetInstances();
+                        if (instances.Length == 0) continue;
+                        var smRef = ism.GetStaticMesh();
+                        var mName = smRef?.Name ?? child.Name;
+                        meshNames.Add(mName);
+
+                        foreach (var inst in instances)
+                        {
+                            var t = inst.TransformData;
+                            var instLoc = t.Translation + actorLoc;
+                            placements.Add(new
+                            {
+                                mesh = mName, type = "Waterfall",
+                                x = Math.Round(instLoc.X, 1), y = Math.Round(instLoc.Y, 1), z = Math.Round(instLoc.Z, 1),
+                                qx = Math.Round(t.Rotation.X, 6), qy = Math.Round(t.Rotation.Y, 6),
+                                qz = Math.Round(t.Rotation.Z, 6), qw = Math.Round(t.Rotation.W, 6),
+                                sx = Math.Round(t.Scale3D.X, 3), sy = Math.Round(t.Scale3D.Y, 3), sz = Math.Round(t.Scale3D.Z, 3),
+                            });
+                            waterfallCount++;
+                        }
+                    }
+                    else if (child is UStaticMeshComponent smc && child is not UInstancedStaticMeshComponent)
+                    {
+                        var smRef = smc.GetStaticMesh();
+                        var mName = smRef?.Name ?? child.Name;
+                        meshNames.Add(mName);
+
+                        var loc = smc.GetRelativeLocation() + actorLoc;
+                        var rot = smc.GetRelativeRotation();
+                        var scale = smc.GetRelativeScale3D();
+                        var (qx, qy, qz, qw) = MathHelpers.EulerToQuat(rot.Pitch, rot.Yaw, rot.Roll);
+
+                        placements.Add(new
+                        {
+                            mesh = mName, type = "Waterfall",
+                            x = Math.Round(loc.X, 1), y = Math.Round(loc.Y, 1), z = Math.Round(loc.Z, 1),
+                            qx = Math.Round(qx, 6), qy = Math.Round(qy, 6), qz = Math.Round(qz, 6), qw = Math.Round(qw, 6),
+                            sx = Math.Round(scale.X, 3), sy = Math.Round(scale.Y, 3), sz = Math.Round(scale.Z, 3),
+                        });
+                        waterfallCount++;
+                    }
+                }
+            }
+        }
+
+        ExtractWaterfallISM(exports);
+        scanned = 0;
+        foreach (var cellPath in cellPaths)
+        {
+            scanned++;
+            if (scanned % 500 == 0) Log.Information("  waterfall scan {N}/{Total}...", scanned, cellPaths.Count);
+            try
+            {
+                var cleanPath = cellPath.Replace(".umap", "");
+                var cellExports = provider.LoadPackage(cleanPath).GetExports().ToList();
+                ExtractWaterfallISM(cellExports);
+            }
+            catch { }
+        }
+        Log.Information("Found {Count} waterfall instances", waterfallCount);
+
+        // ── 5. Rivers (BP_River_PROT_C) — spline data ──────
+        var rivers = new List<object>();
+
+        void ExtractRivers(IReadOnlyList<CUE4Parse.UE4.Assets.Exports.UObject> exps)
+        {
+            foreach (var obj in exps)
+            {
+                if (obj.ExportType != "BP_River_PROT_C") continue;
+
+                var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
+                if (rootRef == null) continue;
+                var rootComp = rootRef.ResolvedObject?.Object?.Value as USceneComponent;
+                if (rootComp == null) continue;
+                var actorLoc = rootComp.GetRelativeLocation();
+                var actorRot = rootComp.GetRelativeRotation();
+                var (aqx, aqy, aqz, aqw) = MathHelpers.EulerToQuat(actorRot.Pitch, actorRot.Yaw, actorRot.Roll);
+
+                // Collect SplineMeshComponent children sorted by index for width data
+                // SM_RiverPlane base width = 1000 UE units (BoxExtent.Y = 500)
+                const double baseWidth = 1000.0;
+                var smcList = exps
+                    .Where(e => e.Outer?.Object?.Value == obj && e.ExportType.Contains("SplineMesh"))
+                    .OrderBy(e => e.Name) // SplineMeshComponent_0, _1, _2...
+                    .ToList();
+
+                // Extract per-point widths from segments (N segments → N+1 widths)
+                var widths = new List<double>();
+                foreach (var smc in smcList)
+                {
+                    var sp = smc.GetOrDefault<FStructFallback>("SplineParams");
+                    if (sp == null) continue;
+                    var startScale = sp.GetOrDefault<FVector2D>("StartScale", new FVector2D(1, 1));
+                    var endScale = sp.GetOrDefault<FVector2D>("EndScale", new FVector2D(1, 1));
+                    if (widths.Count == 0)
+                        widths.Add(Math.Round(startScale.X * baseWidth * 0.5, 1)); // half-width
+                    widths.Add(Math.Round(endScale.X * baseWidth * 0.5, 1)); // half-width
+                }
+
+                // Find SplineComponent child
+                foreach (var child in exps)
+                {
+                    if (child is not USplineComponent) continue;
+                    var outer = child.Outer?.Object?.Value;
+                    if (outer != obj) continue;
+
+                    // SplineCurves is a struct with Position, Rotation, Scale sub-curves
+                    var splineCurves = child.GetOrDefault<FStructFallback>("SplineCurves");
+                    if (splineCurves == null) continue;
+
+                    var posCurve = splineCurves.GetOrDefault<FStructFallback>("Position");
+                    if (posCurve == null) continue;
+
+                    var points = posCurve.GetOrDefault<UScriptArray>("Points");
+                    if (points == null || points.Properties.Count == 0) continue;
+
+                    var splinePoints = new List<object>();
+                    int ptIdx = 0;
+                    foreach (var pointProp in points.Properties)
+                    {
+                        var point = (pointProp?.GenericValue as FScriptStruct)?.StructType as FStructFallback;
+                        if (point == null) continue;
+                        // InterpCurvePoint<FVector>: InVal, OutVal, ArriveTangent, LeaveTangent
+                        var posLocal = point.GetOrDefault("OutVal", FVector.ZeroVector);
+                        var arrLocal = point.GetOrDefault("ArriveTangent", FVector.ZeroVector);
+                        var lveLocal = point.GetOrDefault("LeaveTangent", FVector.ZeroVector);
+
+                        // Rotate local coords by actor rotation
+                        var pos = MathHelpers.QuatRotate(aqx, aqy, aqz, aqw, posLocal.X, posLocal.Y, posLocal.Z);
+                        var arrive = MathHelpers.QuatRotate(aqx, aqy, aqz, aqw, arrLocal.X, arrLocal.Y, arrLocal.Z);
+                        var leave = MathHelpers.QuatRotate(aqx, aqy, aqz, aqw, lveLocal.X, lveLocal.Y, lveLocal.Z);
+
+                        var hw = ptIdx < widths.Count ? widths[ptIdx] : 500.0; // fallback half-width
+
+                        splinePoints.Add(new
+                        {
+                            x = Math.Round(pos.x + actorLoc.X, 1),
+                            y = Math.Round(pos.y + actorLoc.Y, 1),
+                            z = Math.Round(pos.z + actorLoc.Z, 1),
+                            ax = Math.Round(arrive.x, 1), ay = Math.Round(arrive.y, 1), az = Math.Round(arrive.z, 1),
+                            lx = Math.Round(leave.x, 1), ly = Math.Round(leave.y, 1), lz = Math.Round(leave.z, 1),
+                            w = hw,
+                        });
+                        ptIdx++;
+                    }
+
+                    if (splinePoints.Count >= 2)
+                    {
+                        rivers.Add(new { points = splinePoints });
+                        Log.Information("  River: {Count} spline points", splinePoints.Count);
+                    }
+                }
+            }
+        }
+
+        ExtractRivers(exports);
+        scanned = 0;
+        foreach (var cellPath in cellPaths)
+        {
+            scanned++;
+            if (scanned % 500 == 0) Log.Information("  river scan {N}/{Total}...", scanned, cellPaths.Count);
+            try
+            {
+                var cleanPath = cellPath.Replace(".umap", "");
+                var cellExports = provider.LoadPackage(cleanPath).GetExports().ToList();
+                ExtractRivers(cellExports);
+            }
+            catch { }
+        }
+        Log.Information("Found {Count} rivers", rivers.Count);
+
+        Log.Information("Total: {Count} water placements, {RiverCount} rivers, {MeshCount} unique meshes: {Meshes}",
+            placements.Count, rivers.Count, meshNames.Count, string.Join(", ", meshNames));
+
+        // ── 6. Write placements ─────────────────────────────
+        var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        var placementsPath = Path.Combine(outputDir, "water_placements.json");
+        var outputData = new { placements, rivers };
+        File.WriteAllText(placementsPath, System.Text.Json.JsonSerializer.Serialize(outputData, jsonOptions));
+
+        // ── 7. Export water mesh GLBs ───────────────────────
+        var waterDir = Path.Combine(outputDir, "water");
+        Directory.CreateDirectory(waterDir);
+        var exported = 0;
+
+        var waterMeshPackages = provider.Files.Keys
+            .Where(k => k.EndsWith(".uasset"))
+            .Where(k => k.Contains("WaterPlane", StringComparison.OrdinalIgnoreCase)
+                      || k.Contains("GeneratedWaterPlanes", StringComparison.OrdinalIgnoreCase)
+                      || k.Contains("SM_OceanPlane", StringComparison.OrdinalIgnoreCase)
+                      || k.Contains("SM_Waterfall", StringComparison.OrdinalIgnoreCase)
+                      || k.Contains("SM_SplashModule", StringComparison.OrdinalIgnoreCase))
+            .Where(k => !k.Contains("Material", StringComparison.OrdinalIgnoreCase))
+            .Where(k => !k.Contains("Texture", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        Log.Information("Scanning {Count} water mesh packages...", waterMeshPackages.Count);
+
+        foreach (var packagePath in waterMeshPackages)
+        {
+            try
+            {
+                var cleanPath = packagePath.Replace(".uasset", "");
+                var allExports = provider.LoadPackage(cleanPath).GetExports();
+
+                foreach (var obj in allExports)
+                {
+                    if (obj is not UStaticMesh staticMesh) continue;
+
+                    var meshExporter = new MeshExporter(staticMesh, options);
+                    if (meshExporter.MeshLods.Count == 0) continue;
+
+                    var name = staticMesh.Name;
+                    var data = meshExporter.MeshLods[0].FileData;
+                    File.WriteAllBytes(Path.Combine(waterDir, $"{name}.glb"), data);
+                    exported++;
+                    Log.Information("  Exported {Name}.glb ({Size} KB)", name, data.Length / 1024);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("Error processing {Path}: {Msg}", packagePath, ex.Message);
+            }
+        }
+
+        Log.Information("Done: {Placements} placements, {Rivers} rivers, {Meshes} meshes exported",
+            placements.Count, rivers.Count, exported);
+        JsonOutput.WriteExport("water", outputDir, placements.Count, "0", 0,
+            new object[] { new { path = "water_placements.json" }, new { path = "water/" } });
     }
 
     // ── Helper: extract LODs from MeshExporter ───────────────

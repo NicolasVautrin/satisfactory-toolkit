@@ -17,6 +17,18 @@ public static class MathHelpers
         );
     }
 
+    public static (double x, double y, double z) QuatRotate(double qx, double qy, double qz, double qw, double vx, double vy, double vz)
+    {
+        double cx = qy * vz - qz * vy;
+        double cy = qz * vx - qx * vz;
+        double cz = qx * vy - qy * vx;
+        return (
+            vx + 2 * (qw * cx + qy * cz - qz * cy),
+            vy + 2 * (qw * cy + qz * cx - qx * cz),
+            vz + 2 * (qw * cz + qx * cy - qy * cx)
+        );
+    }
+
     public static string ExtractClassName(string assetPath)
     {
         var parts = assetPath.Replace('\\', '/').Split('/');

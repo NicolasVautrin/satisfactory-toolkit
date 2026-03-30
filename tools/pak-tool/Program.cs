@@ -23,22 +23,22 @@ var mode = args.Length > 0 ? args[0] : "help";
 switch (mode)
 {
     // ── Exploration ──────────────────────────────────────
-    case "list-entries":
+    case "list-exports":
     {
         var provider = ProviderFactory.CreateProvider();
         Log.Information("Loaded {Count} files from provider", provider.Files.Count);
-        var filter = args.Length > 1 && !args[1].StartsWith("-") ? args[1] : ".*";
-        var typeFilter = ParseString(args, "--type");
-        ListEntriesCommand.Run(provider, filter, typeFilter, offset, limit);
+        var regexp = ParseString(args, "--regexp") ?? ".*";
+        ListExportsCommand.Run(provider, regexp, offset, limit);
         break;
     }
-    case "entry-details":
+    case "export-details":
     {
         var provider = ProviderFactory.CreateProvider();
         Log.Information("Loaded {Count} files from provider", provider.Files.Count);
-        var path = args.Length > 1 ? args[1] : "";
-        if (string.IsNullOrWhiteSpace(path)) { Log.Error("Usage: entry-details <package-path>"); break; }
-        EntryDetailsCommand.Run(provider, path);
+        var regexp = ParseString(args, "--regexp") ?? "";
+        if (string.IsNullOrWhiteSpace(regexp)) { Log.Error("Usage: export-details --regexp <filter> [--jsonpath <path>] [--offset N] [--limit N]"); break; }
+        var jsonpath = ParseString(args, "--jsonpath");
+        ExportDetailsCommand.Run(provider, regexp, jsonpath, offset, limit);
         break;
     }
 
@@ -91,11 +91,14 @@ switch (mode)
                 ExportCommand.Streaming(provider, outputDir);
                 break;
             }
+            case "water":
+                ExportCommand.Water(outputDir, parallelism);
+                break;
             case "connectors":
                 ConnectorsCommand.Export(outputDir, parallelism);
                 break;
             default:
-                Log.Error("Unknown export sub-command: {Sub}. Use: buildings, scenery, landscape, texture, mesh, actors, streaming, connectors", subMode);
+                Log.Error("Unknown export sub-command: {Sub}. Use: buildings, scenery, landscape, texture, mesh, actors, streaming, water, connectors", subMode);
                 break;
         }
         break;
@@ -107,11 +110,14 @@ switch (mode)
         Usage: pak-tool <command> [options]
 
         EXPLORATION (JSON → stdout):
-          list-entries <filter>         List package entries matching regex filter
-            --type <regex>              Filter by entry type
+          list-exports                  List exports matching regex on pkg::name::class
+            --regexp <regex>            Filter (default: .*)
             --offset N  --limit N       Pagination (default 0, 50)
 
-          entry-details <path>          Detailed info on a package (deserializes)
+          export-details                Deep dump of matched exports (Newtonsoft JSON)
+            --regexp <regex>            Filter on pkg::name::class (required)
+            --jsonpath <path>           JSONPath filter on output
+            --offset N  --limit N       Pagination (default 0, 50)
 
         EXPORT (files to disk, JSON confirmation → stdout):
           export buildings              Bulk building meshes
@@ -122,6 +128,7 @@ switch (mode)
             [--type <regex>]            Filter by entry type
           export actors                 Persistent_Level placements → JSON
           export streaming              Streaming cell placements → JSON
+          export water                  Water placements + meshes
           export connectors             All building port offsets → JSON
 
         GLOBAL OPTIONS:

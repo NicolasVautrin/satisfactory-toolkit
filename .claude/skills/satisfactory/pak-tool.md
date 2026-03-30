@@ -15,53 +15,48 @@ dotnet run -- <command> [options]
 
 Les **logs** (Serilog) vont sur **stderr**. La **sortie JSON** va sur **stdout** — c'est ce qui permet à une IA de parser la sortie sans bruit.
 
+### Bonnes pratiques d'exécution
+
+- Les exports longs (scenery, water, landscape) prennent **2-5 minutes** — utiliser un `timeout` suffisant (300000+)
+- **Ne pas lancer 2 fois** la même commande : utiliser `2>&1` pour capturer stderr+stdout ensemble, et `tail -20` ou `grep` pour filtrer la sortie pertinente en une seule commande
+- Exemple complet : `cd /c/Users/nicolasv/satisfactory-toolkit/tools/pak-tool && dotnet run -- export water 2>&1 | tail -5`
+- Toujours `cd` dans le répertoire du projet avant `dotnet run`
+
 ## Commandes d'exploration
 
-### list-entries — Lister les exports d'un package
+### list-exports — Lister les exports
 
-Parcourt les fichiers .pak, filtre par regex sur le path, retourne nom + classe de chaque export. **Header-only** : pas de désérialisation, très rapide (~30k packages en quelques secondes).
-
-```bash
-# Tous les packages contenant "smelter"
-dotnet run -- list-entries "smelter" --limit 5
-
-# Filtrer aussi par type d'export
-dotnet run -- list-entries "smelter" --type "StaticMesh" --limit 10
-
-# Tous les packages (attention : ~30k résultats)
-dotnet run -- list-entries ".*" --limit 10 --offset 100
-```
-
-Sortie JSON :
-```json
-{
-  "mode": "list-entries",
-  "total": 64,
-  "offset": 0,
-  "limit": 5,
-  "results": [
-    {
-      "package": "FactoryGame/Content/.../SM_SmelterMk1",
-      "entries": [
-        { "name": "SM_SmelterMk1", "class": "StaticMesh" },
-        { "name": "MI_SmelterMk1", "class": "MaterialInstanceConstant" }
-      ]
-    }
-  ]
-}
-```
-
-### entry-details — Détails d'un package
-
-Désérialise les exports d'un package pour obtenir les détails fins (LODs, dimensions texture, materials).
+Scanne tous les packages, construit `{pkg}::{exportName}::{exportClass}`, filtre par regex. **Header-only** : pas de désérialisation.
 
 ```bash
-dotnet run -- entry-details "FactoryGame/Content/.../SM_SmelterMk1"
+# Tous les exports contenant "smelter"
+dotnet run -- list-exports --regexp "smelter" --limit 5
+
+# Seulement les StaticMesh
+dotnet run -- list-exports --regexp "::StaticMesh$" --limit 10
+
+# SplineComponent dans les packages River
+dotnet run -- list-exports --regexp "River.*::SplineComponent" --limit 10
 ```
 
-Sortie JSON avec infos par type :
-- **StaticMesh** : lodCount, lods (index + sizeKB), materialCount
-- **Texture2D** : width, height, format
+Sortie JSON : tableau de strings au format `pkg::name::class`.
+
+### export-details — Deep dump d'exports
+
+Même filtre `--regexp` sur `pkg::name::class`, puis désérialise et dump en JSON complet (Newtonsoft). Filtre optionnel `--jsonpath`.
+
+```bash
+# Dump complet d'un export
+dotnet run -- export-details --regexp "BP_River_PROT::RiverSpline" 2>/dev/null
+
+# Filtre JSONPath
+dotnet run -- export-details --regexp "00BZ6X.*::SplineMesh" --jsonpath "$..SplineParams" 2>/dev/null
+
+# Paginer les exports d'un streaming cell
+dotnet run -- export-details --regexp "00BZ6X" --offset 0 --limit 5 2>/dev/null
+```
+
+Sortie : tableau JSON (Newtonsoft) sur stdout. Avec `--jsonpath`, seuls les tokens matchés.
 
 ## Commandes d'export
 
