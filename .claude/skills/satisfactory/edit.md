@@ -2,7 +2,7 @@
 
 Endpoint unifié pour créer, modifier, supprimer des entités, les connecter entre elles, et insérer des splitters/mergers/junctions/pumps sur des splines existantes. Fonctionne sans save chargée (crée un état minimal en mémoire).
 
-Implémentation : `viewer/lib/saveLoader.js` → `editEntities(batch)`.
+Implémentation : `viewer/lib/editor.js` → `editEntities(batch)`.
 
 ## Format de requête
 

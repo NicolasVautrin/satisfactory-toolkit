@@ -3,7 +3,7 @@ import { scene, gameToViewer, requestRender } from './scene.js';
 
 // ── Placement state ─────────────────────────────────────────
 let active = false;
-let rawCbpData = null; // original blueprint entityData (local coords)
+let rawCbpData = null; // original blueprint viewerEntityRepository (local coords)
 let transform = { tx: 0, ty: 0, tz: 0, yaw: 0 }; // Unreal coords, yaw in degrees
 let onUpdate = null; // callback(transformedData) when placement changes
 let onConfirm = null; // callback() on Enter

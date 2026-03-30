@@ -25,18 +25,18 @@ export function createSelPanel(container, { onRemoveClass, onClear, onExport, on
   const listDiv = container.querySelector('#sel-panel-list');
 
   return {
-    update(selectedIndices, entityData) {
+    update(selectedIndices, viewerEntityRepository) {
       const shouldShow = selectedIndices.size > 0;
       container.classList.toggle('visible', shouldShow);
 
-      if (!shouldShow || !entityData) return;
+      if (!shouldShow || !viewerEntityRepository) return;
 
       totalSpan.textContent = selectedIndices.size;
 
       const groups = {};
       for (const idx of selectedIndices) {
-        const e = entityData.entities[idx];
-        const cls = entityData.classNames[e.c];
+        const e = viewerEntityRepository.entities[idx];
+        const cls = viewerEntityRepository.classNames[e.c];
         if (!groups[cls]) groups[cls] = { count: 0, cat: e.cat };
         groups[cls].count++;
       }

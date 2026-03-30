@@ -6,7 +6,7 @@ const EDGE_COLOR = 0xffaa00;
 const GRID_STEP = 800;
 const PADDING = 800;
 
-// entityIndex → { group, entityIndex, entityData }
+// entityIndex → { group, entityIndex, viewerEntityRepository }
 const activeGrids = new Map();
 
 // Alignment mode: 'entity' (follows entity rotation) or 'world' (axis-aligned)
@@ -19,9 +19,9 @@ export function setGridBoxAlign(mode) {
   localStorage.setItem('viewer_gridBoxAlign', mode);
   // Rebuild all active gridboxes
   const entries = [...activeGrids.entries()];
-  for (const [idx, { entityData }] of entries) {
+  for (const [idx, { viewerEntityRepository }] of entries) {
     removeGrid(idx);
-    addGrid(idx, entityData);
+    addGrid(idx, viewerEntityRepository);
   }
 }
 
@@ -29,12 +29,12 @@ export function hasGrid(entityIndex) {
   return activeGrids.has(entityIndex);
 }
 
-export function toggleGrid(entityIndex, entityData) {
+export function toggleGrid(entityIndex, viewerEntityRepository) {
   if (activeGrids.has(entityIndex)) {
     removeGrid(entityIndex);
     return false;
   } else {
-    addGrid(entityIndex, entityData);
+    addGrid(entityIndex, viewerEntityRepository);
     return true;
   }
 }
@@ -56,12 +56,12 @@ export function removeAllGrids() {
   requestRender();
 }
 
-function addGrid(entityIndex, entityData) {
-  const e = entityData.entities[entityIndex];
+function addGrid(entityIndex, viewerEntityRepository) {
+  const e = viewerEntityRepository.entities[entityIndex];
   if (!e) return;
 
   // Get entity clearance box(es) for sizing
-  const boxes = entityData.clearance?.[e.c];
+  const boxes = viewerEntityRepository.clearance?.[e.c];
   let xMin, xMax, yMin, yMax, zMin, zMax;
 
   if (e.box) {
@@ -151,6 +151,6 @@ function addGrid(entityIndex, entityData) {
   // else: world aligned — no rotation (default)
 
   scene.add(group);
-  activeGrids.set(entityIndex, { group, entityData });
+  activeGrids.set(entityIndex, { group, viewerEntityRepository });
   requestRender();
 }

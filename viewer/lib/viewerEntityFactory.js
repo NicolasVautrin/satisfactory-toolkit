@@ -78,7 +78,7 @@ function makeItem(typePath, t, r, classIndex) {
 }
 
 // ── Build a single save entity viewer item ──────────────────────────
-function buildEntity(entity, reg, compByName) {
+function buildViewerEntity(entity, reg, compByName) {
   const cls = entity.typePath.split('.').pop();
   const item = makeItem(entity.typePath, entity.transform.translation, entity.transform.rotation, reg.index);
 
@@ -136,13 +136,13 @@ function buildEntity(entity, reg, compByName) {
 }
 
 // ── Build entity data for save (parser format) ─────────────────────
-function buildSaveEntityData(entities, lwInstances, compByName) {
+function buildViewerEntitiesFromSave(entities, lwInstances, compByName) {
   const reg = createClassRegistry();
   const items = [];
 
   for (const e of entities) {
     registerClass(e.typePath.split('.').pop(), reg);
-    items.push(buildEntity(e, reg, compByName));
+    items.push(buildViewerEntity(e, reg, compByName));
   }
 
   // Lightweight buildables
@@ -159,7 +159,7 @@ function buildSaveEntityData(entities, lwInstances, compByName) {
 }
 
 // ── Build entity data for CBP (SCIM format) ────────────────────────
-function buildCbpEntityData(cbpRaw) {
+function buildViewerEntitiesFromCbp(cbpRaw) {
   const reg = createClassRegistry();
   const items = [];
 
@@ -188,13 +188,13 @@ function buildCbpEntityData(cbpRaw) {
 }
 
 // ── Build a single entity item (for incremental addition) ──────────
-function buildSingleEntityItem(entity, existingEntityData, compByName) {
+function buildViewerEntityFromEditor(entity, existingEntityData, compByName) {
   const reg = createClassRegistry(existingEntityData);
   const cls = entity.typePath.split('.').pop();
   const isNew = reg.index[cls] === undefined;
   registerClass(cls, reg);
 
-  const item = buildEntity(entity, reg, compByName);
+  const item = buildViewerEntity(entity, reg, compByName);
 
   const classUpdate = {};
   if (isNew) {
@@ -206,4 +206,4 @@ function buildSingleEntityItem(entity, existingEntityData, compByName) {
   return { item, classUpdate, isNewClass: isNew };
 }
 
-module.exports = { classify, buildSaveEntityData, buildCbpEntityData, buildSingleEntityItem };
+module.exports = { classify, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp, buildViewerEntityFromEditor };

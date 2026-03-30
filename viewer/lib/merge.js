@@ -1,6 +1,6 @@
 const { Parser } = require('@etothepii/satisfactory-file-parser');
 const { initSession } = require('../../satisfactoryLib');
-const { getSaveState, getCbpState } = require('./saveLoader');
+const { getSaveState, getCbpState } = require('./saveManager');
 
 // ── CBP v1.0 uses short type names, normalize to *Property format ──
 const TYPE_ALIASES = {

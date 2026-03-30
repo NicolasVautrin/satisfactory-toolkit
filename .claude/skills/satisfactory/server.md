@@ -25,7 +25,8 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 - `viewer/server.js` : routes Express, orchestration
 - `viewer/lib/spline.js` : Hermite sampling, extraction splines save/CBP, quatRotate
 - `viewer/lib/entityData.js` : classify, clearance, ports, buildSaveEntityData, buildCbpEntityData
-- `viewer/lib/saveLoader.js` : loadSave, loadCbp, loadBlueprint, editEntities, injectBlueprint, state management
+- `viewer/lib/saveManager.js` : loadSave, loadCbp, loadBlueprint, injectBlueprint, state management (getSaveState, ensureSaveState)
+- `viewer/lib/editor.js` : editEntities, addEntity, getEntity, attachPorts, wirePorts, insertOnSpline
 - `viewer/lib/merge.js` : CBP→Save conversion et merge
 
 ## API REST
@@ -150,7 +151,7 @@ Un ConveyorLift directement connecté à un splitter est positionné **exactemen
 ## Modifier le serveur
 
 ### Ajouter une API endpoint
-Ajouter la route dans `viewer/server.js`. Utiliser `getSaveState()` et `getCbpState()` depuis `saveLoader.js`.
+Ajouter la route dans `viewer/server.js`. Utiliser `getSaveState()` et `getCbpState()` depuis `saveManager.js`.
 
 ### Ajouter une catégorie ou changer la classification
 Modifier `CATEGORY_PATTERNS` dans `viewer/lib/entityData.js`.

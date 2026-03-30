@@ -4,7 +4,8 @@
  *
  * Usage: node test/testEdit.js
  */
-const { editEntities, getSaveState } = require('../viewer/lib/saveLoader');
+const { editEntities } = require('../viewer/lib/editor');
+const { getSaveState } = require('../viewer/lib/saveManager');
 
 // ── Mini test framework ──────────────────────────────────────────────
 let passed = 0, failed = 0;
@@ -51,7 +52,7 @@ test('1. Create constructor', () => {
 test('2. Anchor + rotation 90°', () => {
   const r = editEntities({
     anchor: { x: 1000, y: 2000, z: 500 },
-    rotation: 90,
+    rotation: 90, skipClearance: true,
     entities: [{ id: 'c1', type: 'constructor', position: { x: 100, y: 0, z: 0 } }],
   });
   const item = getEntity(r.added[0].index);
@@ -630,7 +631,7 @@ test('20b. Lift top → Lift top opposite polarity', () => {
 test('21. Merger → Lift endpoint', () => {
   // Create a lift connected to a constructor at bottom — top is free
   const r1 = editEntities({
-    anchor: { x: 170000, y: 0, z: 0 },
+    anchor: { x: 170000, y: 0, z: 0 }, skipClearance: true,
     entities: [
       { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
       { id: 'lift1', type: 'lift', position: { x: 0, y: 0, z: 0 } },
@@ -641,6 +642,7 @@ test('21. Merger → Lift endpoint', () => {
 
   // Snap a virgin merger onto lift1's top (lift IS_SPLINE → should be allowed)
   const r2 = editEntities({
+    skipClearance: true,
     entities: [
       { id: 'lift1', index: lift1Idx },
       { id: 'm1', type: 'merger', position: { x: 170000, y: 0, z: 500 } },
@@ -728,6 +730,89 @@ test('23. Lift polarity through belt same polarity → error', () => {
       `Expected flow incompatibility error, got: ${e.message}`);
   }
   assert(threw, 'Should have thrown — both tops are OUTPUT (through belts)');
+});
+
+// ── Clearance tests ─────────────────────────────────────────────────
+
+// 24. Two constructors at same position → clearance error
+test('24. Clearance overlap → error', () => {
+  let threw = false;
+  try {
+    editEntities({
+      anchor: { x: 200000, y: 0, z: 0 },
+      entities: [
+        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+      ],
+    });
+  } catch (e) {
+    threw = true;
+    assert(e.message.includes('Clearance overlap'), `Expected clearance error, got: ${e.message}`);
+    assert(e.message.includes('intra-batch'), `Expected intra-batch source, got: ${e.message}`);
+  }
+  assert(threw, 'Should have thrown — two constructors at same position');
+});
+
+// 25. Two constructors far apart → no clearance error
+test('25. Clearance OK when spaced', () => {
+  const r = editEntities({
+    anchor: { x: 210000, y: 0, z: 0 },
+    entities: [
+      { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+      { id: 'c2', type: 'constructor', position: { x: 5000, y: 0, z: 0 } },
+    ],
+  });
+  assert(r.added.length === 2, `Expected 2 added, got ${r.added.length}`);
+});
+
+// 26. skipClearance bypasses the check
+test('26. skipClearance bypasses overlap', () => {
+  const r = editEntities({
+    anchor: { x: 220000, y: 0, z: 0 },
+    skipClearance: true,
+    entities: [
+      { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+      { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+    ],
+  });
+  assert(r.added.length === 2, 'Should add both despite overlap');
+});
+
+// 27. Update (alias) doesn't collide with itself
+test('27. Alias no self-collision', () => {
+  const r1 = editEntities({
+    anchor: { x: 230000, y: 0, z: 0 },
+    skipClearance: true,
+    entities: [{ id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } }],
+  });
+  const idx = r1.added[0].index;
+  // Update same entity at same position — should not collide with itself
+  const r2 = editEntities({
+    entities: [{ id: 'c1', index: idx, position: { x: 0, y: 0, z: 0 } }],
+  });
+  assert(r2.updated.length === 1, 'Should update without error');
+});
+
+// 28. New entity overlapping existing on map → error
+test('28. Clearance overlap with map entity', () => {
+  // First, place a constructor on the map
+  const r1 = editEntities({
+    anchor: { x: 240000, y: 0, z: 0 },
+    entities: [{ id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } }],
+  });
+  // Then try to place another at the same spot
+  let threw = false;
+  try {
+    editEntities({
+      anchor: { x: 240000, y: 0, z: 0 },
+      entities: [{ id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 } }],
+    });
+  } catch (e) {
+    threw = true;
+    assert(e.message.includes('Clearance overlap'), `Expected clearance error, got: ${e.message}`);
+    assert(e.message.includes('map'), `Expected map source, got: ${e.message}`);
+  }
+  assert(threw, 'Should have thrown — overlaps existing entity on map');
 });
 
 // ── Summary ──────────────────────────────────────────────────────────

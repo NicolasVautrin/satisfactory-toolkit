@@ -6,7 +6,8 @@ const compression = require('compression');
 const { WebSocketServer } = require('ws');
 const { initSession } = require('../satisfactoryLib');
 const Blueprint = require('../lib/Blueprint');
-const { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, injectBlueprint, editEntities } = require('./lib/saveLoader');
+const { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, injectBlueprint } = require('./lib/saveManager');
+const { editEntities } = require('./lib/editor');
 const { mergeCbpIntoSave } = require('./lib/merge');
 
 // ── Express ────────────────────────────────────────────────────────
@@ -109,13 +110,13 @@ app.post('/api/game/upload', express.raw({ type: 'application/octet-stream', lim
 
     if (ext === '.cbp') {
       loadCbp(name, buf);
-      res.json({ type: 'cbp', cbp: getCbpState().entityData });
+      res.json({ type: 'cbp', cbp: getCbpState().viewerEntityRepository });
     } else if (ext === '.sbp') {
       loadBlueprint(name, buf);
-      res.json({ type: 'cbp', cbp: getCbpState().entityData });
+      res.json({ type: 'cbp', cbp: getCbpState().viewerEntityRepository });
     } else {
       loadSave(name, buf);
-      res.json({ type: 'save', save: getSaveState().entityData });
+      res.json({ type: 'save', save: getSaveState().viewerEntityRepository });
     }
   } catch (err) {
     console.error('Upload error:', err);
@@ -128,8 +129,8 @@ app.get('/api/game/entities', (req, res) => {
   const result = {};
   const saveState = getSaveState();
   const cbpState = getCbpState();
-  if (saveState) { result.save = saveState.entityData; result.saveName = saveState.name; }
-  if (cbpState) { result.cbp = cbpState.entityData; result.cbpName = cbpState.name; }
+  if (saveState) { result.save = saveState.viewerEntityRepository; result.saveName = saveState.name; }
+  if (cbpState) { result.cbp = cbpState.viewerEntityRepository; result.cbpName = cbpState.name; }
   if (!saveState && !cbpState) return res.status(400).json({ error: 'No data loaded' });
   res.json(result);
 });
@@ -557,7 +558,7 @@ app.post('/api/game/inject-blueprint', (req, res) => {
     const { transform } = req.body;
     if (!transform) return res.status(400).json({ error: 'transform required' });
     const result = injectBlueprint(transform);
-    res.json({ success: true, injected: result.injected, save: result.entityData });
+    res.json({ success: true, injected: result.injected, save: result.viewerEntityRepository });
   } catch (err) {
     console.error('Inject error:', err);
     res.status(500).json({ error: err.message });
@@ -568,7 +569,7 @@ app.post('/api/game/inject-blueprint', (req, res) => {
 app.get('/api/game/download', (req, res) => {
   const saveState = getSaveState();
   if (!saveState) return res.status(400).json({ error: 'No save loaded' });
-  const { serializeSave } = require('./lib/saveLoader');
+  const { serializeSave } = require('./lib/saveManager');
   const buf = serializeSave();
   const outputName = `${saveState.name}_edit`;
   res.setHeader('Content-Type', 'application/octet-stream');
@@ -656,7 +657,7 @@ app.post('/api/game/edit', (req, res) => {
 // ── Get player position ──────────────────────────────────────────────
 app.get('/api/game/player-position', (req, res) => {
   try {
-    const { getPlayerPosition } = require('./lib/saveLoader');
+    const { getPlayerPosition } = require('./lib/saveManager');
     const position = getPlayerPosition();
     res.json({ success: true, position });
   } catch (err) {
@@ -669,7 +670,7 @@ app.post('/api/game/move-player', (req, res) => {
   try {
     const { position } = req.body;
     if (!position) return res.status(400).json({ error: 'position {x, y, z} required' });
-    const { setPlayerPosition } = require('./lib/saveLoader');
+    const { setPlayerPosition } = require('./lib/saveManager');
     setPlayerPosition(position);
     console.log(`Player position set to (${position.x}, ${position.y}, ${position.z}) — will be applied on save export`);
     res.json({ success: true, position });

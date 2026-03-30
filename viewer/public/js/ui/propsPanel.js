@@ -51,19 +51,19 @@ export function createPropsPanel(container) {
   const contentDiv = container.querySelector('#props-panel-content');
 
   return {
-    show(entityIndex, entityData) {
-      if (entityIndex < 0 || !entityData) {
+    show(entityIndex, viewerEntityRepository) {
+      if (entityIndex < 0 || !viewerEntityRepository) {
         container.classList.remove('visible');
         currentEntityIndex = -1;
         currentEntityData = null;
         return;
       }
 
-      const e = entityData.entities[entityIndex];
-      const cls = entityData.classNames[e.c];
+      const e = viewerEntityRepository.entities[entityIndex];
+      const cls = viewerEntityRepository.classNames[e.c];
       const catColor = '#' + CAT_COLORS[e.cat].toString(16).padStart(6, '0');
       const catName = CAT_NAMES[e.cat] || 'Other';
-      const filename = entityData.filename || '';
+      const filename = viewerEntityRepository.filename || '';
 
       let html = '';
 
@@ -105,7 +105,7 @@ export function createPropsPanel(container) {
       html += `</div>`;
 
       // Ports
-      const portLayout = getPortLayout(e, entityData.portLayouts);
+      const portLayout = getPortLayout(e, viewerEntityRepository.portLayouts);
       if (portLayout && portLayout.length > 0) {
         html += `<div class="props-section">`;
         html += `<div class="props-section-title">Ports</div>`;
@@ -136,7 +136,7 @@ export function createPropsPanel(container) {
       container.classList.add('visible');
 
       currentEntityIndex = entityIndex;
-      currentEntityData = entityData;
+      currentEntityData = viewerEntityRepository;
       gridBtn.classList.toggle('active', hasGrid(entityIndex));
 
       // Build serialized props for clipboard
