@@ -96,28 +96,7 @@ Endpoint générique pour charger plusieurs fichiers GLB en une seule requête :
 
 ### Edit (`POST /api/game/edit`)
 
-Endpoint unifié pour add/update/delete d'entités + connections :
-```json
-{
-  "anchor": {"x": -76426, "y": 223301, "z": 7946},
-  "rotation": 90,
-  "entities": [
-    { "id": "s1", "type": "splitter", "position": {"x": 0, "y": 0, "z": 0} },
-    { "id": "s2", "type": "splitter", "position": {"x": 800, "y": 0, "z": 0}, "rotation": 45 },
-    { "id": "existing", "index": 12, "position": {"x": 0, "y": 400, "z": 0} },
-    { "index": 5, "deleted": true }
-  ],
-  "connections": [
-    { "from": "s1:Output1", "to": "existing:Input1" }
-  ]
-}
-```
-- **Add** (pas d'`index`, pas de `deleted`) : crée une nouvelle entité, `id` permet de référencer dans les connections
-- **Update** (`index` + champs à modifier) : modifie position/rotation/properties d'une entité existante
-- **Delete** (`index` + `deleted: true`) : soft delete (null le slot, indices stables)
-- `anchor` : position absolue `{"x", "y", "z"}` ou relative caméra `{"fromCamera": 5000}`
-- `rotation` : yaw global en degrés, tourne toutes les positions relatives autour de l'anchor
-- `connections` : `id:portName` — appelle `attach` (wire + snap) entre les ports
+Voir section dédiée [Éditeur](#éditeur-post-apigameedit) ci-dessous.
 
 ### Alias de types (typeAliases.js)
 
@@ -198,3 +177,103 @@ Modifier `CATEGORY_PATTERNS` dans `viewer/lib/entityData.js`.
 4. Ancien format : `Builder.PORT_LAYOUT = PORTS;` dans le fichier du builder (après `Builder.Ports = ...`)
 2. Enregistrer le builder dans `lib/Registry.js` si pas déjà fait
 3. Les ports apparaîtront automatiquement dans le viewer
+
+## Éditeur (POST /api/game/edit)
+
+Endpoint unifié pour créer, modifier, supprimer des entités, les connecter entre elles, et insérer des splitters/mergers/junctions/pumps sur des splines existantes. Fonctionne sans save chargée.
+
+### Système d'identifiants
+
+Les connexions utilisent exclusivement des **id locaux** déclarés dans `entities[]`. Pour référencer une entité existante dans une connexion, la déclarer comme alias :
+
+```json
+{ "id": "belt1", "index": 42 }
+```
+
+Cet alias ne modifie pas l'entité — il crée juste un id utilisable dans `from`, `to`, `on`.
+
+### Opérations sur les entités
+
+| Opération | Format | Description |
+|---|---|---|
+| **Add** | `{id, type, position}` | Crée une entité. `type` = alias wiki (ex: `constructor`, `splitter`). `position` relative à `anchor`. |
+| **Alias** | `{id, index}` | Crée un alias sur une entité existante (pour les connexions). |
+| **Modify** | `{index, position?, rotation?, properties?}` | Modifie une entité existante. |
+| **Delete** | `{index, deleted: true}` | Soft delete (le slot devient null, indices stables). |
+
+### Types de connexions
+
+| Format | Description |
+|---|---|
+| `{from:"id:port", to:"id:port"}` | **Directe** — `from` snappe sur `to`. `from` doit être mobile. |
+| `{from:"id:port", to:"id:port", belt:tier}` | **Belt auto** — crée un belt (tier 1-6) entre les deux ports. Les deux peuvent être fixes. |
+| `{from:"id:port", to:"id:port", pipe:tier}` | **Pipe auto** — crée un pipe (tier 1-2) entre les deux ports pipe. |
+| `{from:"id", on:"id", position:{x,y,z}}` | **Insertion** — insère l'entité `from` sur le belt/pipe `on`, coupe la spline en deux. |
+
+### Règles de snap
+
+| Entité qui snappe (from) | Peut snapper sur (to) | Condition |
+|---|---|---|
+| belt / pipe / lift / track | tout port compatible | toujours |
+| splitter / merger (vierge) | endpoint belt ou lift | aucun port déjà connecté |
+| junction / pump (vierge) | endpoint pipe | aucun port déjà connecté |
+| producer / extracteur | rien | utiliser `belt:tier` ou `pipe:tier` |
+
+### Rollback
+
+Si une connexion échoue, **toutes** les entités ajoutées dans le batch sont supprimées (rollback atomique).
+
+### Exemples
+
+**Deux constructors reliés par un belt :**
+```json
+{
+  "anchor": {"fromCamera": 5000},
+  "entities": [
+    {"id": "c1", "type": "constructor", "position": {"x": 0, "y": 0, "z": 0}},
+    {"id": "c2", "type": "constructor", "position": {"x": 1000, "y": 0, "z": 0}}
+  ],
+  "connections": [
+    {"from": "c1:Output0", "to": "c2:Input0", "belt": 6}
+  ]
+}
+```
+
+**Connecter à une entité existante (index 42) :**
+```json
+{
+  "entities": [
+    {"id": "existing", "index": 42},
+    {"id": "c1", "type": "constructor", "position": {"x": 1000, "y": 0, "z": 0}}
+  ],
+  "connections": [
+    {"from": "existing:Output0", "to": "c1:Input0", "belt": 6}
+  ]
+}
+```
+
+**Insérer un splitter sur un belt existant (index 42) :**
+```json
+{
+  "entities": [
+    {"id": "belt1", "index": 42},
+    {"id": "s1", "type": "splitter"}
+  ],
+  "connections": [
+    {"from": "s1", "on": "belt1", "position": {"x": 1000, "y": 2000, "z": 500}}
+  ]
+}
+```
+
+**Insérer une junction sur un pipe existant (index 55) :**
+```json
+{
+  "entities": [
+    {"id": "pipe1", "index": 55},
+    {"id": "j1", "type": "pipe-junction"}
+  ],
+  "connections": [
+    {"from": "j1", "on": "pipe1", "position": {"x": 2000, "y": 500, "z": 375}}
+  ]
+}
+```

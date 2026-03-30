@@ -452,6 +452,35 @@ const PORTS = {
 this._ports = FlowPort.fromLayout(componentMap, entity.transform, PORTS);
 ```
 
+### Règles de snap (snapTo / attach)
+
+| Entité qui snappe (from) | Peut snapper sur (to) | Condition |
+|---|---|---|
+| belt / pipe / lift / track | tout port compatible | toujours (recalcule spline) |
+| splitter / merger | endpoint belt ou lift | seulement si vierge (aucun port connecté) |
+| junction / pump | endpoint pipe | seulement si vierge |
+| producer / extracteur | rien | ports fixes — utiliser belt/pipe/lift entre |
+
+Après la première connexion, splitter/merger/junction/pump deviennent fixes.
+
+Flag `IS_SPLINE = true` sur ConveyorBelt, Pipe, ConveyorLift, RailroadTrack — utilisé dans la validation de `snapTo()`.
+
+### attachBelt / attachPipe — insertion au milieu d'une spline
+
+Les splitters/mergers peuvent s'insérer au milieu d'un belt existant, les junctions/pumps sur un pipe :
+
+```js
+const splitter = ConveyorSplitter.create(0, 0, 0);
+const belt2 = splitter.attachBelt(belt, position); // coupe belt en deux, retourne belt2
+// belt → splitter.Input1, splitter.Output1 → belt2
+
+const junction = PipeJunction.create(0, 0, 0);
+const pipe2 = junction.attachPipe(pipe, position); // coupe pipe en deux, retourne pipe2
+
+const pump = PipePump.create(0, 0, 0);
+const pipe2 = pump.attachPipe(pipe, position, reverse); // reverse = inverser orientation
+```
+
 ## Catalogue des classes
 
 ### Extracteurs (`lib/extractors/`)

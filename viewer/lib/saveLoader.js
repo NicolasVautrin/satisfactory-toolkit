@@ -436,7 +436,7 @@ function addEntity(typePath, position, rotation, properties) {
 }
 
 // ── Reconstruct a machine Builder from a save entity ────────────────
-function getMachine(entityIndex) {
+function getEntity(entityIndex) {
   if (!saveState) throw new Error('No save loaded');
   const item = saveState.items[entityIndex];
   if (!item) throw new Error(`Entity not found at index ${entityIndex}`);
@@ -449,15 +449,39 @@ function getMachine(entityIndex) {
   const Builder = registry.get(cls);
   if (!Builder?.fromSave) throw new Error(`No Builder with fromSave for ${cls}`);
 
-  return Builder.fromSave(entity, saveState.allObjects);
+  const builder = Builder.fromSave(entity, saveState.allObjects);
+
+  // Restore _wiredTo from mConnectedComponent on each port
+  const FlowPort = require('../../lib/shared/FlowPort');
+  for (const port of Object.values(builder._ports)) {
+    const connPath = port.component?.properties?.mConnectedComponent?.value?.pathName;
+    if (connPath) {
+      const connComp = saveState.allObjects.find(o => o.instanceName === connPath);
+      if (connComp) {
+        // Create a real FlowPort so it can be used as attach target if needed
+        const stub = new FlowPort(connComp, null, null);
+        stub.pathName = connPath;
+        port._wiredTo = stub;
+      }
+    }
+    // Restore _snappedTo for PipeHole ports
+    if (port._snapPropName) {
+      const snappedPath = port.component?.properties?.[port._snapPropName]?.value?.pathName;
+      if (snappedPath) {
+        port._snappedTo = { pathName: snappedPath };
+      }
+    }
+  }
+
+  return builder;
 }
 
 // ── Attach two ports (wire + snap) ──────────────────────────────────
 function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   if (!saveState) throw new Error('No save loaded');
 
-  const srcMachine = getMachine(sourceIndex);
-  const tgtMachine = getMachine(targetIndex);
+  const srcMachine = getEntity(sourceIndex);
+  const tgtMachine = getEntity(targetIndex);
 
   const srcPort = srcMachine.port(sourcePort);
   const tgtPort = tgtMachine.port(targetPort);
@@ -468,7 +492,7 @@ function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
     // from=srcMachine (mobile), to=tgtMachine (fixed, adapts topTransform)
     tgtMachine.attachLift(targetPort, srcPort);
   } else {
-    tgtPort.attach(srcPort);
+    srcPort.attach(tgtPort);
   }
 
   // Update connection state in entityData for both entities
@@ -486,8 +510,8 @@ function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
 function wirePorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   if (!saveState) throw new Error('No save loaded');
 
-  const srcMachine = getMachine(sourceIndex);
-  const tgtMachine = getMachine(targetIndex);
+  const srcMachine = getEntity(sourceIndex);
+  const tgtMachine = getEntity(targetIndex);
 
   const srcPort = srcMachine.port(sourcePort);
   const tgtPort = tgtMachine.port(targetPort);
@@ -557,8 +581,8 @@ function updateEntityConnections(entityIndex) {
 // ── Create a belt between two ports ──────────────────────────────────
 function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const ConveyorBelt = require('../../lib/logistic/ConveyorBelt');
-  const srcMachine = getMachine(fromIdx);
-  const tgtMachine = getMachine(toIdx);
+  const srcMachine = getEntity(fromIdx);
+  const tgtMachine = getEntity(toIdx);
   const srcPort = srcMachine.port(fromPort);
   const tgtPort = tgtMachine.port(toPort);
 
@@ -607,6 +631,110 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   return { beltId, beltIndex, instanceName: belt.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
 }
 
+// ── Create a pipe between two ports ─────────────────────────────────
+function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
+  const Pipe = require('../../lib/logistic/Pipe');
+  const srcMachine = getEntity(fromIdx);
+  const tgtMachine = getEntity(toIdx);
+  const srcPort = srcMachine.port(fromPort);
+  const tgtPort = tgtMachine.port(toPort);
+
+  const pipe = Pipe.create(
+    { pos: { ...srcPort.pos }, dir: srcPort.dir ? { ...srcPort.dir } : null },
+    { pos: { ...tgtPort.pos }, dir: tgtPort.dir ? { ...tgtPort.dir } : null },
+    typeof tier === 'number' ? tier : 2,
+  );
+
+  // Inject pipe into save
+  const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
+    saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
+  ) || Object.keys(saveState.save.levels)[0];
+  const mainLevel = saveState.save.levels[mainLevelKey];
+  const allObjs = pipe.allObjects();
+  mainLevel.objects.push(...allObjs);
+  saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
+  saveState.entities.push(pipe.entity);
+
+  const compByName = new Map();
+  for (const obj of allObjs) {
+    if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
+  }
+  const { item, classUpdate, isNewClass } = buildSingleEntityItem(pipe.entity, saveState.entityData, compByName);
+  if (isNewClass) {
+    saveState.entityData.classNames = classUpdate.classNames;
+    saveState.entityData.clearance = classUpdate.clearance;
+    saveState.entityData.portLayouts = classUpdate.portLayouts;
+  }
+  saveState.items.push({ type: 'entity', entity: pipe.entity });
+  const pipeIndex = saveState.items.length - 1;
+  saveState.entityData.entities.push(item);
+
+  // Wire: source → pipe conn0, pipe conn1 → target
+  const pipeConn0 = pipe.port(Pipe.Ports.CONN0);
+  const pipeConn1 = pipe.port(Pipe.Ports.CONN1);
+  pipeConn0.attach(srcPort);
+  pipeConn1.attach(tgtPort);
+
+  updateEntityConnections(fromIdx);
+  updateEntityConnections(toIdx);
+  updateEntityConnections(pipeIndex);
+
+  const pipeId = `_pipe_${fromIdx}_${toIdx}`;
+  console.log(`Created pipe ${pipeId} index=${pipeIndex} between ${fromIdx}:${fromPort} → ${toIdx}:${toPort}`);
+  return { beltId: pipeId, beltIndex: pipeIndex, instanceName: pipe.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
+}
+
+// ── Insert entity onto a spline (belt/pipe), cutting it in two ──────
+function insertOnSpline(entityIndex, splineIndex, position, reverse) {
+  const ConveyorBelt = require('../../lib/logistic/ConveyorBelt');
+  const Pipe = require('../../lib/logistic/Pipe');
+
+  const inserter = getEntity(entityIndex);
+  const splineEntity = getEntity(splineIndex);
+
+  let newSpline;
+  if (inserter.attachBelt && splineEntity instanceof ConveyorBelt) {
+    newSpline = inserter.attachBelt(splineEntity, position);
+  } else if (inserter.attachPipe && splineEntity instanceof Pipe) {
+    newSpline = inserter.attachPipe(splineEntity, position, reverse);
+  } else {
+    throw new Error(`Cannot insert ${inserter.constructor.name} on ${splineEntity.constructor.name}`);
+  }
+
+  // Inject newSpline (belt2/pipe2) into save
+  const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
+    saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
+  ) || Object.keys(saveState.save.levels)[0];
+  const mainLevel = saveState.save.levels[mainLevelKey];
+  const allObjs = newSpline.allObjects();
+  mainLevel.objects.push(...allObjs);
+  saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
+  saveState.entities.push(newSpline.entity);
+
+  const compByName = new Map();
+  for (const obj of allObjs) {
+    if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
+  }
+  const { item, classUpdate, isNewClass } = buildSingleEntityItem(newSpline.entity, saveState.entityData, compByName);
+  if (isNewClass) {
+    saveState.entityData.classNames = classUpdate.classNames;
+    saveState.entityData.clearance = classUpdate.clearance;
+    saveState.entityData.portLayouts = classUpdate.portLayouts;
+  }
+  saveState.items.push({ type: 'entity', entity: newSpline.entity });
+  const newSplineIndex = saveState.items.length - 1;
+  saveState.entityData.entities.push(item);
+
+  // Update connections and viewer items for all 3 entities
+  updateEntityConnections(entityIndex);
+  updateEntityConnections(splineIndex);
+  updateEntityConnections(newSplineIndex);
+
+  const newSplineId = `_spline_${entityIndex}_${splineIndex}`;
+  console.log(`Inserted ${inserter.constructor.name} on spline index=${splineIndex}, new spline index=${newSplineIndex}`);
+  return { newSplineId, newSplineIndex, instanceName: newSpline.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
+}
+
 // ── Ensure a minimal saveState exists (for edit without save) ──────
 function ensureSaveState() {
   if (saveState) return;
@@ -618,6 +746,7 @@ function ensureSaveState() {
     save: { levels: { Persistent_Level: level } },
     items: [],
     entities: [],
+    lwInstances: [],
     allObjects: [],
     mainLevel: level,
     entityData: { classNames: [], clearance: {}, entities: [], portLayouts: {} },
@@ -716,6 +845,20 @@ function editEntities(batch) {
   if (batch.connections) {
     try {
       for (const conn of batch.connections) {
+        if (conn.on !== undefined) {
+          // Insertion: insert entity onto a spline (belt/pipe), cutting it in two
+          const entityIdx = idMap[conn.from];
+          const splineIdx = idMap[conn.on];
+          if (entityIdx === undefined) throw new Error(`Unknown entity id "${conn.from}" in insertion`);
+          if (splineIdx === undefined) throw new Error(`Unknown entity id "${conn.on}" in insertion`);
+          const pos = conn.position || saveState.items[entityIdx].entity.transform.translation;
+          const result = insertOnSpline(entityIdx, splineIdx, pos, conn.reverse);
+          idMap[result.newSplineId] = result.newSplineIndex;
+          added.push({ id: result.newSplineId, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+          connectionResults.push({ from: conn.from, on: conn.on, newSpline: result.newSplineId });
+          continue;
+        }
+
         const [fromId, fromPort] = conn.from.split(':');
         const [toId, toPort] = conn.to.split(':');
         const fromIdx = idMap[fromId];
@@ -729,6 +872,12 @@ function editEntities(batch) {
           idMap[result.beltId] = result.beltIndex;
           added.push({ id: result.beltId, index: result.beltIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
           connectionResults.push({ from: conn.from, to: conn.to, belt: result.beltId });
+        } else if (conn.pipe) {
+          // Auto-create a pipe between the two ports
+          const result = createPipeBetween(fromIdx, fromPort, toIdx, toPort, conn.pipe);
+          idMap[result.beltId] = result.beltIndex;
+          added.push({ id: result.beltId, index: result.beltIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+          connectionResults.push({ from: conn.from, to: conn.to, pipe: result.beltId });
         } else {
           const result = attachPorts(fromIdx, fromPort, toIdx, toPort);
           connectionResults.push({ from: conn.from, to: conn.to, ...result });
@@ -892,4 +1041,4 @@ function serializeSave() {
   return Buffer.concat([headerBuf, ...bodyChunks]);
 }
 
-module.exports = { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, deleteEntities, injectBlueprint, addEntity, attachPorts, wirePorts, editEntities, getPlayerPosition, setPlayerPosition, serializeSave };
+module.exports = { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, getHeightmapData, deleteEntities, injectBlueprint, addEntity, attachPorts, wirePorts, insertOnSpline, editEntities, getPlayerPosition, setPlayerPosition, serializeSave };
