@@ -1,171 +1,139 @@
 {
-  "description": "API POST /api/game/edit — créer, modifier, supprimer des entités et les connecter",
+  "description": "Guide complet de l'éditeur d'entités — créer, inspecter, connecter, modifier, supprimer",
   "endpoint": "POST /api/game/edit",
-  "request": {
-    "anchor": "Position absolue {x,y,z} ou relative caméra {fromCamera: distance_uu}. Toutes les positions d'entités sont relatives à l'anchor.",
-    "rotation": "Yaw global en degrés (optionnel). Tourne toutes les positions relatives autour de l'anchor et s'ajoute aux rotations individuelles.",
-    "entities": {
-      "add": "{id, type, position} — crée une entité. id = alias local réutilisable dans connections. type = alias wiki. position relative à l'anchor.",
-      "alias": "{id, index} — crée un alias sur une entité existante sans la modifier. Permet de la référencer dans connections.",
-      "modify": "{index, position?, rotation?, properties?} — modifie une entité existante.",
-      "delete": "{index, deleted:true} — soft delete (le slot devient null, indices stables)."
+  "workflow": [
+    "1. Inspecter la zone : GET /api/game/entity/:index pour voir les ports et positions des entités existantes",
+    "2. Consulter les pages wiki des types à utiliser (ex: ?page=constructor) pour connaître les noms de ports",
+    "3. Construire le batch JSON : anchor + entities[] + connections[]",
+    "4. Envoyer POST /api/game/edit avec le batch",
+    "5. Vérifier le résultat : added[], updated[], deleted[], connections[]"
+  ],
+  "units": "100 UU = 1 mètre. Une fondation 8m = 800 UU. Toutes les coordonnées sont en Unreal Engine space.",
+  "inspect": {
+    "GET /api/game/entity/:index": {
+      "description": "Détail d'une entité existante. Utiliser AVANT de connecter pour connaître les ports world-space et l'état des connexions.",
+      "response": {
+        "className": "Nom court (ex: Build_ConstructorMk1_C)",
+        "transform": "{translation: {x,y,z}, rotation: {x,y,z,w}}",
+        "clearance": "[{min:{x,y,z}, max:{x,y,z}}] ou null",
+        "ports": "[{name, pos, dir, flow, type}] — positions world-space des ports",
+        "splineLength": "Longueur en UU (belt, pipe, rail) ou absent",
+        "properties": "Recette, inventaire, etc.",
+        "components": "Composants avec connexions"
+      }
     },
-    "connections": {
-      "ids": "IMPORTANT : from, to, on utilisent exclusivement les id déclarés dans entities[]. Pour cibler une entité existante, la déclarer d'abord comme alias : {id:\"belt1\", index:42}.",
-      "direct": "{from:\"id:port\", to:\"id:port\"} — connexion directe. Le port \"from\" snappe sur \"to\". \"from\" doit être mobile (belt/pipe/lift ou splitter/merger/junction/pump vierge sur endpoint spline).",
-      "belt": "{from:\"id:port\", to:\"id:port\", belt:tier} — auto-crée un belt (tier 1-6) entre les deux ports. Les deux ports peuvent être fixes.",
-      "pipe": "{from:\"id:port\", to:\"id:port\", pipe:tier} — auto-crée un pipe (tier 1-2) entre les deux ports pipe. Les deux ports peuvent être fixes.",
-      "insertion": "{from:\"id\", on:\"id\", position:{x,y,z}} — insère l'entité \"from\" (splitter/merger/junction/pump vierge) sur le belt/pipe \"on\", coupe la spline en deux. position = point de coupure projeté sur la spline.",
-      "portNames_fixed": "Noms de ports des entités fixes : voir la page wiki de chaque entité (ex: Input0, Output0 pour un constructor).",
-      "portNames_virtual": "Noms de ports des entités virtuelles : belt=ConveyorAny0(input)/ConveyorAny1(output), pipe=PipelineConnection0/PipelineConnection1, lift=bottom/top (polarisés par la première connexion — voir page wiki lift)."
+    "GET /api/viewer/camera": {
+      "description": "Position et orientation de la caméra du viewer",
+      "response": "{ position: {x,y,z}, yaw, pitch } en coordonnées Unreal"
     }
   },
-  "snap_rules": [
-    "belt/pipe/lift/track : peuvent snapper sur n'importe quel port compatible",
-    "splitter/merger (vierges) : snappent uniquement sur endpoints de belt ou lift",
-    "junction/pump (vierges) : snappent uniquement sur endpoints de pipe",
-    "producers/extracteurs : ports fixes — utiliser belt:tier ou pipe:tier pour connecter deux entités fixes",
-    "Après sa première connexion, un splitter/merger/junction/pump devient fixe"
-  ],
-  "behavior": {
-    "positions": "Les positions des entités sont relatives à l'anchor. La rotation globale tourne les positions dans le plan XY autour de l'anchor.",
-    "rotations": "Rotation individuelle composée avec la rotation globale. Toujours autour de Z.",
-    "rollback": "Si une connexion échoue, toutes les entités ajoutées dans ce batch sont supprimées (rollback atomique).",
-    "no_save_required": "Fonctionne sans save chargée (crée un état minimal en mémoire)."
+  "request": {
+    "anchor": "Position absolue {x,y,z} ou relative caméra {fromCamera: distance_uu}. Toutes les positions d'entités sont relatives à l'anchor.",
+    "rotation": "Yaw global en degrés (optionnel). Tourne toutes les positions relatives autour de l'anchor.",
+    "skipClearance": "true pour désactiver la validation de collision des bounding boxes.",
+    "entities": {
+      "add": "{id, type, position} — type = alias wiki (ex: constructor, splitter, belt). position relative à l'anchor.",
+      "alias": "{id, index} — référence une entité existante sans la modifier. Obligatoire pour la cibler dans connections.",
+      "modify": "{index, position?, rotation?, properties?} — modifie une entité existante.",
+      "delete": "{index, deleted: true} — soft delete (indices stables)."
+    },
+    "connections": {
+      "ids": "IMPORTANT : from, to, on utilisent exclusivement les id déclarés dans entities[]. Pour cibler une entité existante, la déclarer d'abord comme alias.",
+      "direct": "{from:\"id:port\", to:\"id:port\"} — from snappe sur to. from doit être mobile.",
+      "belt": "{from:\"id:port\", to:\"id:port\", belt:tier} — auto-crée un belt (tier 1-6). Les deux ports peuvent être fixes.",
+      "pipe": "{from:\"id:port\", to:\"id:port\", pipe:tier} — auto-crée un pipe (tier 1-2). Les deux ports peuvent être fixes.",
+      "insertion": "{from:\"id\", on:\"id\", position:{x,y,z}} — insère l'entité from (splitter/merger/junction/pump vierge) sur le belt/pipe on, coupe la spline en deux."
+    }
   },
-  "limitations": {
-    "lift_cardinal_only": "Les lifts se snappent uniquement en directions cardinales (±X, ±Y)."
+  "port_names": {
+    "description": "Noms de ports à utiliser dans les connexions. Consulter la page wiki de chaque type pour la liste complète.",
+    "producers": "Input0, Output0 (constructor, smelter). Input0, Input1, Output0 (assembler, foundry). PipeInput0, PipeOutput0 (refinery, packager).",
+    "belt": "ConveyorAny0 (input), ConveyorAny1 (output)",
+    "pipe": "PipelineConnection0, PipelineConnection1",
+    "lift": "bottom, top — bidirectionnels, polarisés par la première connexion (voir page lift)",
+    "splitter": "Input1, Output1, Output2, Output3",
+    "merger": "Input1, Input2, Input3, Output1",
+    "junction": "0, 1, 2, 3 (4 directions, tous type pipe)",
+    "pump": "input, output (type pipe)"
+  },
+  "rules": {
+    "connections": [
+      "Un port belt se connecte uniquement à un port belt, un pipe à un pipe",
+      "Un port input se connecte à un port output (pas input↔input ni output↔output)",
+      "Les connexions sont bidirectionnelles (si A→B alors B→A)",
+      "Deux ports connectés doivent être en opposition (dot product des directions < 0)"
+    ],
+    "snap": [
+      "from = entité mobile qui se repositionne, to = ancre fixe",
+      "belt/pipe/lift/track : peuvent snapper sur n'importe quel port compatible",
+      "splitter/merger (vierges) : snappent uniquement sur endpoints belt/lift — pas sur producer, pole ou support",
+      "junction/pump (vierges) : snappent uniquement sur endpoints pipe — pas sur producer ou support",
+      "producers/extracteurs : ports fixes — utiliser belt:tier ou pipe:tier pour connecter deux entités fixes",
+      "Après première connexion, splitter/merger/junction/pump deviennent fixes",
+      "Les lifts snappent en directions cardinales uniquement (±X, ±Y)"
+    ],
+    "clearance": [
+      "Les bounding boxes des entités ne doivent pas se chevaucher",
+      "Les entités spline (belt, pipe, lift, track) sont exclues du check",
+      "En cas d'overlap : rollback + message listant les collisions",
+      "skipClearance: true pour désactiver la validation"
+    ]
+  },
+  "behavior": {
+    "positions": "Relatives à l'anchor. La rotation globale tourne les positions dans le plan XY autour de l'anchor.",
+    "rollback": "Si une connexion ou un check clearance échoue, toutes les entités ajoutées sont supprimées.",
+    "no_save_required": "Fonctionne sans save chargée (crée un état minimal en mémoire)."
   },
   "examples": {
     "create_2_constructors_with_belt": {
-      "anchor": {
-        "fromCamera": 5000
-      },
+      "description": "Créer deux constructors reliés par un belt Mk6",
+      "anchor": { "fromCamera": 5000 },
       "entities": [
-        {
-          "id": "c1",
-          "type": "constructor",
-          "position": {
-            "x": 0,
-            "y": 0,
-            "z": 0
-          }
-        },
-        {
-          "id": "c2",
-          "type": "constructor",
-          "position": {
-            "x": 1000,
-            "y": 0,
-            "z": 0
-          }
-        }
+        { "id": "c1", "type": "constructor", "position": { "x": 0, "y": 0, "z": 0 } },
+        { "id": "c2", "type": "constructor", "position": { "x": 1000, "y": 0, "z": 0 } }
       ],
       "connections": [
-        {
-          "from": "c1:Output0",
-          "to": "c2:Input0",
-          "belt": 6
-        }
+        { "from": "c1:Output0", "to": "c2:Input0", "belt": 6 }
       ]
     },
     "connect_to_existing_entity": {
-      "description": "Connecter une nouvelle entité à une entité existante (index 42) via un belt",
+      "description": "Connecter un nouveau constructor à une entité existante (index 42) via un belt",
       "entities": [
-        {
-          "id": "existing",
-          "index": 42
-        },
-        {
-          "id": "c1",
-          "type": "constructor",
-          "position": {
-            "x": 1000,
-            "y": 0,
-            "z": 0
-          }
-        }
+        { "id": "existing", "index": 42 },
+        { "id": "c1", "type": "constructor", "position": { "x": 1000, "y": 0, "z": 0 } }
       ],
       "connections": [
-        {
-          "from": "existing:Output0",
-          "to": "c1:Input0",
-          "belt": 6
-        }
+        { "from": "existing:Output0", "to": "c1:Input0", "belt": 6 }
       ]
     },
     "insert_splitter_on_belt": {
       "description": "Insérer un splitter au milieu d'un belt existant (index 42)",
       "entities": [
-        {
-          "id": "belt1",
-          "index": 42
-        },
-        {
-          "id": "s1",
-          "type": "splitter"
-        }
+        { "id": "belt1", "index": 42 },
+        { "id": "s1", "type": "splitter" }
       ],
       "connections": [
-        {
-          "from": "s1",
-          "on": "belt1",
-          "position": {
-            "x": 1000,
-            "y": 2000,
-            "z": 500
-          }
-        }
+        { "from": "s1", "on": "belt1", "position": { "x": 1000, "y": 2000, "z": 500 } }
       ]
     },
     "insert_junction_on_pipe": {
       "description": "Insérer une junction au milieu d'un pipe existant (index 55)",
       "entities": [
-        {
-          "id": "pipe1",
-          "index": 55
-        },
-        {
-          "id": "j1",
-          "type": "pipe-junction"
-        }
+        { "id": "pipe1", "index": 55 },
+        { "id": "j1", "type": "pipe-junction" }
       ],
       "connections": [
-        {
-          "from": "j1",
-          "on": "pipe1",
-          "position": {
-            "x": 2000,
-            "y": 500,
-            "z": 375
-          }
-        }
+        { "from": "j1", "on": "pipe1", "position": { "x": 2000, "y": 500, "z": 375 } }
       ]
     },
     "delete_entity": {
-      "entities": [
-        {
-          "index": 42,
-          "deleted": true
-        }
-      ]
+      "description": "Supprimer une entité existante",
+      "entities": [{ "index": 42, "deleted": true }]
     },
     "move_existing_entity": {
-      "anchor": {
-        "x": 1000,
-        "y": 2000,
-        "z": 500
-      },
-      "entities": [
-        {
-          "index": 42,
-          "position": {
-            "x": 0,
-            "y": 0,
-            "z": 0
-          }
-        }
-      ]
+      "description": "Déplacer une entité existante à une nouvelle position",
+      "anchor": { "x": 1000, "y": 2000, "z": 500 },
+      "entities": [{ "index": 42, "position": { "x": 0, "y": 0, "z": 0 } }]
     }
   }
 }

@@ -4,14 +4,12 @@ Catalogue des types d'entités Satisfactory pour l'API d'édition programmatique
 
 ## Structure
 
-- `_general.json` — règles de positionnement, rotation, connexion de ports
-- `_edit.json` — documentation de l'API POST /api/game/edit
-- `_query.json` — documentation des API de consultation (entity, camera)
+- `_edit.json` — guide complet de l'éditeur : workflow, endpoints, format de requête, règles, exemples
 - Pages entités — générées à la volée par `Builder.wikiPage()`, pas de fichiers JSON
 
 ## Endpoint
 
-`GET /api/wiki` — sans paramètre retourne l'index, avec `?page=<name>` retourne la page.
+`GET /api/wiki` — sans paramètre retourne l'index (avec un guide de démarrage), avec `?page=<name>` retourne la page.
 
 ## Pages entités (dynamiques)
 
@@ -34,6 +32,6 @@ Les pages tiered (belt, lift, miner) ont un tableau `tiers` au lieu de `classNam
 
 Pour ajouter des infos spécifiques à un Builder, overrider `Builder.wikiPage()` (voir `ConveyorLift.wikiPage` pour l'exemple avec la polarisation).
 
-## Pages système (fichiers JSON)
+## Page système (_edit.json)
 
-Les 3 pages système (`_general`, `_edit`, `_query`) restent en fichiers JSON dans ce répertoire. Elles sont relues à chaque requête — éditables sans restart serveur.
+Fichier JSON dans ce répertoire, relu à chaque requête — éditable sans restart serveur. Contient : workflow, inspect endpoints, format de requête, noms de ports, règles (connexions, snap, clearance), exemples.

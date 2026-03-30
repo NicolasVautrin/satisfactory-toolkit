@@ -189,8 +189,9 @@ function buildWikiIndex() {
   });
 
   const pages = {};
-  // System pages first
-  for (const sys of ['_general', '_edit', '_query']) {
+  pages._guide = 'Pour créer/connecter des entités : lire _edit en premier. Pour les ports d\'un type : consulter sa page (ex: ?page=constructor).';
+  // System pages
+  for (const sys of ['_edit']) {
     const filePath = path.join(WIKI_DIR, `${sys}.json`);
     if (fs.existsSync(filePath)) {
       const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
