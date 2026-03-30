@@ -17,33 +17,45 @@ const WIKI_DIR = path.join(__dirname, '..', 'data', 'wiki');
 const registry = Registry.default();
 const aliases = getAliases();
 
-// ── Generate entity pages ─────────────────────────────────────────
-const index = {};
+// ── Group tiered aliases (belt-1..belt-6 → belt, lift-1..lift-6 → lift, etc.) ──
+// Detect pattern: base alias "foo" with tiered aliases "foo-N"
+const tieredGroups = {}; // baseName → [{alias, tier, className, typePath}]
+const standalone = [];   // aliases that are not part of a tiered group
 
 for (const [alias, className] of Object.entries(aliases)) {
   let typePath;
   try { typePath = resolveTypePath(alias); } catch { continue; }
+  const match = alias.match(/^(.+)-(\d+)$/);
+  if (match) {
+    const [, baseName, tier] = match;
+    if (!tieredGroups[baseName]) tieredGroups[baseName] = [];
+    tieredGroups[baseName].push({ alias, tier: Number(tier), className, typePath });
+  } else {
+    // Check if this is the default alias for a tiered group (e.g. "belt" = "belt-6")
+    const hasNumbered = Object.keys(aliases).some(a => a.startsWith(alias + '-'));
+    if (hasNumbered) {
+      // Skip — will be included as "default" in the tiered group
+    } else {
+      standalone.push({ alias, className, typePath });
+    }
+  }
+}
 
+// ── Helper: build page data for a className ──────────────────────
+function buildPageData(className) {
   const Builder = registry.get(className);
   const clearance = clearanceData[className]?.boxes || null;
 
-  // Ports from PORT_LAYOUT or virtual (spline/lift)
   let ports = null;
   let portsVirtual = false;
   if (Builder?.PORT_LAYOUT) {
     ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => ({
-      name,
-      offset: p.offset,
-      dir: p.dir,
-      flow: p.flow,
-      type: p.type,
+      name, offset: p.offset, dir: p.dir, flow: p.flow, type: p.type,
     }));
   } else if (Builder?.getPorts && Builder.getPorts !== require('../lib/shared/Builder').getPorts) {
-    // Builder has a custom getPorts override (spline or lift) — ports are virtual
     portsVirtual = true;
   }
 
-  // Build summary for index
   const dims = clearance?.[0]
     ? `${Math.round(clearance[0].max.x - clearance[0].min.x)}x${Math.round(clearance[0].max.y - clearance[0].min.y)}x${Math.round(clearance[0].max.z - clearance[0].min.z)}`
     : '?';
@@ -58,29 +70,78 @@ for (const [alias, className] of Object.entries(aliases)) {
     if (pipes) portCounts.push(`${pipes} pipe`);
     if (power) portCounts.push(`${power} power`);
   }
-  const summary = portCounts.length > 0
-    ? `${portCounts.join(', ')} — ${dims}`
-    : `${dims}`;
+  const summary = portCounts.length > 0 ? `${portCounts.join(', ')} — ${dims}` : `${dims}`;
 
+  return { Builder, clearance, ports, portsVirtual, summary };
+}
+
+function addVirtualPortInfo(page, className, Builder) {
+  if (Builder?.Ports) {
+    page.portNames = Object.entries(Builder.Ports).map(([, name]) => name);
+    page.portsDescription = 'Ports virtuels calculés depuis les données d\'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space.';
+    if (className.includes('ConveyorLift')) {
+      page.portType = 'belt';
+      page.polarization = {
+        description: 'Les ports bottom/top sont bidirectionnels à la création (flowType = null). La première connexion à un port polarisé fixe la direction du flux.',
+        rules: [
+          'Connecté à un Output (ou ConveyorAny1) → ce port devient INPUT, l\'autre OUTPUT',
+          'Connecté à un Input (ou ConveyorAny0) → ce port devient OUTPUT, l\'autre INPUT',
+          'Deux lifts top↔top ne peuvent se connecter que si leurs polarités sont opposées',
+        ],
+      };
+    }
+  }
+}
+
+// ── Generate entity pages ─────────────────────────────────────────
+const index = {};
+
+// Standalone aliases (no tiers)
+for (const { alias, className, typePath } of standalone) {
+  const { Builder, clearance, ports, portsVirtual, summary } = buildPageData(className);
   const page = {
-    alias,
-    className,
-    typePath,
+    alias, className, typePath, clearance,
+    ports: portsVirtual ? 'virtual' : ports,
+    snapBehavior: Builder?.SNAP_BEHAVIOR || 'Position fixe.',
+  };
+  if (portsVirtual) addVirtualPortInfo(page, className, Builder);
+  fs.writeFileSync(path.join(WIKI_DIR, `${alias}.json`), JSON.stringify(page, null, 2) + '\n');
+  index[alias] = summary;
+}
+
+// Tiered groups → one page per group
+for (const [baseName, tiers] of Object.entries(tieredGroups)) {
+  tiers.sort((a, b) => a.tier - b.tier);
+  // Use the highest tier for ports/clearance (they're all the same)
+  const representative = tiers[tiers.length - 1];
+  const { Builder, clearance, ports, portsVirtual, summary } = buildPageData(representative.className);
+  // Find default alias if it exists (e.g. "belt" → "belt-6")
+  const defaultAlias = aliases[baseName];
+  const defaultTier = defaultAlias ? tiers.find(t => t.className === defaultAlias)?.tier : null;
+  const page = {
+    alias: baseName,
+    tiers: tiers.map(t => ({
+      tier: t.tier,
+      alias: t.alias,
+      className: t.className,
+      typePath: t.typePath,
+      ...(t.tier === defaultTier ? { default: true } : {}),
+    })),
     clearance,
     ports: portsVirtual ? 'virtual' : ports,
     snapBehavior: Builder?.SNAP_BEHAVIOR || 'Position fixe.',
   };
-  if (portsVirtual && Builder?.Ports) {
-    page.portNames = Object.entries(Builder.Ports).map(([alias, name]) => name);
-    page.portsDescription = 'Ports virtuels calculés depuis les données d\'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space.';
-  }
+  if (portsVirtual) addVirtualPortInfo(page, representative.className, Builder);
+  fs.writeFileSync(path.join(WIKI_DIR, `${baseName}.json`), JSON.stringify(page, null, 2) + '\n');
+  index[baseName] = `${tiers.length} tiers — ${summary}`;
+}
 
-  // Write page
-  fs.writeFileSync(
-    path.join(WIKI_DIR, `${alias}.json`),
-    JSON.stringify(page, null, 2) + '\n'
-  );
-  index[alias] = summary;
+// Clean up old per-tier files
+for (const [baseName, tiers] of Object.entries(tieredGroups)) {
+  for (const t of tiers) {
+    const oldFile = path.join(WIKI_DIR, `${t.alias}.json`);
+    if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
+  }
 }
 
 // ── System pages ──────────────────────────────────────────────────
@@ -135,7 +196,7 @@ const edit = {
       pipe: '{from:"id:port", to:"id:port", pipe:tier} — auto-crée un pipe (tier 1-2) entre les deux ports pipe. Les deux ports peuvent être fixes.',
       insertion: '{from:"id", on:"id", position:{x,y,z}} — insère l\'entité "from" (splitter/merger/junction/pump vierge) sur le belt/pipe "on", coupe la spline en deux. position = point de coupure projeté sur la spline.',
       portNames_fixed: 'Noms de ports des entités fixes : voir la page wiki de chaque entité (ex: Input0, Output0 pour un constructor).',
-      portNames_virtual: 'Noms de ports des entités virtuelles : belt=ConveyorAny0/ConveyorAny1, pipe=PipelineConnection0/PipelineConnection1, lift=bottom/top.',
+      portNames_virtual: 'Noms de ports des entités virtuelles : belt=ConveyorAny0(input)/ConveyorAny1(output), pipe=PipelineConnection0/PipelineConnection1, lift=bottom/top (polarisés par la première connexion — voir page wiki lift).',
     },
   },
   snap_rules: [

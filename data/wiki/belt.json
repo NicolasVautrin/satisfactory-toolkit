@@ -1,7 +1,44 @@
 {
   "alias": "belt",
-  "className": "Build_ConveyorBeltMk6_C",
-  "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk6/Build_ConveyorBeltMk6.Build_ConveyorBeltMk6_C",
+  "tiers": [
+    {
+      "tier": 1,
+      "alias": "belt-1",
+      "className": "Build_ConveyorBeltMk1_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk1/Build_ConveyorBeltMk1.Build_ConveyorBeltMk1_C"
+    },
+    {
+      "tier": 2,
+      "alias": "belt-2",
+      "className": "Build_ConveyorBeltMk2_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk2/Build_ConveyorBeltMk2.Build_ConveyorBeltMk2_C"
+    },
+    {
+      "tier": 3,
+      "alias": "belt-3",
+      "className": "Build_ConveyorBeltMk3_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk3/Build_ConveyorBeltMk3.Build_ConveyorBeltMk3_C"
+    },
+    {
+      "tier": 4,
+      "alias": "belt-4",
+      "className": "Build_ConveyorBeltMk4_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk4/Build_ConveyorBeltMk4.Build_ConveyorBeltMk4_C"
+    },
+    {
+      "tier": 5,
+      "alias": "belt-5",
+      "className": "Build_ConveyorBeltMk5_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk5/Build_ConveyorBeltMk5.Build_ConveyorBeltMk5_C"
+    },
+    {
+      "tier": 6,
+      "alias": "belt-6",
+      "className": "Build_ConveyorBeltMk6_C",
+      "typePath": "/Game/FactoryGame/Buildable/Factory/ConveyorBeltMk6/Build_ConveyorBeltMk6.Build_ConveyorBeltMk6_C",
+      "default": true
+    }
+  ],
   "clearance": null,
   "ports": "virtual",
   "snapBehavior": "Recalcule sa spline entre les deux endpoints après connexion.",
