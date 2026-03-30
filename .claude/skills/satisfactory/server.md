@@ -51,12 +51,13 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 | `/api/game/load-file` | POST | Charge un fichier .sav/.cbp depuis le disque (`{ filePath }`) |
 | `/api/game/upload` | POST | Upload et parse un fichier `.sav`, `.cbp` ou `.sbp` (binaire, header `X-Save-Name`) |
 | `/api/game/entities` | GET | Retourne les entity data en mémoire (pour refresh sans re-upload) |
-| `/api/game/entity/:index` | GET | Détails d'une entité (transform, clearance, ports, properties, components) |
+| `/api/game/entity/:index` | GET | Détails d'une entité (transform, clearance, ports world-space, splineLength, properties, components) |
 | `/api/game/export` | POST | Exporte une sélection en blueprint (`{ indices, name }`) |
 | `/api/game/edit` | POST | Endpoint unifié add/update/delete d'entités + connections (fonctionne sans save) |
 | `/api/game/inject-blueprint` | POST | Injecte un blueprint dans la save avec un transform |
 | `/api/game/download` | GET | Télécharge la save modifiée en `_edit.sav` |
 | `/api/game/merge-cbp` | POST | Merge le CBP chargé dans la save |
+| `/api/game/player-position` | GET | Position du joueur `{ success, position: {x,y,z} }` |
 | `/api/game/move-player` | POST | Déplace le joueur dans la save |
 
 ### Wiki (`/api/wiki`)
@@ -191,6 +192,9 @@ Ajouter la route dans `viewer/server.js`. Utiliser `getSaveState()` et `getCbpSt
 Modifier `CATEGORY_PATTERNS` dans `viewer/lib/entityData.js`.
 
 ### Ajouter des ports à un bâtiment
-1. Ajouter `Builder.PORT_LAYOUT = PORTS;` dans le fichier du builder (après `Builder.Ports = ...`)
+1. Le Builder doit hériter de `Builder` (`lib/shared/Builder.js`)
+2. Pour les bâtiments fixes : ajouter `MyBuilder.PORT_LAYOUT = PORTS;` — `getPorts` hérité transforme en world space
+3. Pour les spline-based : override `MyBuilder.getPorts = function(entity) { return Builder._splinePorts(entity, portNames, type); };`
+4. Ancien format : `Builder.PORT_LAYOUT = PORTS;` dans le fichier du builder (après `Builder.Ports = ...`)
 2. Enregistrer le builder dans `lib/Registry.js` si pas déjà fait
 3. Les ports apparaîtront automatiquement dans le viewer

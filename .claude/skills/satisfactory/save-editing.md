@@ -348,6 +348,55 @@ v.rotate(quat)    // rotation complète par quaternion
 v.rotateZ(quat)   // rotation Z uniquement (bâtiments à plat)
 ```
 
+## Builder — Classe de base (`lib/shared/Builder.js`)
+
+Tous les Builders (producteurs, extracteurs, logistique, railway) héritent de `Builder` qui fournit :
+
+- `port(name)` — récupère un FlowPort par nom, throw si inconnu
+- `allObjects()` — retourne `[entity, ...components]` pour injection
+- `static getPorts(entity)` — retourne les ports en **world space** pour une entité existante
+- `static SNAP_BEHAVIOR` — `'Position fixe.'` par défaut
+
+### getPorts(entity) — ports world-space unifiés
+
+Méthode statique pour inspecter les ports d'une entité existante (sans l'instancier) :
+
+```js
+const Registry = require('./lib/Registry');
+const Builder = Registry.default().get('Build_SmelterMk1_C');
+const info = Builder.getPorts(entity);
+// info = {
+//   ports: [{ name, pos: {x,y,z}, dir: {x,y,z}, flow, type }],
+//   splineLength: number | null  // longueur en UU pour belt/pipe/rail
+// }
+```
+
+3 comportements selon le type de Builder :
+- **Builders fixes** (producteurs, extracteurs, splitters...) : transforme `PORT_LAYOUT` (offsets locaux) en world space via rotation quaternion + translation
+- **Builders spline** (ConveyorBelt, Pipe, RailroadTrack) : calcule depuis `mSplineData` — ports aux endpoints de la spline, directions depuis les tangentes, longueur par sampling Hermite
+- **ConveyorLift** : calcule depuis `mTopTransform` via `buildPortsLayout()`
+
+### Héritage
+
+```js
+const Builder = require('../shared/Builder');
+
+class MyBuilder extends Builder {
+  constructor(entity, components) {
+    super(entity, components);
+    // super gère this.entity, this.inst, this.components, this._ports
+  }
+  // port(name) et allObjects() sont hérités
+}
+```
+
+Pour les Builders spline, override `getPorts` avec le helper `_splinePorts` :
+```js
+MyBuilder.getPorts = function(entity) {
+  return Builder._splinePorts(entity, ['PortName0', 'PortName1'], 'belt');
+};
+```
+
 ## FlowPort — Le système de ports
 
 Chaque bâtiment/logistique expose ses connexions via des `FlowPort`. C'est le cœur du système de wiring.
