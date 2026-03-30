@@ -31,7 +31,7 @@ export const CBP_COLOR = new THREE.Color(0x44ffcc);
 export const DEFAULT_BOX_SIZE = 200;
 
 // ── Three.js core ───────────────────────────────────────────
-export const renderer = new THREE.WebGLRenderer({ antialias: true });
+export const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 
 export const scene = new THREE.Scene();
@@ -39,6 +39,8 @@ scene.background = new THREE.Color(0x1a1a1a);
 
 export const camera = new THREE.PerspectiveCamera(60, 1, 100, 2000000);
 camera.up.set(0, 0, 1);
+window._camera = camera;
+window._scene = scene;
 
 // ── Lights ──────────────────────────────────────────────────
 scene.add(new THREE.AmbientLight(0xffffff, 1.5));

@@ -1,10 +1,23 @@
-import { renderer, resize } from './scene.js';
+import { renderer, resize, camera } from './scene.js';
 import { getSaveData, getCbpData } from './entities.js';
-import { selectedIndices, pickAt, pickPortAt, pickSceneryAt, pickRect, toggleSelection, addSelection } from './selection.js';
+import { selectedIndices, pickAt, pickPortAt, pickEnvironmentAt, pickRect, toggleSelection, addSelection } from './selection.js';
 
 const CLICK_THRESHOLD = 5;
+let lastPickInfo = '';
+let _statusCb = null;
 
-export function initMouseHandlers({ propsPanel }) {
+export function getStatusText() {
+  const cx = -camera.position.x | 0;
+  const cy = camera.position.y | 0;
+  const cz = camera.position.z | 0;
+  const cam = `Cam (${cx}, ${cy}, ${cz})`;
+  return lastPickInfo ? `${cam} | ${lastPickInfo}` : cam;
+}
+
+function notifyStatus() { if (_statusCb) _statusCb(getStatusText()); }
+
+export function initMouseHandlers({ propsPanel, toolbar }) {
+  _statusCb = (text) => toolbar.updateStatus(text);
   let dragStart = null;
   let isDragging = false;
   let pointerDownPos = null;
@@ -89,11 +102,27 @@ export function initMouseHandlers({ propsPanel }) {
           const portEntityIdx = pickPortAt(x, y);
           const inspectIdx = portEntityIdx >= 0 ? portEntityIdx : idx;
           if (inspectIdx >= 0) {
-            propsPanel.show(inspectIdx, getSaveData() || getCbpData());
+            const data = getSaveData() || getCbpData();
+            propsPanel.show(inspectIdx, data);
+            if (data) {
+              const ent = data.entities[inspectIdx];
+              if (ent) lastPickInfo = `${ent.class} #${inspectIdx} | UE (${ent.x|0}, ${ent.y|0}, ${ent.z|0})`;
+            }
+            notifyStatus();
             requestAnimationFrame(resize);
           } else {
-            // Try scenery pick (console log only)
-            pickSceneryAt(x, y);
+            const envHit = pickEnvironmentAt(x, y);
+            if (envHit) {
+              const p = envHit.point;
+              const ue = `UE (${-p.x|0}, ${p.y|0}, ${p.z|0})`;
+              if (envHit.type === 'landscape') {
+                lastPickInfo = `Landscape ${envHit.key} | ${ue}`;
+              } else {
+                const label = envHit.type.charAt(0).toUpperCase() + envHit.type.slice(1);
+                lastPickInfo = `${label} ${envHit.name} #${envHit.instanceId} | ${ue}`;
+              }
+            }
+            notifyStatus();
             propsPanel.hide();
             requestAnimationFrame(resize);
           }

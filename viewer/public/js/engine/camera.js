@@ -8,9 +8,34 @@ export const camState = {
   rotateSpeed: 0.003,
   panSpeed: 1.5,
   flyStep: 5000,
+  adaptive: false,
 };
 
-// ── Rotation ────────────────────────────────────────────────
+// ── Change notification ─────────────────────────────────────
+let _onChanged = null;
+export function onCameraChanged(cb) { _onChanged = cb; }
+
+function notifyChanged() {
+  requestRender();
+  if (_onChanged) _onChanged();
+}
+
+// Adaptive sensitivity: scale values based on camera height
+// Reference height = 5000 (where effective = base)
+function hRatio() { return Math.max(0.02, Math.abs(camera.position.z) / 5000); }
+export function effectiveFlyStep()    { return camState.adaptive ? camState.flyStep * Math.pow(hRatio(), 0.6) : camState.flyStep; }
+export function effectivePanSpeed()   { return camState.adaptive ? camState.panSpeed * Math.pow(hRatio(), 0.6) : camState.panSpeed; }
+export function effectiveRotSpeed()   { return camState.adaptive ? camState.rotateSpeed * Math.pow(hRatio(), 0.3) : camState.rotateSpeed; }
+
+// ── Reset camera (also available from console) ──────────────
+window._camState = camState;
+window._resetCamera = (x, y, z, yaw, pitch) => {
+  camera.position.set(x, y, z);
+  camState.yaw = yaw ?? -Math.PI / 4;
+  camState.pitch = pitch ?? -Math.PI / 6;
+  updateCameraRotation();
+};
+
 export function updateCameraRotation() {
   const dir = new THREE.Vector3(
     Math.cos(camState.pitch) * Math.sin(camState.yaw),
@@ -19,7 +44,7 @@ export function updateCameraRotation() {
   );
   const target = camera.position.clone().add(dir);
   camera.lookAt(target);
-  requestRender();
+  notifyChanged();
 }
 
 // ── Fit camera to bounding box ──────────────────────────────
@@ -40,6 +65,7 @@ export function fitCamera(entities, gameToViewer) {
   camera.getWorldDirection(initDir);
   camState.yaw = Math.atan2(initDir.x, initDir.y);
   camState.pitch = Math.asin(initDir.z);
+  notifyChanged();
 }
 
 // ── Pointer controls ────────────────────────────────────────
@@ -55,9 +81,9 @@ export function initCameraControls() {
     e.preventDefault();
     const fwd = new THREE.Vector3();
     camera.getWorldDirection(fwd);
-    const step = camState.flyStep * (e.deltaY < 0 ? 1 : -1);
+    const step = effectiveFlyStep() * (e.deltaY < 0 ? 1 : -1);
     camera.position.addScaledVector(fwd, step);
-    requestRender();
+    notifyChanged();
   }, { passive: false });
 
   dom.addEventListener('pointerdown', (e) => {
@@ -74,20 +100,19 @@ export function initCameraControls() {
     lastMouse = { x: e.clientX, y: e.clientY };
 
     if (activeButton === 0) {
-      camState.yaw -= dx * camState.rotateSpeed;
-      camState.pitch -= dy * camState.rotateSpeed;
+      camState.yaw -= dx * effectiveRotSpeed();
+      camState.pitch -= dy * effectiveRotSpeed();
       camState.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, camState.pitch));
       updateCameraRotation();
-      requestRender();
     } else if (activeButton === 2) {
       const fwd = new THREE.Vector3();
       camera.getWorldDirection(fwd);
       const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
       const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
-      const scale = camState.panSpeed * camState.flyStep / 500;
+      const scale = effectivePanSpeed() * effectiveFlyStep() / 500;
       camera.position.addScaledVector(right, -dx * scale);
       camera.position.addScaledVector(up, dy * scale);
-      requestRender();
+      notifyChanged();
     }
   });
 
@@ -106,6 +131,7 @@ export function saveCameraState(key) {
     x: camera.position.x, y: camera.position.y, z: camera.position.z,
     yaw: camState.yaw, pitch: camState.pitch,
     flyStep: camState.flyStep, panSpeed: camState.panSpeed, rotateSpeed: camState.rotateSpeed,
+    adaptive: camState.adaptive,
   };
   localStorage.setItem(`viewer-cam-${key}`, JSON.stringify(state));
 }
@@ -122,6 +148,7 @@ export function restoreCameraState(key) {
     if (s.flyStep) camState.flyStep = s.flyStep;
     if (s.panSpeed) camState.panSpeed = s.panSpeed;
     if (s.rotateSpeed) camState.rotateSpeed = s.rotateSpeed;
+    if (s.adaptive !== undefined) camState.adaptive = s.adaptive;
     updateCameraRotation();
     return true;
   } catch { return false; }

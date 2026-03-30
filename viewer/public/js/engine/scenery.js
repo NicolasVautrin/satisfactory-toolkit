@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { renderer, scene, gameToViewer, requestRender } from './scene.js';
-import { getLandscapeMap, getLandscapeBounds } from './landscape.js';
+import { getLandscapeMap, getViewerLandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
 // ── GLB to viewer transform (same as meshCatalog) ──────────
@@ -57,6 +57,7 @@ const RESOURCE_COLORS = {
 export function setSceneryVisible(visible) {
   sceneryVisible = visible;
   sceneryGroup.visible = visible;
+  for (const child of sceneryGroup.children) child.visible = visible;
   requestRender();
 }
 
@@ -360,7 +361,7 @@ function isRockMesh(name) {
 // ── Material with landscape projection (uses global texture from landscape.js) ──
 function createLandscapeProjectionMaterial() {
   const landscapeMap = getLandscapeMap();
-  const landscapeBounds = getLandscapeBounds();
+  const landscapeBounds = getViewerLandscapeBounds();
   if (!landscapeMap || !landscapeBounds) return null;
   const b = landscapeBounds;
 

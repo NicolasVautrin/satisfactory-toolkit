@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { renderer, scene, camera, resize, initRenderer, consumeRender } from './engine/scene.js';
-import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState } from './engine/camera.js';
+import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState, onCameraChanged } from './engine/camera.js';
 import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, rebuildSaveScene, setCatVisible, setCbpVisible, setPortsVisible, setRenderMode } from './engine/entities.js';
 import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable } from './engine/meshCatalog.js';
 import { selectedIndices, onSelectionChange, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildLandscape, setLandscapeVisible, layoutLoaded, updateStreaming } from './engine/landscape.js';
 import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
+import { buildWater, setWaterVisible } from './engine/water.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
 import { gameToViewer } from './engine/scene.js';
 
@@ -17,7 +18,7 @@ import { createPropsPanel } from './ui/propsPanel.js';
 import { isPlacementActive, startPlacement, stopPlacement, handleKey as placementKey, getTransform } from './engine/placement.js';
 import { initUpload, uploadFile } from './upload.js';
 import { downloadBlob, downloadBase64, filenameFromResponse } from './download.js';
-import { initMouseHandlers } from './engine/mouse.js';
+import { initMouseHandlers, getStatusText } from './engine/mouse.js';
 import { initWebSocket } from './webSocket.js';
 
 // ── DOM refs ────────────────────────────────────────────────
@@ -41,13 +42,6 @@ function camKey() {
 
 // ── Status update ───────────────────────────────────────────
 function updateStatus() {
-  const saveCount = getSaveData() ? getSaveData().entities.length : 0;
-  const cbpCount = getCbpData() ? getCbpData().entities.length : 0;
-  const parts = [];
-  if (saveCount) parts.push(`${saveCount} save`);
-  if (cbpCount) parts.push(`${cbpCount} cbp`);
-  const total = parts.length ? parts.join(' + ') + ' entities' : 'No data';
-  toolbar.updateStatus(`${total} | ${selectedIndices.size} selected | Click to select, Shift+drag for box select`);
   toolbar.setButtonStates({
     merge: !!(getSaveData() && getCbpData()) && !isPlacementActive(),
     refresh: true,
@@ -149,6 +143,7 @@ createFilters(toolbar.layersMenu, {
   onCbpToggle: setCbpVisible,
   onLandscapeToggle: setLandscapeVisible,
   onSceneryToggle: setSceneryVisible,
+  onWaterToggle: setWaterVisible,
   onGridToggle: setGridVisible,
   onPortsToggle: setPortsVisible,
 });
@@ -160,6 +155,12 @@ const controls = createControls(toolbar.cameraMenu, {
     if (dir === 0) return getGridSpacing();
     return adjustGridSpacing(dir);
   },
+});
+
+// ── Camera change notification ─────────────────────────────
+onCameraChanged(() => {
+  toolbar.updateStatus(getStatusText());
+  controls.updateAll();
 });
 
 // ── UI: Selection panel ─────────────────────────────────────
@@ -316,11 +317,12 @@ initRenderer(canvasEl);
 initCameraControls();
 // Restore camera position immediately (before save loads)
 restoreCameraState('save');
+controls.updateAll();
 buildGrid();
 updateStatus();
 
 // Mouse interaction
-initMouseHandlers({ propsPanel });
+initMouseHandlers({ propsPanel, toolbar });
 
 // Upload (drag & drop)
 initUpload({ onSaveLoaded, onCbpLoaded, setLoading });
@@ -353,7 +355,7 @@ initWebSocket({
 
 // Load landscape base plane, then scenery, then enable landscape tile streaming
 buildLandscape()
-  .then(() => buildScenery())
+  .then(() => Promise.all([buildScenery(), buildWater()]))
   .then(() => { window._sceneryReady = true; layoutLoaded(); })
   .catch(err => console.warn('[Landscape/Scenery]', err.message));
 

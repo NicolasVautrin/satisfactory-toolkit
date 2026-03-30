@@ -30,6 +30,9 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 
 ## API REST
 
+> **Note** : Toutes les coordonnées échangées avec le serveur (REST et WebSocket) sont en **Unreal Engine space** (le client convertit Viewer ↔ UE en interne).
+
+
 ### Viewer (`/api/viewer/`)
 
 | Endpoint | Méthode | Description |

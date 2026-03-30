@@ -15,12 +15,13 @@ function saveState(state) {
 
 // ── Layers dropdown menu ────────────────────────────────────
 
-export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onLandscapeToggle, onSceneryToggle, onGridToggle, onPortsToggle }) {
+export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onLandscapeToggle, onSceneryToggle, onWaterToggle, onGridToggle, onPortsToggle }) {
   const saved = loadState() || {};
   const state = {
     cats: saved.cats || [true, true, true, true, true, true, true, true],
     landscape: saved.landscape !== undefined ? saved.landscape : (saved.terrain !== undefined ? saved.terrain : true),
     scenery: saved.scenery !== undefined ? saved.scenery : true,
+    water: saved.water !== undefined ? saved.water : true,
     grid: saved.grid !== undefined ? saved.grid : true,
     ports: saved.ports || false,
     cbp: saved.cbp !== undefined ? saved.cbp : true,
@@ -84,6 +85,22 @@ export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onL
   });
   menuDropdown.appendChild(sceneryLabel);
   if (!state.scenery) onSceneryToggle(false);
+
+  // Water toggle
+  const waterLabel = document.createElement('label');
+  waterLabel.className = 'menu-toggle';
+  waterLabel.innerHTML = `
+    <input type="checkbox" ${state.water ? 'checked' : ''}>
+    <span class="menu-dot" style="background:#2266cc"></span>
+    Water
+  `;
+  waterLabel.querySelector('input').addEventListener('change', (e) => {
+    state.water = e.target.checked;
+    persist();
+    onWaterToggle(e.target.checked);
+  });
+  menuDropdown.appendChild(waterLabel);
+  if (!state.water) onWaterToggle(false);
 
   // Grid toggle
   const gridLabel = document.createElement('label');

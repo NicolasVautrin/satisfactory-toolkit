@@ -85,6 +85,13 @@ body {
   display: inline-block; flex-shrink: 0;
 }
 
+.ctrl-btn {
+  display: block; width: calc(100% - 28px); margin: 4px 14px;
+  padding: 4px 8px; background: #444; color: #ddd;
+  border: 1px solid #555; cursor: pointer; font-size: 12px;
+}
+.ctrl-btn:hover { background: #555; }
+
 /* Sensitivity controls inside dropdown */
 .ctrl-row {
   display: flex; align-items: center; gap: 4px;
@@ -105,6 +112,11 @@ body {
 .ctrl-row .ctrl-val {
   min-width: 40px; text-align: center;
   font-size: 10px; color: #aaa;
+}
+.ctrl-row .ctrl-eff {
+  min-width: 30px; text-align: left;
+  font-size: 10px; color: #44aaff;
+  margin-left: 4px;
 }
 
 /* ── Toolbar right section ───────────────────────────────── */

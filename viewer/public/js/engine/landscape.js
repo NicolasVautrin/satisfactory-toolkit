@@ -18,7 +18,7 @@ const tileIndex = new Map();          // "col,row" → TileDescriptor
 let basePlane = null;
 let landscapeMap = null;              // THREE.Texture (assembled JPEG)
 let landscapeMaterial = null;         // MeshLambertMaterial shared by all tiles
-let landscapeBounds = null;           // { minX, maxX, minY, maxY } in viewer space
+let viewerLandscapeBounds = null;     // { minX, maxX, minY, maxY } in viewer space
 let landscapeVisible = true;
 let streamingEnabled = false;         // set by layoutLoaded()
 let batchInFlight = false;
@@ -27,7 +27,12 @@ let lastCamX = Infinity, lastCamY = Infinity;
 const loadedMeshes = [];              // all loaded tile meshes (for visibility toggle)
 
 // ── Exports ────────────────────────────────────────────────
-export function getLandscapeBounds() { return landscapeBounds; }
+export function getViewerLandscapeBounds() { return viewerLandscapeBounds; }
+export function getUELandscapeBounds() {
+  const b = viewerLandscapeBounds;
+  if (!b) return null;
+  return { minX: -b.maxX, maxX: -b.minX, minY: b.minY, maxY: b.maxY };
+}
 export function getLandscapeMap() { return landscapeMap; }
 export function getLoadedLandscapeMeshes() { return loadedMeshes; }
 
@@ -62,7 +67,7 @@ export async function buildLandscape() {
   }
   loadedMeshes.length = 0;
   tileIndex.clear();
-  landscapeBounds = null;
+  viewerLandscapeBounds = null;
   landscapeMaterial = null;
   streamingEnabled = false;
   batchInFlight = false;
@@ -103,7 +108,7 @@ export async function buildLandscape() {
   const ueMinY = gMinY - TILE_PROXY_OFFSET;
   const ueMaxY = gMaxY - TILE_PROXY_OFFSET;
 
-  landscapeBounds = {
+  viewerLandscapeBounds = {
     minX: -ueMaxX, maxX: -ueMinX,
     minY: ueMinY, maxY: ueMaxY,
   };
@@ -137,18 +142,18 @@ export async function buildLandscape() {
   });
 
   // 4. Create base plane with UVs mapped from viewer-space to UE image coords
-  const width = landscapeBounds.maxX - landscapeBounds.minX;
-  const height = landscapeBounds.maxY - landscapeBounds.minY;
+  const width = viewerLandscapeBounds.maxX - viewerLandscapeBounds.minX;
+  const height = viewerLandscapeBounds.maxY - viewerLandscapeBounds.minY;
   const planeGeom = new THREE.PlaneGeometry(width, height);
   const uvAttr = planeGeom.getAttribute('uv');
   const posAttr = planeGeom.getAttribute('position');
-  const cx = (landscapeBounds.minX + landscapeBounds.maxX) / 2;
-  const cy = (landscapeBounds.minY + landscapeBounds.maxY) / 2;
+  const cx = (viewerLandscapeBounds.minX + viewerLandscapeBounds.maxX) / 2;
+  const cy = (viewerLandscapeBounds.minY + viewerLandscapeBounds.maxY) / 2;
   for (let i = 0; i < posAttr.count; i++) {
     const vx = posAttr.getX(i) + cx;
     const vy = posAttr.getY(i) + cy;
-    const u = (vx - landscapeBounds.minX) / (landscapeBounds.maxX - landscapeBounds.minX);
-    const v = (vy - landscapeBounds.minY) / (landscapeBounds.maxY - landscapeBounds.minY);
+    const u = (vx - viewerLandscapeBounds.minX) / (viewerLandscapeBounds.maxX - viewerLandscapeBounds.minX);
+    const v = (vy - viewerLandscapeBounds.minY) / (viewerLandscapeBounds.maxY - viewerLandscapeBounds.minY);
     uvAttr.setXY(i, u, v);
   }
   uvAttr.needsUpdate = true;
@@ -159,7 +164,7 @@ export async function buildLandscape() {
   });
   basePlane = new THREE.Mesh(planeGeom, planeMat);
   basePlane.renderOrder = -3;
-  basePlane.position.set(cx, cy, -10);
+  basePlane.position.set(cx, cy, -30000);
   basePlane.visible = landscapeVisible;
   scene.add(basePlane);
 
@@ -329,7 +334,7 @@ function generateWorldUVs(geometry, meshPosX, meshPosY) {
   const pos = geometry.getAttribute('position');
   if (!pos) return;
 
-  const b = landscapeBounds;
+  const b = viewerLandscapeBounds;
   const rangeX = b.maxX - b.minX || 1;
   const rangeY = b.maxY - b.minY || 1;
   const uvs = new Float32Array(pos.count * 2);
@@ -342,6 +347,29 @@ function generateWorldUVs(geometry, meshPosX, meshPosY) {
   }
 
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+}
+
+// ── Picking ───────────────────────────────────────────────
+export function pickLandscapeAt(raycaster) {
+  if (loadedMeshes.length === 0) return null;
+  const intersects = raycaster.intersectObjects(loadedMeshes, false);
+  if (intersects.length === 0) return null;
+
+  const hit = intersects[0];
+  const mesh = hit.object;
+  // Find tile descriptor by mesh reference
+  for (const [key, tile] of tileIndex) {
+    if (tile.mesh === mesh) {
+      return {
+        key,
+        worldMinX: tile.worldMinX, worldMinY: tile.worldMinY,
+        worldMaxX: tile.worldMaxX, worldMaxY: tile.worldMaxY,
+        point: hit.point,
+        distance: hit.distance,
+      };
+    }
+  }
+  return null;
 }
 
 // ── Helper: load image as promise ──────────────────────────

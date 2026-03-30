@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { camera, renderer, gameToViewer, CAT_NAMES, HIGHLIGHT_COLOR, requestRender } from './scene.js';
 import { getSaveData, getDisplayMeshes, getPortMeshes, getCatVisible, isPortsVisible } from './entities.js';
+import { pickLandscapeAt } from './landscape.js';
 
 // ── State ───────────────────────────────────────────────────
 export const selectedIndices = new Set();
@@ -60,24 +61,46 @@ export function pickPortAt(cssX, cssY) {
   return -1;
 }
 
-// ── Scenery picking (info only) ────────────────────────────
-export function pickSceneryAt(cssX, cssY) {
-  const sceneryGroup = window._sceneryGroup;
-  if (!sceneryGroup || !sceneryGroup.visible) return null;
-
+// ── Environment picking (landscape + water + scenery — closest hit) ──
+export function pickEnvironmentAt(cssX, cssY) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = (cssX / rect.width) * 2 - 1;
   pointer.y = -(cssY / rect.height) * 2 + 1;
-
   raycaster.setFromCamera(pointer, camera);
-  const intersects = raycaster.intersectObjects(sceneryGroup.children, false);
-  if (intersects.length === 0) return null;
 
-  const hit = intersects[0];
+  const candidates = [];
+
+  const landscapeHit = pickLandscapeAt(raycaster);
+  if (landscapeHit) candidates.push({ distance: landscapeHit.distance, type: 'landscape', data: landscapeHit });
+
+  const sceneryGroup = window._sceneryGroup;
+  if (sceneryGroup?.visible) {
+    const hits = raycaster.intersectObjects(sceneryGroup.children, false);
+    if (hits.length > 0) candidates.push({ distance: hits[0].distance, type: 'scenery', raw: hits[0] });
+  }
+
+  const waterGroup = window._waterGroup;
+  if (waterGroup?.visible) {
+    const hits = raycaster.intersectObjects(waterGroup.children, false);
+    if (hits.length > 0) candidates.push({ distance: hits[0].distance, type: 'water', raw: hits[0] });
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.distance - b.distance);
+  const best = candidates[0];
+
+  if (best.type === 'landscape') {
+    const p = best.data.point;
+    console.log(`[pick landscape] tile=${best.data.key} UE=(${-p.x|0}, ${p.y|0}, ${p.z|0})`);
+    return { type: 'landscape', key: best.data.key, point: p, distance: best.distance };
+  }
+
+  const hit = best.raw;
   const name = hit.object.name || 'unknown';
   const instanceId = hit.instanceId ?? 0;
-  console.log(`[pick scenery] mesh=${name} instance=${instanceId}/${hit.object.count} dist=${Math.round(hit.distance)}`);
-  return { name, instanceId, distance: hit.distance };
+  const p = hit.point;
+  console.log(`[pick ${best.type}] mesh=${name} instance=${instanceId}/${hit.object.count} dist=${Math.round(hit.distance)} UE=(${-p.x|0}, ${p.y|0}, ${p.z|0})`);
+  return { type: best.type, name, instanceId, point: p, distance: best.distance };
 }
 
 // ── Box select ──────────────────────────────────────────────

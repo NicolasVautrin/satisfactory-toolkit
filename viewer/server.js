@@ -197,6 +197,18 @@ app.get('/api/viewer/scenery', (req, res) => {
   res.json({ ...data, streaming, availableMeshes, availableTextures });
 });
 
+app.get('/api/viewer/water', (req, res) => {
+  const placementsPath = path.join(MESHES_DIR, 'water_placements.json');
+  const raw = fs.existsSync(placementsPath) ? JSON.parse(fs.readFileSync(placementsPath, 'utf8')) : {};
+  const placements = raw.placements || (Array.isArray(raw) ? raw : []);
+  const rivers = raw.rivers || [];
+  const waterDir = path.join(MESHES_DIR, 'water');
+  const meshes = fs.existsSync(waterDir)
+    ? fs.readdirSync(waterDir).filter(f => f.endsWith('.glb')).map(f => f.replace('.glb', ''))
+    : [];
+  res.json({ placements, rivers, meshes });
+});
+
 app.get('/api/viewer/landscape-data', (req, res) => {
   const landscapeDir = path.join(MESHES_DIR, 'landscape');
   const glbDir = path.join(landscapeDir, 'glb');
