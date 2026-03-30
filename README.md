@@ -57,15 +57,16 @@ Hold **Shift** for fine movement (10u / 1deg), **Ctrl** for grid snap (800u / 90
 
 ### Menus
 
-- **File** - Open, Refresh, Merge CBP, Download Save
-- **Display** - Toggle entity categories (Producers, Extractors, Belts, Pipes, Power, Railway, Structural, Other)
-- **Layers** - Toggle terrain, scenery, water, grid, ports, CBP
-- **Camera** - Zoom/Pan/Rot sensitivity, adaptive sensitivity, grid spacing
+| File | Display | Layers | Camera |
+|:----:|:-------:|:------:|:------:|
+| ![File](docs/menu-file.png) | ![Display](docs/menu-display.png) | ![Layers](docs/menu-layers.png) | ![Camera](docs/menu-camera.png) |
+| Open, Refresh, Merge CBP, Download Save | Rendering mode: Boxes or LOD level (0-5) | Toggle entity categories, terrain, scenery, water, grid, ports, CBP | Zoom/Pan/Rot sensitivity, adaptive mode, grid spacing, GridBox |
 
-### Panels
+### Selection Panel
 
-- **Properties (left)** - Entity details, ports, Copy JSON, GridBox toggle
-- **Selection (right)** - Export Blueprint, Delete, Clear, grouped class list
+![Selection](docs/panel-selection.png)
+
+Export selection as blueprint, delete entities, grouped class list with counts and color-coded categories.
 
 ## Asset Extractor (pak-tool)
 
