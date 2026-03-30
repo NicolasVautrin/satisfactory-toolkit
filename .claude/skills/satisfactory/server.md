@@ -67,14 +67,10 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 | `/api/wiki` | GET | Index du wiki — liste des pages avec description courte |
 | `/api/wiki?page=<name>` | GET | Page wiki — détail d'un type d'entité ou page système |
 
-Pages système : `_general` (règles positionnement/connexion), `_edit` (doc API edit), `_query` (doc API consultation).
-Pages entités : un alias par type (ex: `constructor`, `splitter`, `belt-6`, `lift`).
+Pages système : `_general` (règles positionnement/connexion), `_edit` (doc API edit), `_query` (doc API consultation) — fichiers JSON dans `data/wiki/`.
+Pages entités : générées à la volée depuis `Builder.wikiPage()` — un alias par type (ex: `constructor`, `splitter`, `belt`, `lift`).
 
-Chaque page entité contient : `className`, `typePath`, `clearance` (bounding boxes), `ports` (offset/dir/flow/type en espace local), `snapBehavior`.
-
-Les fichiers JSON sont dans `data/wiki/` et relus à chaque requête (pas de cache) — éditables sans restart serveur.
-
-Régénération : `node tools/generateEntityWiki.js`
+Chaque page entité contient : `className`, `typePath`, `clearance` (bounding boxes), `ports` (offset/dir/flow/type en espace local), `snapBehavior`. Les pages tiered (belt, lift, miner) incluent un tableau `tiers`.
 
 ### Système
 

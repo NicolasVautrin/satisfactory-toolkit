@@ -1,8 +1,0 @@
-{
-  "alias": "power-line",
-  "className": "Build_PowerLine_C",
-  "typePath": "/Game/FactoryGame/Buildable/Factory/PowerLine/Build_PowerLine.Build_PowerLine_C",
-  "clearance": null,
-  "ports": null,
-  "snapBehavior": "Câblage uniquement, pas de snap physique."
-}

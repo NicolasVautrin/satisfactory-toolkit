@@ -1,7 +1,7 @@
 /**
  * Generate entity wiki JSON files in data/wiki/ from:
  * - viewer/lib/typeAliases.js (alias → className mapping)
- * - lib/Registry.js (PORT_LAYOUT per Builder)
+ * - lib/Registry.js (Builder.wikiPage per Builder)
  * - data/clearanceData.json (bounding boxes)
  *
  * Usage: node tools/generateEntityWiki.js
@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const { getAliases, resolveTypePath } = require('../viewer/lib/typeAliases');
 const Registry = require('../lib/Registry');
+const Builder = require('../lib/shared/Builder');
 const clearanceData = require('../data/clearanceData.json');
 
 const WIKI_DIR = path.join(__dirname, '..', 'data', 'wiki');
@@ -18,7 +19,6 @@ const registry = Registry.default();
 const aliases = getAliases();
 
 // ── Group tiered aliases (belt-1..belt-6 → belt, lift-1..lift-6 → lift, etc.) ──
-// Detect pattern: base alias "foo" with tiered aliases "foo-N"
 const tieredGroups = {}; // baseName → [{alias, tier, className, typePath}]
 const standalone = [];   // aliases that are not part of a tiered group
 
@@ -31,64 +31,9 @@ for (const [alias, className] of Object.entries(aliases)) {
     if (!tieredGroups[baseName]) tieredGroups[baseName] = [];
     tieredGroups[baseName].push({ alias, tier: Number(tier), className, typePath });
   } else {
-    // Check if this is the default alias for a tiered group (e.g. "belt" = "belt-6")
     const hasNumbered = Object.keys(aliases).some(a => a.startsWith(alias + '-'));
-    if (hasNumbered) {
-      // Skip — will be included as "default" in the tiered group
-    } else {
+    if (!hasNumbered) {
       standalone.push({ alias, className, typePath });
-    }
-  }
-}
-
-// ── Helper: build page data for a className ──────────────────────
-function buildPageData(className) {
-  const Builder = registry.get(className);
-  const clearance = clearanceData[className]?.boxes || null;
-
-  let ports = null;
-  let portsVirtual = false;
-  if (Builder?.PORT_LAYOUT) {
-    ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => ({
-      name, offset: p.offset, dir: p.dir, flow: p.flow, type: p.type,
-    }));
-  } else if (Builder?.getPorts && Builder.getPorts !== require('../lib/shared/Builder').getPorts) {
-    portsVirtual = true;
-  }
-
-  const dims = clearance?.[0]
-    ? `${Math.round(clearance[0].max.x - clearance[0].min.x)}x${Math.round(clearance[0].max.y - clearance[0].min.y)}x${Math.round(clearance[0].max.z - clearance[0].min.z)}`
-    : '?';
-  const portCounts = [];
-  if (portsVirtual) {
-    portCounts.push('virtual');
-  } else if (ports) {
-    const belts = ports.filter(p => p.type === 'belt').length;
-    const pipes = ports.filter(p => p.type === 'pipe').length;
-    const power = ports.filter(p => p.type === 'power').length;
-    if (belts) portCounts.push(`${belts} belt`);
-    if (pipes) portCounts.push(`${pipes} pipe`);
-    if (power) portCounts.push(`${power} power`);
-  }
-  const summary = portCounts.length > 0 ? `${portCounts.join(', ')} — ${dims}` : `${dims}`;
-
-  return { Builder, clearance, ports, portsVirtual, summary };
-}
-
-function addVirtualPortInfo(page, className, Builder) {
-  if (Builder?.Ports) {
-    page.portNames = Object.entries(Builder.Ports).map(([, name]) => name);
-    page.portsDescription = 'Ports virtuels calculés depuis les données d\'instance (spline ou mTopTransform). Utiliser GET /api/game/entity/:index pour obtenir les positions world-space.';
-    if (className.includes('ConveyorLift')) {
-      page.portType = 'belt';
-      page.polarization = {
-        description: 'Les ports bottom/top sont bidirectionnels à la création (flowType = null). La première connexion à un port polarisé fixe la direction du flux.',
-        rules: [
-          'Connecté à un Output (ou ConveyorAny1) → ce port devient INPUT, l\'autre OUTPUT',
-          'Connecté à un Input (ou ConveyorAny0) → ce port devient OUTPUT, l\'autre INPUT',
-          'Deux lifts top↔top ne peuvent se connecter que si leurs polarités sont opposées',
-        ],
-      };
     }
   }
 }
@@ -98,46 +43,39 @@ const index = {};
 
 // Standalone aliases (no tiers)
 for (const { alias, className, typePath } of standalone) {
-  const { Builder, clearance, ports, portsVirtual, summary } = buildPageData(className);
-  const page = {
-    alias, className, typePath, clearance,
-    ports: portsVirtual ? 'virtual' : ports,
-    snapBehavior: Builder?.SNAP_BEHAVIOR || 'Position fixe.',
-  };
-  if (portsVirtual) addVirtualPortInfo(page, className, Builder);
-  fs.writeFileSync(path.join(WIKI_DIR, `${alias}.json`), JSON.stringify(page, null, 2) + '\n');
-  index[alias] = summary;
+  const BuilderClass = registry.get(className) || Builder;
+  const wikiPage = (BuilderClass.wikiPage || Builder.wikiPage).call(
+    BuilderClass, { alias, className, typePath, clearanceData },
+  );
+  fs.writeFileSync(path.join(WIKI_DIR, `${alias}.json`), JSON.stringify(wikiPage, null, 2) + '\n');
+  index[alias] = Builder.wikiSummary(wikiPage);
 }
 
 // Tiered groups → one page per group
 for (const [baseName, tiers] of Object.entries(tieredGroups)) {
   tiers.sort((a, b) => a.tier - b.tier);
-  // Use the highest tier for ports/clearance (they're all the same)
   const representative = tiers[tiers.length - 1];
-  const { Builder, clearance, ports, portsVirtual, summary } = buildPageData(representative.className);
-  // Find default alias if it exists (e.g. "belt" → "belt-6")
+  const BuilderClass = registry.get(representative.className) || Builder;
   const defaultAlias = aliases[baseName];
   const defaultTier = defaultAlias ? tiers.find(t => t.className === defaultAlias)?.tier : null;
-  const page = {
-    alias: baseName,
-    tiers: tiers.map(t => ({
-      tier: t.tier,
-      alias: t.alias,
-      className: t.className,
-      typePath: t.typePath,
-      ...(t.tier === defaultTier ? { default: true } : {}),
-    })),
-    clearance,
-    ports: portsVirtual ? 'virtual' : ports,
-    snapBehavior: Builder?.SNAP_BEHAVIOR || 'Position fixe.',
-  };
-  if (portsVirtual) addVirtualPortInfo(page, representative.className, Builder);
-  fs.writeFileSync(path.join(WIKI_DIR, `${baseName}.json`), JSON.stringify(page, null, 2) + '\n');
-  index[baseName] = `${tiers.length} tiers — ${summary}`;
+
+  const wikiPage = (BuilderClass.wikiPage || Builder.wikiPage).call(
+    BuilderClass, { alias: baseName, className: representative.className, typePath: representative.typePath, clearanceData },
+  );
+  // Replace single className/typePath with tiers array
+  delete wikiPage.className;
+  delete wikiPage.typePath;
+  wikiPage.tiers = tiers.map(t => ({
+    tier: t.tier, alias: t.alias, className: t.className, typePath: t.typePath,
+    ...(t.tier === defaultTier ? { default: true } : {}),
+  }));
+
+  fs.writeFileSync(path.join(WIKI_DIR, `${baseName}.json`), JSON.stringify(wikiPage, null, 2) + '\n');
+  index[baseName] = `${tiers.length} tiers — ${Builder.wikiSummary(wikiPage)}`;
 }
 
 // Clean up old per-tier files
-for (const [baseName, tiers] of Object.entries(tieredGroups)) {
+for (const [, tiers] of Object.entries(tieredGroups)) {
   for (const t of tiers) {
     const oldFile = path.join(WIKI_DIR, `${t.alias}.json`);
     if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);

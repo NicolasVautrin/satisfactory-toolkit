@@ -136,16 +136,89 @@ app.get('/api/game/entities', (req, res) => {
 
 // ── Wiki ──────────────────────────────────────────────────────────
 const WIKI_DIR = path.join(__dirname, '..', 'data', 'wiki');
+const { getAliases, resolveTypePath } = require('./lib/typeAliases');
+const wikiRegistry = require('../lib/Registry').default();
+const wikiBuilder = require('../lib/shared/Builder');
+const wikiClearance = require('../data/clearanceData.json');
+
+function buildWikiPage(alias) {
+  const allAliases = getAliases();
+  const className = allAliases[alias];
+  if (!className) return null;
+
+  // Check if this is a tiered group (e.g. "belt" has "belt-1".."belt-6")
+  const tieredAliases = Object.entries(allAliases)
+    .filter(([a]) => a.match(new RegExp(`^${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`)))
+    .map(([a, cls]) => {
+      const tier = Number(a.match(/-(\d+)$/)[1]);
+      let typePath; try { typePath = resolveTypePath(a); } catch { return null; }
+      return { alias: a, tier, className: cls, typePath };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.tier - b.tier);
+
+  let typePath; try { typePath = resolveTypePath(alias); } catch { return null; }
+  const BuilderClass = wikiRegistry.get(className) || wikiBuilder;
+  const page = (BuilderClass.wikiPage || wikiBuilder.wikiPage).call(
+    BuilderClass, { alias, className, typePath, clearanceData: wikiClearance },
+  );
+
+  if (tieredAliases.length > 0) {
+    delete page.className;
+    delete page.typePath;
+    const defaultTier = tieredAliases.find(t => t.className === className)?.tier;
+    page.tiers = tieredAliases.map(t => ({
+      tier: t.tier, alias: t.alias, className: t.className, typePath: t.typePath,
+      ...(t.tier === defaultTier ? { default: true } : {}),
+    }));
+  }
+
+  return page;
+}
+
+function buildWikiIndex() {
+  const allAliases = getAliases();
+  // Find base aliases (not tiered like "belt-1")
+  const baseAliases = Object.keys(allAliases).filter(a => {
+    if (a.match(/-\d+$/)) {
+      const base = a.replace(/-\d+$/, '');
+      return !allAliases[base]; // only include if no base alias exists
+    }
+    return true;
+  });
+
+  const pages = {};
+  // System pages first
+  for (const sys of ['_general', '_edit', '_query']) {
+    const filePath = path.join(WIKI_DIR, `${sys}.json`);
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      pages[sys] = data.description || sys;
+    }
+  }
+  // Entity pages
+  for (const alias of baseAliases.sort()) {
+    const page = buildWikiPage(alias);
+    if (page) pages[alias] = wikiBuilder.wikiSummary(page);
+  }
+  return { pages };
+}
+
 app.get('/api/wiki', (req, res) => {
   const page = req.query.page;
-  if (!page) {
-    const indexPath = path.join(WIKI_DIR, '_index.json');
-    if (!fs.existsSync(indexPath)) return res.status(404).json({ error: 'Wiki not generated' });
-    return res.json(JSON.parse(fs.readFileSync(indexPath, 'utf8')));
+  if (!page) return res.json(buildWikiIndex());
+
+  // System pages: read from file
+  if (page.startsWith('_')) {
+    const filePath = path.join(WIKI_DIR, `${page}.json`);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: `Unknown page: ${page}` });
+    return res.json(JSON.parse(fs.readFileSync(filePath, 'utf8')));
   }
-  const filePath = path.join(WIKI_DIR, `${page}.json`);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: `Unknown page: ${page}` });
-  res.json(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+
+  // Entity pages: generate on the fly
+  const wikiPage = buildWikiPage(page);
+  if (!wikiPage) return res.status(404).json({ error: `Unknown page: ${page}` });
+  res.json(wikiPage);
 });
 
 // ── Inspect entity ─────────────────────────────────────────────────
