@@ -89,7 +89,7 @@ function pixelToGame(px, py) {
 
 ## Données de la map — mapObjects.json
 
-Le fichier `data/mapObjects.json` contient toutes les positions 3D des objets statiques de la map. Documentation complète dans `save-editing.md` section "Données du jeu".
+Le fichier `data/mapObjects.json` contient toutes les positions 3D des objets statiques de la map. Documentation complète dans `satisfactory-lib.md` section "Données du jeu".
 
 ### Accès rapide
 

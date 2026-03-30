@@ -18,10 +18,15 @@ Pour toute question sur les trains, le réseau ferroviaire, les signaux, les sta
 
 Lis le fichier `${CLAUDE_SKILL_DIR}/trains.md` pour obtenir toutes les informations sur les trains.
 
-### Manipulation de saves (satisfactoryLib)
-Pour toute question sur l'édition de saves, la création programmatique de bâtiments, la logistique (belts, pipes, power), les extracteurs, les producteurs, les fondations, ou le système de ports/wiring :
+### satisfactoryLib (manipulation de saves)
+Pour toute question sur la librairie satisfactoryLib, la structure des saves, les classes Builder/FlowPort, la création programmatique de bâtiments, la logistique (belts, pipes, lifts, power), les extracteurs, les producteurs, les fondations, ou le système de ports/wiring :
 
-Lis le fichier `${CLAUDE_SKILL_DIR}/save-editing.md` pour obtenir toutes les informations sur la librairie.
+Lis le fichier `${CLAUDE_SKILL_DIR}/satisfactory-lib.md` pour obtenir toutes les informations sur la librairie.
+
+### Éditeur d'entités (API edit)
+Pour toute question sur l'endpoint POST /api/game/edit, le format de requête (anchor, entities, connections), le système d'alias, les types de connexions (directe, belt auto, pipe auto, insertion), les règles de snap, la polarité des lifts, ou les noms de ports :
+
+Lis le fichier `${CLAUDE_SKILL_DIR}/edit.md` pour obtenir toutes les informations sur l'éditeur.
 
 ### Carte topographique et données de la map
 Pour toute question sur la carte SVG, les données de nodes/collectibles, ou la génération de visualisations cartographiques :
