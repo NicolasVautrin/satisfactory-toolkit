@@ -1,4 +1,4 @@
-/planok# Satisfactory Toolkit
+# Satisfactory Toolkit
 
 Node.js + C# toolkit for Satisfactory 1.0 save editing, blueprint manipulation, logistics optimization, 3D visualization, and game asset extraction.
 
@@ -15,11 +15,50 @@ Node.js + C# toolkit for Satisfactory 1.0 save editing, blueprint manipulation, 
 
 ## Quick Start
 
-```bash
-# Install dependencies
-npm install
+### Prerequisites
 
-# Launch the 3D viewer
+- **Node.js** (via nvm4w or other)
+- **.NET 8 SDK** (for pak-tool asset extraction)
+- **Satisfactory** installed (Steam or Epic)
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Extract game assets (first time only)
+
+Build and run pak-tool to extract meshes, textures, terrain, and water from the game files:
+
+```bash
+cd tools/pak-tool
+dotnet build
+
+# Extract all assets (~8 min)
+bash extract-assets.sh
+
+# Or with a custom Satisfactory install path:
+bash extract-assets.sh "/path/to/Satisfactory/FactoryGame/Content/Paks"
+```
+
+Default Paks path: `C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Content\Paks`
+
+This generates `data/viewer-assets/` with:
+
+| Directory | Content |
+|-----------|---------|
+| `catalog/lod0..5/` | Building meshes (GLB, 6 LOD levels) |
+| `scenery/lod0..4/` | Scenery meshes (GLB) + `textures/` |
+| `scenery/scenery_layout.json` | Actor placements (Persistent_Level + streaming cells) |
+| `landscape/glb/` + `img/` | Terrain tiles (simplified GLB + baked textures) |
+| `landscape/landscape_layout.json` | Tile world coordinates |
+| `water/glb/` | Water plane meshes (GLB) |
+| `water/water_layout.json` | Water placements + river splines |
+
+### 3. Launch the viewer
+
+```bash
 node viewer/server.js
 # Open http://localhost:3000
 ```
@@ -68,58 +107,60 @@ Hold **Shift** for fine movement (10u / 1deg), **Ctrl** for grid snap (800u / 90
 
 Export selection as blueprint, delete entities, grouped class list with counts and color-coded categories.
 
-## Asset Extractor (pak-tool)
-
-C# (.NET 8) tool using CUE4Parse to extract assets from Satisfactory `.pak` files.
+## pak-tool Reference
 
 ```bash
 cd tools/pak-tool
 
-# Explore exports by regex
-dotnet run -- list-exports --regexp "smelter" --limit 10
+# Full extraction (recommended)
+bash extract-assets.sh
 
-# Deep dump with JSONPath filtering
+# Individual commands
+dotnet run -- export catalog          # Building meshes → catalog/lod0..5/
+dotnet run -- export scenery          # Scenery meshes + placements → scenery/
+dotnet run -- export landscape --ratio 0.15  # Terrain tiles → landscape/
+dotnet run -- export water            # Water meshes + placements → water/
+
+# Exploration
+dotnet run -- list-exports --regexp "smelter" --limit 10
 dotnet run -- export-details --regexp "BP_River.*::SplineComponent" --jsonpath "$..SplineCurves"
 
-# Export building meshes (GLB)
-dotnet run -- export buildings -p 8
-
-# Export terrain tiles
-dotnet run -- export landscape -p 8 --ratio 0.15
-
-# Export water placements + river splines
-dotnet run -- export water
+# Options
+dotnet run -- export catalog --game-dir "/path/to/Paks"  # Custom install path
+dotnet run -- export catalog --output "/path/to/output"   # Custom output directory
 ```
 
 ## Project Structure
 
 ```
 satisfactory-toolkit/
-+-- satisfactoryLib.js          # Core library (entity/component creators, spline, wiring)
-+-- data/
-|   +-- clearanceData.json      # Bounding boxes for 495 buildings
-|   +-- gameData.json           # Items, recipes, buildings
-|   +-- mapObjects.json         # Resource nodes, wells, slugs positions
-|   +-- resourceConfig.json     # Miner/extractor config for LP solver
-+-- lib/
-|   +-- shared/                 # Vector3D, Quaternion, Transform, FlowPort
-|   +-- extractors/             # Miner, WaterExtractor, OilPump, Fracking
-|   +-- logistic/               # ConveyorBelt/Pole/Merger, Pipe/Support/Junction
-|   +-- producers/              # Constructor, Smelter, Manufacturer, etc.
-|   +-- railway/                # BeltStation, TrainStation, Locomotive
-|   +-- structural/             # Foundation (lightweight buildables)
-|   +-- Blueprint.js            # Blueprint composite (create + fromFile)
-|   +-- Registry.js             # TypePath -> Builder mapping
-+-- viewer/
-|   +-- server.js               # Express API + save loader
-|   +-- lib/                    # Server modules (saveManager, editor, viewerEntityFactory, merge, spline)
-|   +-- public/                 # Client (Three.js, ES modules)
-|       +-- js/engine/          # Scene, camera, entities, landscape, scenery, water
-|       +-- js/ui/              # Controls, filters, toolbar, panels
-+-- tools/
-|   +-- pak-tool/               # C# asset extractor (CUE4Parse)
-|   +-- solver/                 # LP solver (sink points), station optimizer
-+-- test/                       # Tests (testEdit.js)
+├── satisfactoryLib.js          # Core library (entity/component creators, spline, wiring)
+├── data/
+│   ├── clearanceData.json      # Bounding boxes for 495 buildings
+│   ├── gameData.json           # Items, recipes, buildings
+│   ├── mapObjects.json         # Resource nodes, wells, slugs positions
+│   └── resourceConfig.json     # Miner/extractor config for LP solver
+├── lib/
+│   ├── shared/                 # Vector3D, Quaternion, Transform, FlowPort, Clearance
+│   ├── extractors/             # Miner, WaterExtractor, OilPump, Fracking
+│   ├── logistic/               # ConveyorBelt/Pole/Merger, Pipe/Support/Junction
+│   ├── producers/              # Constructor, Smelter, Manufacturer, etc.
+│   ├── railway/                # BeltStation, TrainStation, Locomotive
+│   ├── structural/             # Foundation (lightweight buildables)
+│   ├── Blueprint.js            # Blueprint composite (create + fromFile)
+│   └── Registry.js             # TypePath → Builder mapping
+├── viewer/
+│   ├── server.js               # Express API server
+│   ├── lib/                    # saveManager, editor, viewerEntityFactory, merge, spline
+│   └── public/                 # Client (Three.js, ES modules)
+│       ├── js/engine/          # Scene, camera, catalog, entities, landscape, scenery, water
+│       └── js/ui/              # Controls, filters, toolbar, panels
+├── tools/
+│   ├── pak-tool/               # C# asset extractor (CUE4Parse, .NET 8)
+│   │   ├── extract-assets.sh   # Full extraction script
+│   │   └── lib/                # CUE4Parse source + oodle-data-shared.dll
+│   └── solver/                 # LP solver (sink points), station optimizer
+└── test/                       # Tests (testEdit.js)
 ```
 
 ## Save Editing
@@ -145,7 +186,7 @@ Always save to a `_edit` suffixed file, never overwrite the original.
 ## Sink Points Optimization
 
 ```bash
-node tools/analyzeSinkPoints.js
+node tools/solver/analyzeSinkPoints.js
 ```
 
 LP solver maximizing sink points/min with power and resource constraints. Outputs `.xlsx` spreadsheet and `.graphml` graph (for yEd).

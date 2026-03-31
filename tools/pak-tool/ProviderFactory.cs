@@ -9,11 +9,15 @@ namespace PakTool;
 
 public static class ProviderFactory
 {
-    public static readonly string GameDir =
+    public static readonly string DefaultGameDir =
         @"C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Content\Paks";
 
+    public static string? GameDirOverride;
+
+    public static string GameDir => GameDirOverride ?? DefaultGameDir;
+
     public static readonly string OodleDll =
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "oodle-data-shared.dll");
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "lib", "oodle-data-shared.dll");
 
     public static readonly string ToolkitDir =
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));

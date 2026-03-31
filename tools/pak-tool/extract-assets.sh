@@ -3,6 +3,10 @@
 # Requires: .NET 8, Satisfactory installed
 # Output: data/viewer-assets/
 #
+# Usage: bash extract-assets.sh [/path/to/Paks]
+#   Optional argument: path to Satisfactory Paks directory
+#   Default: C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Content\Paks
+#
 # Structure:
 #   catalog/lod0..lod5/   Building meshes (GLB, 6 LOD levels)
 #   scenery/lod0..lod4/   Scenery meshes (GLB) + textures/
@@ -16,20 +20,25 @@
 set -e
 cd "$(dirname "$0")"
 
+GAME_DIR_ARG=""
+if [ -n "$1" ]; then
+  GAME_DIR_ARG="--game-dir $1"
+fi
+
 echo "=== Catalog (building meshes) ==="
-time dotnet run -- export catalog
+time dotnet run -- export catalog $GAME_DIR_ARG
 
 echo ""
 echo "=== Scenery (meshes + textures + layout) ==="
-time dotnet run -- export scenery
+time dotnet run -- export scenery $GAME_DIR_ARG
 
 echo ""
 echo "=== Landscape (terrain tiles + textures) ==="
-time dotnet run -- export landscape --ratio 0.15
+time dotnet run -- export landscape --ratio 0.15 $GAME_DIR_ARG
 
 echo ""
 echo "=== Water (meshes + layout) ==="
-time dotnet run -- export water
+time dotnet run -- export water $GAME_DIR_ARG
 
 echo ""
 echo "Done. Assets in data/viewer-assets/"

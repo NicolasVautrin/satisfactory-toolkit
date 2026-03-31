@@ -15,8 +15,11 @@ var offset = ParseInt(args, "--offset") ?? 0;
 var limit = ParseInt(args, "--limit") ?? 50;
 var outputDir = ParseString(args, "--output")
     ?? Path.Combine(ProviderFactory.ToolkitDir, "data", "viewer-assets");
+var gameDir = ParseString(args, "--game-dir");
+if (gameDir != null) ProviderFactory.GameDirOverride = gameDir;
 
 Log.Information("Output: {OutputDir}", outputDir);
+Log.Information("Game: {GameDir}", ProviderFactory.GameDir);
 
 var mode = args.Length > 0 ? args[0] : "help";
 
@@ -119,6 +122,7 @@ switch (mode)
           --offset N                    Pagination offset (default: 0)
           --limit N                     Pagination limit (default: 50)
           --output <dir>                Output directory (default: data/viewer-assets/)
+          --game-dir <dir>              Satisfactory Paks directory (default: Steam install)
           -p N                          Parallelism for bulk exports (default: CPU count)
         """);
         break;
