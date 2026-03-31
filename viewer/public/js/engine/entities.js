@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { scene, camera, gameToViewer, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
-import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog } from './catalog.js';
+import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;
@@ -258,7 +258,8 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
 
   for (let i = 0; i < entities.length; i++) {
     const e = entities[i];
-    const ei = e._ei !== undefined ? e._ei : i; // allow override for incremental
+    if (!e) continue;
+    const ei = i;
 
     // Splines first (belts/pipes always use spline rendering)
     if (e.boxes) {
@@ -372,13 +373,22 @@ function clearMeshes(meshArray) {
 }
 
 // ── Build scenes ────────────────────────────────────────────
+let pendingEdits = [];
+
 export function buildSaveScene(data) {
   saveEntityData = data;
+  pendingRefresh = false;
   clearMeshes(displayMeshes);
   clearMeshes(portMeshes);
   buildEntityMeshes(data.entities, data.classNames, data.clearance, data.portLayouts, displayMeshes, portMeshes, 'save');
   requestRender();
-  console.log('[Ports] built for', data.entities.length, 'entities');
+
+  // Replay any edits that arrived before data was ready
+  if (pendingEdits.length > 0) {
+    console.log(`[Edit] replaying ${pendingEdits.length} queued edits`);
+    for (const msg of pendingEdits) applyEditResult(msg);
+    pendingEdits = [];
+  }
 
   // Async mesh loading (if render mode uses meshes)
   if (currentRenderMode !== 'boxes') {
@@ -405,27 +415,28 @@ export function buildCbpScene(data) {
   requestRender();
 }
 
-// ── Batch edit result (single pass over meshes) ─────────────
+// ── Batch edit result ───────────────────────────────────────
 
-const _zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+let pendingRefresh = false;
 
-export function applyEditResult(msg) {
-  if (!saveEntityData) return;
+export function applyEditResult(msg, { refreshFn } = {}) {
+  if (!saveEntityData) {
+    pendingEdits.push(msg);
+    // Trigger a data refresh to bootstrap saveEntityData (once)
+    if (!pendingRefresh && refreshFn) {
+      pendingRefresh = true;
+      refreshFn();
+    }
+    return;
+  }
 
-  // Collect indices to remove from display meshes (deleted + updated)
-  const removeSet = new Set(msg.deleted);
-  for (const ent of msg.updated) removeSet.add(ent.index);
-
-  // Collect indices needing port rebuild (deleted + updated + connections)
-  const portRemoveSet = new Set(removeSet);
-  for (const conn of msg.connections) portRemoveSet.add(conn.index);
-
-  // 1. Apply classUpdates (cumulative — take last)
+  // 1. Apply class metadata updates
   for (const ent of [...msg.updated, ...msg.added]) {
     if (ent.classUpdate) {
       saveEntityData.classNames = ent.classUpdate.classNames;
       saveEntityData.clearance = ent.classUpdate.clearance;
       saveEntityData.portLayouts = ent.classUpdate.portLayouts;
+      updateClassNames(ent.classUpdate.classNames);
     }
   }
 
@@ -440,50 +451,13 @@ export function applyEditResult(msg) {
     if (e) e.cn = conn.connections;
   }
 
-  // 4. Single pass: hide removed instances in display meshes
-  if (removeSet.size > 0) {
-    for (const mesh of displayMeshes) {
-      const indices = mesh.userData?.instanceToEntity;
-      if (!indices) continue;
-      let dirty = false;
-      for (let j = 0; j < indices.length; j++) {
-        if (removeSet.has(indices[j])) {
-          mesh.setMatrixAt(j, _zeroMatrix);
-          dirty = true;
-        }
-      }
-      if (dirty) mesh.instanceMatrix.needsUpdate = true;
-    }
-  }
+  // 4. Full rebuild from authoritative data
+  rebuildSaveScene();
 
-  // 5. Single pass: remove port meshes for affected entities
-  if (portRemoveSet.size > 0) {
-    for (let i = portMeshes.length - 1; i >= 0; i--) {
-      const mesh = portMeshes[i];
-      const indices = mesh.userData?.instanceToEntity;
-      if (!indices) continue;
-      if (indices.length === 1 && portRemoveSet.has(indices[0])) {
-        scene.remove(mesh);
-        mesh.geometry?.dispose();
-        mesh.material?.dispose();
-        portMeshes.splice(i, 1);
-      }
-    }
+  // 5. Load missing meshes for new classes (async — triggers second rebuild when ready)
+  if (currentRenderMode !== 'boxes') {
+    loadMissingMeshes().then(loaded => {
+      if (loaded) rebuildSaveScene();
+    });
   }
-
-  // 6. Batch rebuild meshes for updated + added + connection-only entities
-  const toRebuild = [];
-  for (const ent of msg.updated) toRebuild.push({ ...ent.item, _ei: ent.index });
-  for (const ent of msg.added) toRebuild.push({ ...ent.item, _ei: ent.index });
-  const rebuiltSet = new Set([...msg.updated.map(e => e.index), ...msg.added.map(e => e.index)]);
-  for (const conn of msg.connections) {
-    if (!rebuiltSet.has(conn.index)) {
-      const e = saveEntityData.entities[conn.index];
-      if (e) toRebuild.push({ ...e, _ei: conn.index });
-    }
-  }
-  if (toRebuild.length > 0) {
-    buildEntityMeshes(toRebuild, saveEntityData.classNames, saveEntityData.clearance, saveEntityData.portLayouts, displayMeshes, portMeshes, 'save');
-  }
-  requestRender();
 }

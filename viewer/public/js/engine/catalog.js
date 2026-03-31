@@ -37,11 +37,17 @@ export async function initMeshCatalog(classNames) {
 }
 
 export async function setLod(lod) {
-  if (lod === currentLod && cache.has(lod)) return false;
-  currentLod = lod;
   if (!cache.has(lod)) {
+    currentLod = lod;
     await loadLod(lod, classNamesUsed);
+    return true;
   }
+  // Cache exists — check for missing classes
+  const lodCache = cache.get(lod);
+  const missing = classNamesUsed.filter(cn => !lodCache.has(cn));
+  if (lod === currentLod && missing.length === 0) return false;
+  currentLod = lod;
+  if (missing.length > 0) await loadMissing(lod, missing);
   return true;
 }
 
@@ -55,12 +61,39 @@ export function getMeshMaterial(className) {
   return lodCache?.get(className)?.material || null;
 }
 
+export function updateClassNames(classNames) {
+  classNamesUsed = classNames;
+}
+
+export async function loadMissingMeshes() {
+  if (!cache.has(currentLod) || classNamesUsed.length === 0) return false;
+  const lodCache = cache.get(currentLod);
+  const missing = classNamesUsed.filter(cn => !lodCache.has(cn));
+  if (missing.length === 0) return false;
+  await loadMissing(currentLod, missing);
+  return true;
+}
+
 export function hasMeshesAvailable() {
   const lodCache = cache.get(currentLod);
   return lodCache ? lodCache.size > 0 : false;
 }
 
 // ── Internal ───────────────────────────────────────────────────
+
+async function loadMissing(lod, classNames) {
+  const entries = await fetchBatchGlb(`catalog/${lod}`, classNames);
+  const lodCache = cache.get(lod);
+  const results = await Promise.allSettled(
+    entries.map(entry => parseGlb(entry.name, entry.glb))
+  );
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === 'fulfilled' && results[i].value) {
+      lodCache.set(entries[i].name, results[i].value);
+    }
+  }
+  console.log(`[Catalog] ${lod}: loaded ${results.filter(r => r.status === 'fulfilled' && r.value).length} missing meshes`);
+}
 
 async function loadLod(lod, classNames) {
   if (classNames.length === 0) return;

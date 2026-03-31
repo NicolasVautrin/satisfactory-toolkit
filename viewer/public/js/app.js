@@ -343,14 +343,17 @@ fetch('/api/game/entities')
   .catch(() => {});
 
 // WebSocket
+async function refreshFromServer(name) {
+  const res = await fetch('/api/game/entities');
+  if (!res.ok) return;
+  const result = await res.json();
+  if (result?.save) await onSaveLoaded(result.save, result.saveName || name || 'save');
+}
+
 initWebSocket({
   onEditResult: () => updateStatus(),
-  onSaveLoaded: async (name) => {
-    const res = await fetch('/api/game/entities');
-    if (!res.ok) return;
-    const result = await res.json();
-    if (result?.save) await onSaveLoaded(result.save, result.saveName || name);
-  },
+  onSaveLoaded: (name) => refreshFromServer(name),
+  onRefreshNeeded: () => refreshFromServer(),
 });
 
 // Load landscape base plane, then scenery, then enable landscape tile streaming
