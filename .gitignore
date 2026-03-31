@@ -16,6 +16,7 @@ data/water_mask_potrace.svg
 
 # Debug screenshots
 *.png
+!docs/viewer.png
 
 # .NET build artifacts
 bin/
