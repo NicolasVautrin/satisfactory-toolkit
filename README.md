@@ -11,7 +11,7 @@ Node.js + C# toolkit for Satisfactory 1.0 save editing, blueprint manipulation, 
 - **Sink Points Optimizer** - LP solver (HiGHS) to maximize sink points/min with power/resource constraints
 - **Entity Operations** - Select, inspect, delete, and export entities from the viewer
 
-![3D Entity Viewer](viewer.png)
+![3D Entity Viewer](docs/viewer.png)
 
 ## Quick Start
 

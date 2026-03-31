@@ -93,7 +93,7 @@ La vitesse de zoom (`flyStep`) est un pas fixe en unités, ajustable via les bou
 
 ## Sink Points Optimization
 
-Documentation complète dans [SINK_OPTIMIZATION.md](SINK_OPTIMIZATION.md).
+Documentation complète dans [SINK_OPTIMIZATION.md](tools/solver/SINK_OPTIMIZATION.md).
 
 Script : `tools/solver/analyzeSinkPoints.js` — LP solver (HiGHS) pour maximiser les sink points/min avec contraintes de power et ressources. Génère xlsx + graphml (yEd).
 
