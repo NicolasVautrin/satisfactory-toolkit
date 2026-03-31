@@ -206,4 +206,4 @@ See [SINK_OPTIMIZATION.md](SINK_OPTIMIZATION.md) for details.
 
 ## License
 
-Private project.
+[MIT](LICENSE)
