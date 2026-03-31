@@ -472,9 +472,9 @@ const trains = allObjects
   .map(o => Train.fromSave(o, allObjects));
 ```
 
-### Script d'inspection
+### Inspection
 
-`inspect/findRailway.js` — liste tous les objets ferroviaires d'une save avec leurs positions, rotations et propriétés.
+Utiliser `GET /api/game/nearby?x=&y=&z=&radius=` pour lister les objets ferroviaires autour d'un point, ou `GET /api/game/entity/:index` pour le détail d'une entité.
 
 ### Checklist railway
 

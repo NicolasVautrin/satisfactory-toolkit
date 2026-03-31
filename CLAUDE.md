@@ -35,9 +35,10 @@ satisfactory-toolkit/
 │   ├── Blueprint.js            # Blueprint composite (create + fromFile)
 │   ├── Registry.js             # TypePath → Builder mapping
 │   └── generateClearanceData.js # Générateur depuis Docs du jeu
-├── tools/                      # Scripts d'édition/optimisation
-├── inspect/                    # Scripts d'exploration de saves
-└── test/                       # Tests des modules lib/
+├── tools/
+│   ├── solver/                 # LP solver (sink points), station optimizer
+│   └── pak-tool/               # Extracteur d'assets .pak (CUE4Parse)
+└── test/                       # Tests (testEdit.js)
 ```
 
 ## 3D Entity Viewer
@@ -94,7 +95,7 @@ La vitesse de zoom (`flyStep`) est un pas fixe en unités, ajustable via les bou
 
 Documentation complète dans [SINK_OPTIMIZATION.md](SINK_OPTIMIZATION.md).
 
-Script : `tools/analyzeSinkPoints.js` — LP solver (HiGHS) pour maximiser les sink points/min avec contraintes de power et ressources. Génère xlsx + graphml (yEd).
+Script : `tools/solver/analyzeSinkPoints.js` — LP solver (HiGHS) pour maximiser les sink points/min avec contraintes de power et ressources. Génère xlsx + graphml (yEd).
 
 ## Save Editing
 
@@ -115,7 +116,7 @@ Pour regénérer après une mise à jour du jeu : `node lib/generateClearanceDat
 
 Les Docs du jeu sont à : `<SatisfactoryInstall>/CommunityResources/Docs/en-US.json` (format UTF-16LE avec BOM).
 
-**Note** : Les port offsets (positions des connections belt/pipe/power) ne sont **pas** dans les Docs — ils doivent être extraits des saves via `inspect/dumpPortOffsets.js`.
+**Note** : Les port offsets (positions des connections belt/pipe/power) ne sont **pas** dans les Docs — ils doivent être extraits des saves (inspecter les entités via `GET /api/game/entity/:index` ou `GET /api/game/nearby`).
 
 ### Lightweight Buildables (Satisfactory 1.0+)
 

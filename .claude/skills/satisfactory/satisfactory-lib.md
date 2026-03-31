@@ -740,7 +740,7 @@ Regénérer après mise à jour du jeu : `node lib/generateClearanceData.js`
 
 Les Docs du jeu sont à : `<SatisfactoryInstall>/CommunityResources/Docs/en-US.json` (format UTF-16LE avec BOM).
 
-**Note** : Les port offsets (positions des connections belt/pipe/power) ne sont **pas** dans les Docs — ils doivent être extraits des saves via `inspect/dumpPortOffsets.js`.
+**Note** : Les port offsets (positions des connections belt/pipe/power) ne sont **pas** dans les Docs — ils doivent être extraits des saves (inspecter via `GET /api/game/entity/:index` ou `GET /api/game/nearby`).
 
 ## Positionnement et rotations
 
@@ -790,26 +790,15 @@ for (const obj of objs) {
 
 ## Scripts utilitaires (`tools/`)
 
-| Script | Description |
-|--------|-------------|
-| `analyzeSinkPoints.js` | LP solver sink points (HiGHS) → xlsx + graphml |
-| `createMinerBlueprint.js` | Blueprint miners sur nodes non-minés |
-| `injectMiners.js` | Injection de miners dans la save |
-| `rebuildWaterNetwork.js` | Reconstruction réseau eau nucléaire |
-| `analyzeBeltCurvature.js` | Analyse du rayon de courbure des belts |
-
-## Scripts d'inspection (`inspect/`)
-
-14 scripts pour explorer/débugger les saves. Notamment :
-
-| Script | Description |
-|--------|-------------|
-| `findRailway.js` | Liste tous les objets ferroviaires |
-| `dumpPortOffsets.js` | Extrait les offsets de ports depuis la save |
+| Répertoire | Description |
+|------------|-------------|
+| `tools/solver/analyzeSinkPoints.js` | LP solver sink points (HiGHS) → xlsx + graphml |
+| `tools/solver/optimizeStationsMulti.js` | Placement optimal de gares partagées (K-means + SA) |
+| `tools/pak-tool/` | Extracteur d'assets .pak (CUE4Parse, C#) |
 
 ## Commande d'exécution
 
 ```bash
 export PATH="/c/nvm4w/nodejs:/mingw64/bin:/usr/bin:$PATH"
-node tools/monScript.js
+node tools/solver/analyzeSinkPoints.js
 ```

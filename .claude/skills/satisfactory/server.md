@@ -24,7 +24,7 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 
 - `viewer/server.js` : routes Express, orchestration
 - `viewer/lib/spline.js` : Hermite sampling, extraction splines save/CBP, quatRotate
-- `viewer/lib/entityData.js` : classify, clearance, ports, buildSaveEntityData, buildCbpEntityData
+- `viewer/lib/viewerEntityFactory.js` : classify, clearance, ports, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp
 - `viewer/lib/saveManager.js` : loadSave, loadCbp, loadBlueprint, injectBlueprint, state management (getSaveState, ensureSaveState)
 - `viewer/lib/editor.js` : editEntities, addEntity, getEntity, attachPorts, wirePorts, insertOnSpline
 - `viewer/lib/merge.js` : CBP→Save conversion et merge
@@ -155,7 +155,7 @@ Un ConveyorLift directement connecté à un splitter est positionné **exactemen
 Ajouter la route dans `viewer/server.js`. Utiliser `getSaveState()` et `getCbpState()` depuis `saveManager.js`.
 
 ### Ajouter une catégorie ou changer la classification
-Modifier `CATEGORY_PATTERNS` dans `viewer/lib/entityData.js`.
+Modifier `CATEGORY_PATTERNS` dans `viewer/lib/viewerEntityFactory.js`.
 
 ### Ajouter des ports à un bâtiment
 1. Le Builder doit hériter de `Builder` (`lib/shared/Builder.js`)

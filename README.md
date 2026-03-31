@@ -1,4 +1,4 @@
-# Satisfactory Toolkit
+/planok# Satisfactory Toolkit
 
 Node.js + C# toolkit for Satisfactory 1.0 save editing, blueprint manipulation, logistics optimization, 3D visualization, and game asset extraction.
 
@@ -112,15 +112,14 @@ satisfactory-toolkit/
 |   +-- Registry.js             # TypePath -> Builder mapping
 +-- viewer/
 |   +-- server.js               # Express API + save loader
-|   +-- lib/                    # Server modules (saveLoader, merge, spline, entityData)
+|   +-- lib/                    # Server modules (saveManager, editor, viewerEntityFactory, merge, spline)
 |   +-- public/                 # Client (Three.js, ES modules)
 |       +-- js/engine/          # Scene, camera, entities, landscape, scenery, water
 |       +-- js/ui/              # Controls, filters, toolbar, panels
 +-- tools/
 |   +-- pak-tool/               # C# asset extractor (CUE4Parse)
-|   +-- analyzeSinkPoints.js    # LP solver for sink optimization
-+-- inspect/                    # Save exploration scripts
-+-- test/                       # Tests
+|   +-- solver/                 # LP solver (sink points), station optimizer
++-- test/                       # Tests (testEdit.js)
 ```
 
 ## Save Editing
