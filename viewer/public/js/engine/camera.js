@@ -2,14 +2,28 @@ import * as THREE from 'three';
 import { camera, renderer, requestRender } from './scene.js';
 
 // ── Camera state ────────────────────────────────────────────
+// Base sensitivity values are frozen — only modifiable via the setters below.
+const DEFAULTS = { flyStep: 5000, panSpeed: 1.5, rotateSpeed: 0.003 };
+const LIMITS = {
+  flyStep:     { min: 100,    max: 100000 },
+  panSpeed:    { min: 0.1,    max: 20 },
+  rotateSpeed: { min: 0.0005, max: 0.02 },
+};
+
+const _base = { ...DEFAULTS };
+
 export const camState = {
   yaw: -Math.PI / 4,
   pitch: -Math.PI / 6,
-  rotateSpeed: 0.003,
-  panSpeed: 1.5,
-  flyStep: 5000,
+  get rotateSpeed() { return _base.rotateSpeed; },
+  get panSpeed()    { return _base.panSpeed; },
+  get flyStep()     { return _base.flyStep; },
   adaptive: false,
 };
+
+export function setFlyStep(v)     { _base.flyStep = Math.max(LIMITS.flyStep.min, Math.min(LIMITS.flyStep.max, v)); }
+export function setPanSpeed(v)    { _base.panSpeed = Math.max(LIMITS.panSpeed.min, Math.min(LIMITS.panSpeed.max, v)); }
+export function setRotateSpeed(v) { _base.rotateSpeed = Math.max(LIMITS.rotateSpeed.min, Math.min(LIMITS.rotateSpeed.max, v)); }
 
 // ── Change notification ─────────────────────────────────────
 let _onChanged = null;
@@ -23,9 +37,9 @@ function notifyChanged() {
 // Adaptive sensitivity: scale values based on camera height
 // Reference height = 5000 (where effective = base)
 function hRatio() { return Math.max(0.02, Math.abs(camera.position.z) / 5000); }
-export function effectiveFlyStep()    { return camState.adaptive ? camState.flyStep * Math.pow(hRatio(), 0.6) : camState.flyStep; }
-export function effectivePanSpeed()   { return camState.adaptive ? camState.panSpeed * Math.pow(hRatio(), 0.6) : camState.panSpeed; }
-export function effectiveRotSpeed()   { return camState.adaptive ? camState.rotateSpeed * Math.pow(hRatio(), 0.3) : camState.rotateSpeed; }
+export function effectiveFlyStep()    { return camState.adaptive ? _base.flyStep * Math.pow(hRatio(), 0.6) : _base.flyStep; }
+export function effectivePanSpeed()   { return camState.adaptive ? Math.max(1.5, _base.panSpeed * Math.pow(hRatio(), 0.6)) : _base.panSpeed; }
+export function effectiveRotSpeed()   { return camState.adaptive ? _base.rotateSpeed * Math.pow(hRatio(), 0.3) : _base.rotateSpeed; }
 
 // ── Reset camera (also available from console) ──────────────
 window._camState = camState;
@@ -145,9 +159,9 @@ export function restoreCameraState(key) {
     camera.position.set(s.x, s.y, s.z);
     camState.yaw = s.yaw;
     camState.pitch = s.pitch;
-    if (s.flyStep) camState.flyStep = s.flyStep;
-    if (s.panSpeed) camState.panSpeed = s.panSpeed;
-    if (s.rotateSpeed) camState.rotateSpeed = s.rotateSpeed;
+    if (s.flyStep) setFlyStep(s.flyStep);
+    if (s.panSpeed) setPanSpeed(s.panSpeed);
+    if (s.rotateSpeed) setRotateSpeed(s.rotateSpeed);
     if (s.adaptive !== undefined) camState.adaptive = s.adaptive;
     updateCameraRotation();
     return true;

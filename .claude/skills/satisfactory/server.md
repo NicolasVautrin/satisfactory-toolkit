@@ -38,7 +38,7 @@ Le serveur démarre sans save — charger via `/api/game/load-file` ou upload de
 
 | Endpoint | Méthode | Description |
 |---|---|---|
-| `/api/viewer/mesh-catalog?lod=` | GET | Liste des meshes buildings disponibles par LOD |
+| `/api/viewer/layout?type=` | GET | Layout scenery/landscape/water (placements, meshes dispo, tiles) |
 | `/api/viewer/scenery?lod=` | GET | Metadata scenery (placements, streaming, meshes/textures dispo) |
 | `/api/viewer/landscape-data` | GET | Metadata tuiles landscape (coords, noms GLB) |
 | `/api/viewer/landscape-map` | GET | Image JPEG assemblée de la map (cache on-demand) |
@@ -86,7 +86,7 @@ Endpoint générique pour charger plusieurs fichiers GLB en une seule requête :
 ```json
 { "prefix": "terrain/glb", "files": ["comp_-1016_-1016", "comp_-1016_-1143"] }
 ```
-- `prefix` : chemin relatif dans `data/meshes/` (ex: `terrain/glb`, `scenery/lod2`, `lod2`)
+- `prefix` : chemin relatif dans `data/viewer-assets/` (ex: `terrain/glb`, `scenery/lod2`, `lod2`)
 - `files` : noms sans extension `.glb`
 - **LOD fallback** : si le prefix contient `lod{N}`, tente `lod{N-1}` → ... → `lod0` automatiquement
 - **Réponse binaire** : `[uint32 count][uint32 nameLen][name][uint32 glbLen][glb]...`

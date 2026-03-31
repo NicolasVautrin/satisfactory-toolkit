@@ -91,7 +91,7 @@ dotnet run -- export streaming
 |--------|--------|-------------|
 | `--offset N` | 0 | Pagination offset |
 | `--limit N` | 50 | Pagination limit |
-| `--output <dir>` | `data/meshes/` | Répertoire de sortie pour les exports |
+| `--output <dir>` | `data/viewer-assets/` | Répertoire de sortie pour les exports |
 | `-p N` | CPU count | Parallélisme pour les exports bulk |
 | `--ratio N` | 0.15 | Ratio de simplification landscape (0.0-1.0) |
 

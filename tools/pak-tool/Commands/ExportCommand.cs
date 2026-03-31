@@ -38,8 +38,8 @@ public static class ExportCommand
         ExportMaterials = true,
     };
 
-    // ── export buildings ─────────────────────────────────────
-    public static void Buildings(string outputDir, int parallelism)
+    // ── export catalog ──────────────────────────────────────
+    public static void Catalog(string outputDir, int parallelism)
     {
         var options = DefaultOptions;
         var scanProvider = ProviderFactory.CreateProvider();
@@ -106,7 +106,7 @@ public static class ExportCommand
         {
             foreach (var (lodIndex, data) in lods)
             {
-                var relPath = Path.Combine($"lod{lodIndex}", $"{className}.glb");
+                var relPath = Path.Combine("catalog", $"lod{lodIndex}", $"{className}.glb");
                 var outPath = Path.Combine(outputDir, relPath);
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                 File.WriteAllBytes(outPath, data);
@@ -116,10 +116,10 @@ public static class ExportCommand
         }
 
         watch.Stop();
-        Log.Information("Done: {ClassCount} buildings, {MeshCount} files in {Time} ({Errors} errors)",
+        Log.Information("Done: {ClassCount} catalog meshes, {MeshCount} files in {Time} ({Errors} errors)",
             bestMeshes.Count, files.Count, watch.Elapsed, errors);
 
-        JsonOutput.WriteExport("buildings", outputDir, bestMeshes.Count, watch.Elapsed.ToString(), errors,
+        JsonOutput.WriteExport("catalog", outputDir, bestMeshes.Count, watch.Elapsed.ToString(), errors,
             files.ToArray());
     }
 
@@ -144,6 +144,8 @@ public static class ExportCommand
             .Where(k => !k.Contains("FoliageType", StringComparison.OrdinalIgnoreCase))
             .Where(k => !k.Contains("/Landscape/", StringComparison.OrdinalIgnoreCase))
             .Where(k => !k.Contains("/Atmosphere/", StringComparison.OrdinalIgnoreCase))
+            .Where(k => !k.Contains("/Waterfall", StringComparison.OrdinalIgnoreCase))  // segfault in CUE4Parse material loading
+            .Where(k => !k.Contains("/Sky/", StringComparison.OrdinalIgnoreCase))        // segfault in CUE4Parse material loading
             .ToList();
 
         Log.Information("Scanning {Count} scenery packages with {N} consumers...", sceneryPaths.Count, parallelism);
@@ -160,6 +162,7 @@ public static class ExportCommand
         var processed = 0;
         var consumers = Enumerable.Range(0, parallelism).Select(i => Task.Run(() =>
         {
+            Log.Information("Consumer {I} creating provider...", i);
             var myProvider = ProviderFactory.CreateProvider();
             Log.Information("Consumer {I} ready ({Count} files)", i, myProvider.Files.Count);
 
@@ -168,12 +171,14 @@ public static class ExportCommand
                 try
                 {
                     var cleanPath = packagePath.Replace(".uasset", "");
+                    Log.Debug("Consumer {I}: loading {Path}", i, cleanPath);
                     var allExports = myProvider.LoadPackage(cleanPath).GetExports();
 
                     foreach (var obj in allExports)
                     {
                         if (obj is not UStaticMesh staticMesh) continue;
 
+                        Log.Debug("Consumer {I}: exporting mesh {Name}", i, staticMesh.Name);
                         var meshExporter = new MeshExporter(staticMesh, options);
                         if (meshExporter.MeshLods.Count == 0) continue;
 
@@ -188,25 +193,38 @@ public static class ExportCommand
                         {
                             try
                             {
+                                Log.Debug("Consumer {I}: extracting texture for {Name}", i, meshName);
                                 var texBytes = TextureHelpers.ExtractDiffuseTexture(staticMesh, myProvider);
                                 if (texBytes != null) allTextures.TryAdd(meshName, texBytes);
                             }
-                            catch { }
+                            catch (Exception texEx)
+                            {
+                                Log.Debug("Consumer {I}: texture extraction failed for {Name}: {Msg}", i, meshName, texEx.Message);
+                            }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     if (Interlocked.Increment(ref errors) <= 10)
-                        Log.Warning("Error processing {Path}: {Msg}", packagePath, ex.Message);
+                        Log.Warning("Consumer {I} error processing {Path}: {Type}: {Msg}", i, packagePath, ex.GetType().Name, ex.Message);
                 }
 
                 var n = Interlocked.Increment(ref processed);
-                if (n % 100 == 0) Log.Information("  Processed {N}/{Total}...", n, sceneryPaths.Count);
+                if (n % 50 == 0) Log.Information("  Processed {N}/{Total} ({Meshes} meshes, {Textures} textures, {Errors} errors)...",
+                    n, sceneryPaths.Count, allMeshes.Count, allTextures.Count, errors);
             }
+            Log.Information("Consumer {I} finished", i);
         })).ToArray();
 
-        Task.WaitAll(consumers);
+        Log.Information("Waiting for {N} consumers...", consumers.Length);
+        try { Task.WaitAll(consumers); }
+        catch (AggregateException agg) {
+            foreach (var ex in agg.Flatten().InnerExceptions)
+                Log.Error("Consumer crashed: {Type}: {Msg}\n{Stack}", ex.GetType().Name, ex.Message, ex.StackTrace);
+        }
+        Log.Information("All consumers done. {Meshes} meshes, {Textures} textures, {Errors} errors",
+            allMeshes.Count, allTextures.Count, errors);
 
         var sceneryDir = Path.Combine(outputDir, "scenery");
         var exported = 0;
@@ -226,9 +244,29 @@ public static class ExportCommand
         foreach (var (meshName, pngData) in allTextures.OrderBy(kv => kv.Key))
             File.WriteAllBytes(Path.Combine(texDir, $"{meshName}.png"), pngData);
 
+        // ── Extract placements (Persistent_Level + streaming cells) → scenery_layout.json ──
+        Log.Information("Extracting scenery placements...");
+        var actorsTask = Task.Run(() => ExtractActors(ProviderFactory.CreateProvider()));
+        var streamingTask = Task.Run(() => ExtractStreaming(ProviderFactory.CreateProvider()));
+        try { Task.WaitAll(actorsTask, streamingTask); }
+        catch (AggregateException agg) {
+            foreach (var ex in agg.Flatten().InnerExceptions)
+                Log.Error("Placement extraction crashed: {Type}: {Msg}\n{Stack}", ex.GetType().Name, ex.Message, ex.StackTrace);
+        }
+        var (staticMeshes, bpActors) = actorsTask.IsCompletedSuccessfully
+            ? actorsTask.Result : (new List<object>(), new List<object>());
+        var streaming = streamingTask.IsCompletedSuccessfully
+            ? streamingTask.Result : new List<object>();
+        var layout = new { staticMeshes, bpActors, streaming };
+        var layoutPath = Path.Combine(sceneryDir, "scenery_layout.json");
+        var jsonOpts = new System.Text.Json.JsonSerializerOptions { WriteIndented = false };
+        File.WriteAllText(layoutPath, System.Text.Json.JsonSerializer.Serialize(layout, jsonOpts));
+        Log.Information("Wrote scenery_layout.json: {SM} static meshes, {BP} BP actors, {ST} streaming",
+            staticMeshes.Count, bpActors.Count, streaming.Count);
+
         watch.Stop();
-        Log.Information("Done: {Count} scenery meshes, {TexCount} textures in {Time} ({Errors} errors)",
-            allMeshes.Count, allTextures.Count, watch.Elapsed, errors);
+        Log.Information("Done: {Count} scenery meshes, {TexCount} textures, {Placements} placements in {Time} ({Errors} errors)",
+            allMeshes.Count, allTextures.Count, staticMeshes.Count + bpActors.Count + streaming.Count, watch.Elapsed, errors);
 
         JsonOutput.WriteExport("scenery", sceneryDir, allMeshes.Count, watch.Elapsed.ToString(), errors);
     }
@@ -236,6 +274,7 @@ public static class ExportCommand
     // ── export landscape ─────────────────────────────────────
     public static void Landscape(string outputDir, int parallelism,
         string simplifyRatio = "0.15")
+
     {
         var options = DefaultOptions;
 
@@ -328,7 +367,7 @@ public static class ExportCommand
         Task.WaitAll(consumers);
 
         // Write metadata JSON
-        var metadataPath = Path.Combine(landscapeDir, "metadata.json");
+        var metadataPath = Path.Combine(landscapeDir, "landscape_layout.json");
         var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
         var sortedMeta = tileResults.OrderBy(t => t.tile).Select(t => new
         {
@@ -433,18 +472,18 @@ public static class ExportCommand
     }
 
     // ── export actors (Persistent_Level) ─────────────────────
-    public static void Actors(CUE4Parse.FileProvider.DefaultFileProvider provider, string outputDir)
+    // ── Extract Persistent_Level placements (used by Scenery) ──
+    private static (List<object> staticMeshes, List<object> bpActors) ExtractActors(
+        CUE4Parse.FileProvider.DefaultFileProvider provider)
     {
         var pkg = provider.LoadPackage("FactoryGame/Content/FactoryGame/Map/GameLevel01/Persistent_Level");
         var exports = pkg.GetExports().ToList();
         Log.Information("Persistent_Level: {Count} exports", exports.Count);
 
         var placements = new List<object>();
-
         foreach (var obj in exports)
         {
             if (obj.ExportType != "StaticMeshActor") continue;
-
             var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
             if (rootRef == null) continue;
             var rootComp = rootRef.ResolvedObject?.Object?.Value as UStaticMeshComponent;
@@ -466,13 +505,11 @@ public static class ExportCommand
             });
         }
 
-        // BP actors
         var bpActorTypes = new HashSet<string> {
             "BP_ResourceNode_C", "BP_ResourceNodeGeyser_C", "BP_FrackingSatellite_C",
             "BP_FrackingCore_C", "BP_ResourceDeposit_C",
         };
         var bpPlacements = new List<object>();
-
         foreach (var obj in exports)
         {
             if (!bpActorTypes.Contains(obj.ExportType)) continue;
@@ -502,25 +539,19 @@ public static class ExportCommand
             });
         }
 
-        var result = new { staticMeshes = placements, bpActors = bpPlacements };
-        var outPath = Path.Combine(outputDir, "scenery_placements.json");
-        var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(result, jsonOptions));
-
-        Log.Information("Wrote {Count} total placements to {Path}", placements.Count + bpPlacements.Count, outPath);
-        JsonOutput.WriteExport("actors", outputDir, placements.Count + bpPlacements.Count, "0", 0,
-            new object[] { new { path = "scenery_placements.json" } });
+        Log.Information("Persistent_Level: {SM} static meshes, {BP} BP actors", placements.Count, bpPlacements.Count);
+        return (placements, bpPlacements);
     }
 
-    // ── export streaming (HISM cells) ────────────────────────
-    public static void Streaming(CUE4Parse.FileProvider.DefaultFileProvider provider, string outputDir)
+    // ── Extract streaming cell placements (used by Scenery) ──
+    private static List<object> ExtractStreaming(CUE4Parse.FileProvider.DefaultFileProvider provider)
     {
         var cellPaths = provider.Files.Keys
             .Where(k => k.Contains("_Generated_", StringComparison.OrdinalIgnoreCase))
             .Where(k => k.EndsWith(".umap"))
             .ToList();
 
-        Log.Information("Scanning {Count} streaming cells for scenery actors...", cellPaths.Count);
+        Log.Information("Scanning {Count} streaming cells...", cellPaths.Count);
 
         var placements = new List<object>();
         var scanned = 0;
@@ -539,7 +570,6 @@ public static class ExportCommand
                 foreach (var obj in exports)
                 {
                     if (!actorTypes.Contains(obj.ExportType)) continue;
-
                     var rootRef = obj.GetOrDefault<FPackageIndex>("RootComponent");
                     if (rootRef == null) continue;
                     var rootComp = rootRef.ResolvedObject?.Object?.Value as UStaticMeshComponent;
@@ -564,13 +594,8 @@ public static class ExportCommand
             catch { }
         }
 
-        var outPath = Path.Combine(outputDir, "scenery_streaming.json");
-        var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = false };
-        File.WriteAllText(outPath, System.Text.Json.JsonSerializer.Serialize(placements, jsonOptions));
-
-        Log.Information("Wrote {Count} placements from {Scanned} cells to {Path}", placements.Count, scanned, outPath);
-        JsonOutput.WriteExport("streaming", outputDir, placements.Count, "0", 0,
-            new object[] { new { path = "scenery_streaming.json" } });
+        Log.Information("Streaming: {Count} placements from {Scanned} cells", placements.Count, scanned);
+        return placements;
     }
 
     // ── export water (placements + meshes) ────────────────────
@@ -966,13 +991,15 @@ public static class ExportCommand
 
         // ── 6. Write placements ─────────────────────────────
         var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-        var placementsPath = Path.Combine(outputDir, "water_placements.json");
+        var waterDir = Path.Combine(outputDir, "water");
+        Directory.CreateDirectory(waterDir);
+        var placementsPath = Path.Combine(waterDir, "water_layout.json");
         var outputData = new { placements, rivers };
         File.WriteAllText(placementsPath, System.Text.Json.JsonSerializer.Serialize(outputData, jsonOptions));
 
         // ── 7. Export water mesh GLBs ───────────────────────
-        var waterDir = Path.Combine(outputDir, "water");
-        Directory.CreateDirectory(waterDir);
+        var glbDir = Path.Combine(waterDir, "glb");
+        Directory.CreateDirectory(glbDir);
         var exported = 0;
 
         var waterMeshPackages = provider.Files.Keys
@@ -1004,7 +1031,7 @@ public static class ExportCommand
 
                     var name = staticMesh.Name;
                     var data = meshExporter.MeshLods[0].FileData;
-                    File.WriteAllBytes(Path.Combine(waterDir, $"{name}.glb"), data);
+                    File.WriteAllBytes(Path.Combine(glbDir, $"{name}.glb"), data);
                     exported++;
                     Log.Information("  Exported {Name}.glb ({Size} KB)", name, data.Length / 1024);
                 }
@@ -1018,7 +1045,7 @@ public static class ExportCommand
         Log.Information("Done: {Placements} placements, {Rivers} rivers, {Meshes} meshes exported",
             placements.Count, rivers.Count, exported);
         JsonOutput.WriteExport("water", outputDir, placements.Count, "0", 0,
-            new object[] { new { path = "water_placements.json" }, new { path = "water/" } });
+            new object[] { new { path = "water/water_layout.json" }, new { path = "water/glb/" } });
     }
 
     // ── Helper: extract LODs from MeshExporter ───────────────

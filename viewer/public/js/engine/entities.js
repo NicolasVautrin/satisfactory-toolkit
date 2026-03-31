@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { scene, camera, gameToViewer, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
-import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog } from './meshCatalog.js';
+import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;

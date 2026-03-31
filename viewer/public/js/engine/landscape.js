@@ -73,7 +73,7 @@ export async function buildLandscape() {
   batchInFlight = false;
 
   // 1. Fetch tile metadata
-  const res = await fetch('/api/viewer/landscape-data');
+  const res = await fetch('/api/viewer/layout?type=landscape');
   const { tiles } = await res.json();
   if (!tiles || tiles.length === 0) {
     console.warn('[Landscape] No tiles available');

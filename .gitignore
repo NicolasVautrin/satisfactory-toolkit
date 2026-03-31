@@ -7,8 +7,8 @@ node_modules/
 FModel.exe
 Output/
 
-# Generated assets (meshes, textures, heightmaps)
-data/meshes/
+# Generated viewer assets (meshes, textures, layouts)
+data/viewer-assets/
 data/heightmap.json
 data/water_mask.png
 data/water_mask_d3.svg

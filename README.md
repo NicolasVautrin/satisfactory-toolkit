@@ -42,7 +42,7 @@ Drop a `.sav`, `.cbp`, or `.sbp` file into the viewer to visualize it.
 
 ### Blueprint Placement
 
-Load a `.sbp` file to enter placement mode:
+Load a `.sbp` file to enter placement mode (keys are **AZERTY** layout):
 
 | Key | Action |
 |-----|--------|

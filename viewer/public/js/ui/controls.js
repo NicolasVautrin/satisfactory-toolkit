@@ -1,6 +1,6 @@
 import { refreshIcons } from './icons.js';
 import { getGridBoxAlign, setGridBoxAlign } from '../engine/entityGrid.js';
-import { camState, effectiveFlyStep, effectivePanSpeed, effectiveRotSpeed } from '../engine/camera.js';
+import { camState, effectiveFlyStep, effectivePanSpeed, effectiveRotSpeed, setFlyStep, setPanSpeed, setRotateSpeed } from '../engine/camera.js';
 import { getUELandscapeBounds } from '../engine/landscape.js';
 
 // ── Camera & grid controls dropdown ─────────────────────────
@@ -52,22 +52,22 @@ export function createControls(menuDropdown, { camState, onGridSpacingChange }) 
 
   const zoomRow = makeRow('Zoom',
     () => Math.round(camState.flyStep),
-    () => { camState.flyStep = Math.max(100, camState.flyStep / 2); },
-    () => { camState.flyStep = Math.min(100000, camState.flyStep * 2); },
+    () => { setFlyStep(camState.flyStep / 2); },
+    () => { setFlyStep(camState.flyStep * 2); },
     () => camState.adaptive ? Math.round(effectiveFlyStep()) : null,
   );
 
   const panRow = makeRow('Pan',
     () => camState.panSpeed.toFixed(1),
-    () => { camState.panSpeed = Math.max(0.1, camState.panSpeed / 1.5); },
-    () => { camState.panSpeed = Math.min(20, camState.panSpeed * 1.5); },
+    () => { setPanSpeed(camState.panSpeed / 1.5); },
+    () => { setPanSpeed(camState.panSpeed * 1.5); },
     () => camState.adaptive ? effectivePanSpeed().toFixed(1) : null,
   );
 
   const rotRow = makeRow('Rot',
     () => (camState.rotateSpeed * 1000).toFixed(1),
-    () => { camState.rotateSpeed = Math.max(0.0005, camState.rotateSpeed / 1.5); },
-    () => { camState.rotateSpeed = Math.min(0.02, camState.rotateSpeed * 1.5); },
+    () => { setRotateSpeed(camState.rotateSpeed / 1.5); },
+    () => { setRotateSpeed(camState.rotateSpeed * 1.5); },
     () => camState.adaptive ? (effectiveRotSpeed() * 1000).toFixed(1) : null,
   );
 

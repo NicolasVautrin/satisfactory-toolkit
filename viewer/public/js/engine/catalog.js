@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { fetchBatchGlb } from './batchGlb.js';
 
 // ── State ──────────────────────────────────────────────────────
 const loader = new GLTFLoader();
 // GLB is in glTF coords (Y-up, meters); viewer uses Unreal-like coords (Z-up, cm)
-// Transform: scale m→cm, flip X (gameToViewer), rotate Y-up → Z-up
 // glTF(x,y,z) → viewer(-x*100, z*100, y*100) — flip X, swap Y↔Z
 const _glbToViewer = new THREE.Matrix4().set(
   -100,   0,    0,   0,
@@ -63,34 +63,33 @@ export function hasMeshesAvailable() {
 // ── Internal ───────────────────────────────────────────────────
 
 async function loadLod(lod, classNames) {
-  const res = await fetch(`/api/viewer/mesh-catalog?lod=${lod}`);
-  const data = await res.json();
+  if (classNames.length === 0) return;
 
-  // Only load meshes for classNames actually used in the save
-  const classSet = new Set(classNames);
-  const toLoad = data.meshes.filter(m => classSet.has(m));
-
-  if (toLoad.length === 0) return;
+  // Fetch all classNames via batch GLB — server returns only those that exist
+  const entries = await fetchBatchGlb(`catalog/${lod}`, classNames);
 
   const lodCache = new Map();
   cache.set(lod, lodCache);
 
   const results = await Promise.allSettled(
-    toLoad.map(className => loadGlb(lod, className))
+    entries.map(entry => parseGlb(entry.name, entry.glb))
   );
 
   for (let i = 0; i < results.length; i++) {
     if (results[i].status === 'fulfilled' && results[i].value) {
-      lodCache.set(toLoad[i], results[i].value);
+      lodCache.set(entries[i].name, results[i].value);
     }
   }
 
-  console.log(`[MeshCatalog] ${lod}: loaded ${lodCache.size}/${toLoad.length} meshes`);
+  console.log(`[Catalog] ${lod}: loaded ${lodCache.size}/${classNames.length} meshes (${classNames.length - lodCache.size} fallback to boxes)`);
 }
 
-async function loadGlb(lod, className) {
+async function parseGlb(className, glbBuffer) {
   try {
-    const gltf = await loader.loadAsync(`/meshes/${lod}/${className}.glb`);
+    const blob = new Blob([glbBuffer], { type: 'model/gltf-binary' });
+    const url = URL.createObjectURL(blob);
+    const gltf = await loader.loadAsync(url);
+    URL.revokeObjectURL(url);
 
     const geometries = [];
     let material = null;
@@ -99,13 +98,10 @@ async function loadGlb(lod, className) {
     gltf.scene.traverse((child) => {
       if (!child.isMesh) return;
       const geom = child.geometry.clone();
-      // Apply any transform the child has within the GLB scene graph
       if (!child.matrixWorld.equals(new THREE.Matrix4())) {
-        console.log(`[MeshCatalog] ${className}/${child.name}: matrixWorld`, child.matrixWorld.elements.map(v => +v.toFixed(4)));
         geom.applyMatrix4(child.matrixWorld);
       }
       geometries.push(geom);
-      // Keep first material found
       if (!material) {
         material = child.material.clone();
       }
@@ -119,10 +115,9 @@ async function loadGlb(lod, className) {
 
     if (!merged) return null;
 
-    // Transform glTF (Y-up, meters) → viewer (Z-up, cm, X-flipped)
     merged.applyMatrix4(_glbToViewer);
 
-    // Fix face winding after X flip (invert index order)
+    // Fix face winding after X flip
     const index = merged.getIndex();
     if (index) {
       const arr = index.array;
@@ -134,18 +129,12 @@ async function loadGlb(lod, className) {
       index.needsUpdate = true;
     }
 
-    // Ensure normals are correct after flip
     merged.computeVertexNormals();
-
-    // Debug: log bounding box of loaded mesh
     merged.computeBoundingBox();
-    const bb = merged.boundingBox;
-    const size = { x: bb.max.x - bb.min.x, y: bb.max.y - bb.min.y, z: bb.max.z - bb.min.z };
-    console.log(`[MeshCatalog] ${className}: bbox size ${size.x.toFixed(0)}x${size.y.toFixed(0)}x${size.z.toFixed(0)}, center ${((bb.min.x+bb.max.x)/2).toFixed(0)},${((bb.min.y+bb.max.y)/2).toFixed(0)},${((bb.min.z+bb.max.z)/2).toFixed(0)}`);
 
     return { geometry: merged, material };
   } catch (err) {
-    console.warn(`[MeshCatalog] Failed to load ${lod}/${className}.glb:`, err.message);
+    console.warn(`[Catalog] Failed to parse ${className}.glb:`, err.message);
     return null;
   }
 }

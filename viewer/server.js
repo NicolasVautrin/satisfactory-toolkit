@@ -15,39 +15,10 @@ const app = express();
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-// Serve meshes with LOD fallback: if lod2/X.glb missing, try lod1/X.glb, then lod0/X.glb
-// Works for both /meshes/lod2/X.glb (buildings) and /meshes/scenery/lod2/X.glb (scenery)
-app.use('/meshes', (req, res, next) => {
-  // Match: /lod2/file.glb or /scenery/lod2/file.glb
-  const match = req.path.match(/^(\/(?:scenery\/)?)(lod(\d+))\/(.+\.glb)$/);
-  if (!match) return next();
-  const prefix = match[1]; // "/" or "/scenery/"
-  const requestedLod = parseInt(match[3], 10);
-  const file = match[4];
-  for (let lod = requestedLod; lod >= 0; lod--) {
-    const filePath = path.join(__dirname, '..', 'data', 'meshes', prefix, `lod${lod}`, file);
-    if (fs.existsSync(filePath)) return res.sendFile(filePath);
-  }
-  next();
-}, express.static(path.join(__dirname, '..', 'data', 'meshes')));
+// Serve viewer assets (textures, landscape images, etc.)
+app.use('/viewer-assets', express.static(path.join(__dirname, '..', 'data', 'viewer-assets')));
 
-// ── Mesh catalog endpoints ─────────────────────────────────────────
-const MESHES_DIR = path.join(__dirname, '..', 'data', 'meshes');
-
-app.get('/api/viewer/mesh-catalog', (req, res) => {
-  const lod = req.query.lod || 'lod1';
-  const lodNum = parseInt(lod.replace('lod', ''), 10);
-  // Union of all meshes available at requested LOD or below (fallback)
-  const meshSet = new Set();
-  for (let l = lodNum; l >= 0; l--) {
-    const lodDir = path.join(MESHES_DIR, `lod${l}`);
-    if (!fs.existsSync(lodDir)) continue;
-    for (const f of fs.readdirSync(lodDir)) {
-      if (f.endsWith('.glb')) meshSet.add(f.replace('.glb', ''));
-    }
-  }
-  res.json({ lod, meshes: [...meshSet].sort() });
-});
+const VIEWER_ASSETS_DIR = path.join(__dirname, '..', 'data', 'viewer-assets');
 
 // ── WebSocket ──────────────────────────────────────────────────────
 const server = http.createServer(app);
@@ -315,7 +286,6 @@ app.get('/api/game/nearby', (req, res) => {
     if (Builder?.getPorts) {
       const info = Builder.getPorts(entity);
       if (info?.ports) {
-        // Enrich ports with connection status
         const compMap = {};
         for (const ref of (entity.components || [])) {
           const comp = saveState.allObjects.find(o => o.instanceName === ref.pathName);
@@ -329,22 +299,6 @@ app.get('/api/game/nearby', (req, res) => {
           connected: !!(compMap[p.name]?.properties?.mConnectedComponent?.value?.pathName),
         }));
       }
-    } else if (Builder?.PORT_LAYOUT) {
-      const Vector3D = require('../lib/shared/Vector3D');
-      const t = entity.transform.translation;
-      const r = entity.transform.rotation;
-      ports = Object.entries(Builder.PORT_LAYOUT).map(([name, p]) => {
-        const pos = new Vector3D(p.offset).rotate(r).add(new Vector3D(t));
-        const compPath = `${entity.instanceName}.${name}`;
-        const comp = saveState.allObjects.find(o => o.instanceName === compPath);
-        return {
-          name,
-          pos,
-          flow: p.flow,
-          type: p.type,
-          connected: !!(comp?.properties?.mConnectedComponent?.value?.pathName),
-        };
-      });
     }
 
     const entry = {
@@ -361,70 +315,70 @@ app.get('/api/game/nearby', (req, res) => {
   res.json({ center: { x, y, z }, radius, count: results.length, entities: results });
 });
 
-// ── Landscape ──────────────────────────────────────────────────────
-app.get('/api/viewer/scenery', (req, res) => {
-  const placementsPath = path.join(MESHES_DIR, 'scenery_placements.json');
-  const streamingPath = path.join(MESHES_DIR, 'scenery_streaming.json');
-  const data = fs.existsSync(placementsPath) ? JSON.parse(fs.readFileSync(placementsPath, 'utf8')) : { staticMeshes: [], bpActors: [] };
-  const streaming = fs.existsSync(streamingPath) ? JSON.parse(fs.readFileSync(streamingPath, 'utf8')) : [];
-  const lod = req.query.lod || 'lod0';
-  const lodNum = parseInt(lod.replace('lod', ''), 10);
-  // Union of scenery meshes at requested LOD or below (fallback)
-  const meshSet = new Set();
-  for (let l = lodNum; l >= 0; l--) {
-    const lodDir = path.join(MESHES_DIR, 'scenery', `lod${l}`);
-    if (!fs.existsSync(lodDir)) continue;
-    for (const f of fs.readdirSync(lodDir)) {
-      if (f.endsWith('.glb')) meshSet.add(f.replace('.glb', ''));
+// ── Layout endpoint (unified) ────────────────────────────────────
+app.get('/api/viewer/layout', (req, res) => {
+  const type = req.query.type;
+  if (!type) return res.status(400).json({ error: 'type required (scenery, landscape, water)' });
+
+  if (type === 'scenery') {
+    const layoutPath = path.join(VIEWER_ASSETS_DIR, 'scenery', 'scenery_layout.json');
+    const data = fs.existsSync(layoutPath) ? JSON.parse(fs.readFileSync(layoutPath, 'utf8')) : { staticMeshes: [], bpActors: [], streaming: [] };
+    const lod = req.query.lod || 'lod0';
+    const lodNum = parseInt(lod.replace('lod', ''), 10);
+    const meshSet = new Set();
+    for (let l = lodNum; l >= 0; l--) {
+      const lodDir = path.join(VIEWER_ASSETS_DIR, 'scenery', `lod${l}`);
+      if (!fs.existsSync(lodDir)) continue;
+      for (const f of fs.readdirSync(lodDir)) {
+        if (f.endsWith('.glb')) meshSet.add(f.replace('.glb', ''));
+      }
     }
+    const texDir = path.join(VIEWER_ASSETS_DIR, 'scenery', 'textures');
+    const availableTextures = fs.existsSync(texDir)
+      ? fs.readdirSync(texDir).filter(f => f.endsWith('.png')).map(f => f.replace('.png', ''))
+      : [];
+    return res.json({ ...data, availableMeshes: [...meshSet], availableTextures });
   }
-  const availableMeshes = [...meshSet];
-  const texDir = path.join(MESHES_DIR, 'scenery', 'textures');
-  const availableTextures = fs.existsSync(texDir)
-    ? fs.readdirSync(texDir).filter(f => f.endsWith('.png')).map(f => f.replace('.png', ''))
-    : [];
-  res.json({ ...data, streaming, availableMeshes, availableTextures });
-});
 
-app.get('/api/viewer/water', (req, res) => {
-  const placementsPath = path.join(MESHES_DIR, 'water_placements.json');
-  const raw = fs.existsSync(placementsPath) ? JSON.parse(fs.readFileSync(placementsPath, 'utf8')) : {};
-  const placements = raw.placements || (Array.isArray(raw) ? raw : []);
-  const rivers = raw.rivers || [];
-  const waterDir = path.join(MESHES_DIR, 'water');
-  const meshes = fs.existsSync(waterDir)
-    ? fs.readdirSync(waterDir).filter(f => f.endsWith('.glb')).map(f => f.replace('.glb', ''))
-    : [];
-  res.json({ placements, rivers, meshes });
-});
-
-app.get('/api/viewer/landscape-data', (req, res) => {
-  const landscapeDir = path.join(MESHES_DIR, 'landscape');
-  const glbDir = path.join(landscapeDir, 'glb');
-  if (!fs.existsSync(glbDir)) return res.json({ tiles: [] });
-
-  // Use metadata.json if available (has world coordinates)
-  const metaPath = path.join(landscapeDir, 'metadata.json');
-  if (fs.existsSync(metaPath)) {
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    const tiles = meta
-      .filter(m => fs.existsSync(path.join(glbDir, m.tile + '.glb')))
-      .map(m => ({ glb: 'glb/' + m.tile + '.glb',
-        x: m.x, y: m.y,
-        worldMinX: m.worldMinX, worldMinY: m.worldMinY,
-        worldMaxX: m.worldMaxX, worldMaxY: m.worldMaxY }));
+  if (type === 'landscape') {
+    const landscapeDir = path.join(VIEWER_ASSETS_DIR, 'landscape');
+    const glbDir = path.join(landscapeDir, 'glb');
+    if (!fs.existsSync(glbDir)) return res.json({ tiles: [] });
+    const layoutPath = path.join(landscapeDir, 'landscape_layout.json');
+    if (fs.existsSync(layoutPath)) {
+      const meta = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+      const tiles = meta
+        .filter(m => fs.existsSync(path.join(glbDir, m.tile + '.glb')))
+        .map(m => ({ glb: 'glb/' + m.tile + '.glb',
+          x: m.x, y: m.y,
+          worldMinX: m.worldMinX, worldMinY: m.worldMinY,
+          worldMaxX: m.worldMaxX, worldMaxY: m.worldMaxY }));
+      return res.json({ tiles });
+    }
+    // Fallback: list GLB files
+    const tiles = fs.readdirSync(glbDir)
+      .filter(f => f.endsWith('.glb'))
+      .map(f => {
+        const m = f.match(/^comp_(-?\d+)_(-?\d+)\.glb$/);
+        return m ? { glb: 'glb/' + f, x: parseInt(m[1]), y: parseInt(m[2]) } : null;
+      })
+      .filter(Boolean);
     return res.json({ tiles });
   }
 
-  // Fallback: list GLB files in glb/
-  const tiles = fs.readdirSync(glbDir)
-    .filter(f => f.endsWith('.glb'))
-    .map(f => {
-      const m = f.match(/^comp_(-?\d+)_(-?\d+)\.glb$/);
-      return m ? { glb: 'glb/' + f, x: parseInt(m[1]), y: parseInt(m[2]) } : null;
-    })
-    .filter(Boolean);
-  res.json({ tiles });
+  if (type === 'water') {
+    const layoutPath = path.join(VIEWER_ASSETS_DIR, 'water', 'water_layout.json');
+    const raw = fs.existsSync(layoutPath) ? JSON.parse(fs.readFileSync(layoutPath, 'utf8')) : {};
+    const placements = raw.placements || (Array.isArray(raw) ? raw : []);
+    const rivers = raw.rivers || [];
+    const glbDir = path.join(VIEWER_ASSETS_DIR, 'water', 'glb');
+    const meshes = fs.existsSync(glbDir)
+      ? fs.readdirSync(glbDir).filter(f => f.endsWith('.glb')).map(f => f.replace('.glb', ''))
+      : [];
+    return res.json({ placements, rivers, meshes });
+  }
+
+  res.status(400).json({ error: `Unknown layout type: ${type}` });
 });
 
 // ── Landscape assembled map (on-demand stitching) ──────────────────
@@ -435,9 +389,9 @@ app.get('/api/viewer/landscape-map', async (req, res) => {
     return;
   }
 
-  const landscapeDir = path.join(MESHES_DIR, 'landscape');
+  const landscapeDir = path.join(VIEWER_ASSETS_DIR, 'landscape');
   const imgDir = path.join(landscapeDir, 'img');
-  const metaPath = path.join(landscapeDir, 'metadata.json');
+  const metaPath = path.join(landscapeDir, 'landscape_layout.json');
   if (!fs.existsSync(metaPath) || !fs.existsSync(imgDir)) {
     return res.status(404).json({ error: 'No landscape tiles' });
   }
@@ -483,14 +437,14 @@ app.get('/api/viewer/landscape-map', async (req, res) => {
 // POST /api/glb { prefix: "landscape/glb", files: ["comp_X_Y", ...] }
 // Returns binary: [uint32 count][uint32 nameLen][name][uint32 glbLen][glb]...
 function resolveGlbPath(prefix, name) {
-  const base = path.join(MESHES_DIR, prefix, name + '.glb');
+  const base = path.join(VIEWER_ASSETS_DIR, prefix, name + '.glb');
   if (fs.existsSync(base)) return base;
   // LOD fallback: if prefix contains lodN, try lodN-1 ... lod0
   const lodMatch = prefix.match(/^(.*)lod(\d+)(.*)$/);
   if (!lodMatch) return null;
   const [, before, lodStr, after] = lodMatch;
   for (let lod = parseInt(lodStr, 10) - 1; lod >= 0; lod--) {
-    const fallback = path.join(MESHES_DIR, `${before}lod${lod}${after}`, name + '.glb');
+    const fallback = path.join(VIEWER_ASSETS_DIR, `${before}lod${lod}${after}`, name + '.glb');
     if (fs.existsSync(fallback)) return fallback;
   }
   return null;

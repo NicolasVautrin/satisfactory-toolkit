@@ -13,7 +13,7 @@ Viewer Three.js pour visualiser les entités d'une save Satisfactory dans le nav
 - `viewer/public/js/engine/landscape.js` : base plane + streaming tuiles 3D landscape
 - `viewer/public/js/engine/scenery.js` : rochers, resource nodes, fracking (InstancedMesh)
 - `viewer/public/js/engine/batchGlb.js` : helper batch GLB (fetchBatchGlb, parseBatchResponse)
-- `viewer/public/js/engine/meshCatalog.js` : chargement GLB buildings par LOD
+- `viewer/public/js/engine/catalog.js` : chargement GLB buildings par LOD via batch
 - `viewer/public/js/engine/grid.js` : grille 3D de la scène (faces externes)
 - `viewer/public/js/engine/placement.js` : placement interactif de blueprints (axes, clavier, bbox grid)
 - `viewer/public/js/engine/entityGrid.js` : gridBox par entité (toggle world/entity alignment)

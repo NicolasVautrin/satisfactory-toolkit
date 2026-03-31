@@ -5,7 +5,7 @@ import { scene, gameToViewer, requestRender } from './scene.js';
 import { getUELandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
-// ── GLB to viewer transform (same as scenery/meshCatalog) ──
+// ── GLB to viewer transform (same as scenery/catalog) ──────
 const _glbToViewer = new THREE.Matrix4().set(
   -100,   0,    0,   0,
      0,   0,  100,   0,
@@ -44,7 +44,7 @@ export async function buildWater() {
   }
   loaded = false;
 
-  const res = await fetch('/api/viewer/water');
+  const res = await fetch('/api/viewer/layout?type=water');
   const { placements, rivers, meshes } = await res.json();
   if ((!placements || placements.length === 0) && (!rivers || rivers.length === 0)) {
     console.warn('[Water] No placements or rivers');
@@ -74,7 +74,7 @@ export async function buildWater() {
   const geometryCache = new Map();
 
   if (meshNames.length > 0) {
-    const entries = await fetchBatchGlb('water', meshNames);
+    const entries = await fetchBatchGlb('water/glb', meshNames);
     for (const { name, glb } of entries) {
       const geom = await parseWaterGeometry(glb);
       if (geom) geometryCache.set(name, geom);

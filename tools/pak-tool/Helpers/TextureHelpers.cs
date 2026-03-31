@@ -23,7 +23,9 @@ public static class TextureHelpers
                 var matParams = new CMaterialParams();
                 matObj.GetParams(matParams);
 
-                if (matParams.Diffuse is UTexture2D diffTex)
+                if (matParams.Diffuse is UTexture2D diffTex
+                    && diffTex.PlatformData.SizeX > 0 && diffTex.PlatformData.SizeY > 0
+                    && diffTex.PlatformData.Mips is { Length: > 0 })
                 {
                     var decoded = diffTex.Decode(512) ?? diffTex.Decode();
                     if (decoded != null)

@@ -5,7 +5,7 @@ import { renderer, scene, gameToViewer, requestRender } from './scene.js';
 import { getLandscapeMap, getViewerLandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
-// ── GLB to viewer transform (same as meshCatalog) ──────────
+// ── GLB to viewer transform (same as catalog) ─────────────
 // glTF(x,y,z) → viewer(-x*100, z*100, y*100)
 const _glbToViewer = new THREE.Matrix4().set(
   -100,   0,    0,   0,
@@ -85,7 +85,7 @@ export async function buildScenery() {
     }
   }
 
-  const res = await fetch(`/api/viewer/scenery?lod=${currentSceneryLod}`);
+  const res = await fetch(`/api/viewer/layout?type=scenery&lod=${currentSceneryLod}`);
   const data = await res.json();
   const { bpActors = [], streaming = [], availableMeshes = [], availableTextures = [] } = data;
   const availableSet = new Set(availableMeshes);
@@ -199,7 +199,7 @@ export async function buildScenery() {
       if (isRockMesh(meshName)) {
         mat = createLandscapeProjectionMaterial() || new THREE.MeshLambertMaterial({ color: 0x887766 });
       } else if (textureSet?.has(meshName)) {
-        const tex = await textureLoader.loadAsync(`/meshes/scenery/textures/${meshName}.png`);
+        const tex = await textureLoader.loadAsync(`/viewer-assets/scenery/textures/${meshName}.png`);
         tex.colorSpace = THREE.SRGBColorSpace;
         mat = new THREE.MeshLambertMaterial({ map: tex });
       } else {
