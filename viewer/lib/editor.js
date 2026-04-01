@@ -4,6 +4,7 @@
  */
 const { getSaveState, addItem, deleteEntities, ensureSaveState } = require('./saveManager');
 const { buildViewerEntityFromEditor } = require('./viewerEntityFactory');
+const splineLimits = require('../../data/splineLimits.json');
 
 // ── Yaw helpers ─────────────────────────────────────────────────────
 function yawToQuat(deg) {
@@ -100,13 +101,13 @@ function addEntity(typePath, position, rotation, properties) {
   return { entityIndex, item, classUpdate: isNewClass ? classUpdate : null, entity };
 }
 
-// ── Reconstruct a machine Builder from a save entity ────────────────
+// ── Reconstruct an entity Builder from a save entity ────────────────
 function getEntity(entityIndex) {
   const saveState = getSaveState();
   if (!saveState) throw new Error('No save loaded');
   const item = saveState.items[entityIndex];
   if (!item) throw new Error(`Entity not found at index ${entityIndex}`);
-  if (item.type === 'lw') throw new Error(`Index ${entityIndex} is a lightweight buildable, not a machine`);
+  if (item.type === 'lw') throw new Error(`Index ${entityIndex} is a lightweight buildable, not an entity`);
   const entity = item.entity;
 
   const Registry = require('../../lib/Registry');
@@ -144,15 +145,15 @@ function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   const saveState = getSaveState();
   if (!saveState) throw new Error('No save loaded');
 
-  const srcMachine = getEntity(sourceIndex);
-  const tgtMachine = getEntity(targetIndex);
+  const srcEntity = getEntity(sourceIndex);
+  const tgtEntity = getEntity(targetIndex);
 
-  const srcPort = srcMachine.port(sourcePort);
-  const tgtPort = tgtMachine.port(targetPort);
+  const srcPort = srcEntity.port(sourcePort);
+  const tgtPort = tgtEntity.port(targetPort);
 
   const ConveyorLift = require('../../lib/logistic/ConveyorLift');
-  if (srcMachine instanceof ConveyorLift && tgtMachine instanceof ConveyorLift) {
-    tgtMachine.attachLift(targetPort, srcPort);
+  if (srcEntity instanceof ConveyorLift && tgtEntity instanceof ConveyorLift) {
+    tgtEntity.attachLift(targetPort, srcPort);
   } else {
     srcPort.attach(tgtPort);
   }
@@ -172,11 +173,11 @@ function wirePorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   const saveState = getSaveState();
   if (!saveState) throw new Error('No save loaded');
 
-  const srcMachine = getEntity(sourceIndex);
-  const tgtMachine = getEntity(targetIndex);
+  const srcEntity = getEntity(sourceIndex);
+  const tgtEntity = getEntity(targetIndex);
 
-  const srcPort = srcMachine.port(sourcePort);
-  const tgtPort = tgtMachine.port(targetPort);
+  const srcPort = srcEntity.port(sourcePort);
+  const tgtPort = tgtEntity.port(targetPort);
 
   srcPort.wire(tgtPort);
 
@@ -221,17 +222,32 @@ function updateEntityConnections(entityIndex) {
   saveState.viewerEntityRepository.entities[entityIndex].cn = cn;
 }
 
+// ── Spline length validation ───────────────────────────────────────
+function dist3D(a, b) {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
+}
+
+function validateSplineLength(type, length) {
+  const limits = splineLimits[type];
+  if (!limits) return;
+  if (length < limits.min)
+    throw new Error(`${type} too short: ${Math.round(length)} UU (min ${limits.min})`);
+  if (length > limits.max)
+    throw new Error(`${type} too long: ${Math.round(length)} UU (max ${limits.max})`);
+}
+
 // ── Create a belt between two ports ──────────────────────────────────
 function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const saveState = getSaveState();
   const ConveyorBelt = require('../../lib/logistic/ConveyorBelt');
-  const srcMachine = getEntity(fromIdx);
-  const tgtMachine = getEntity(toIdx);
-  const srcPort = srcMachine.port(fromPort);
-  const tgtPort = tgtMachine.port(toPort);
+  const srcEntity = getEntity(fromIdx);
+  const tgtEntity = getEntity(toIdx);
+  const srcPort = srcEntity.port(fromPort);
+  const tgtPort = tgtEntity.port(toPort);
 
   const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
   const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
+  validateSplineLength('belt', dist3D(wSrcPos, wTgtPos));
   const belt = ConveyorBelt.create(
     { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
     { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
@@ -278,13 +294,14 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
 function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const saveState = getSaveState();
   const Pipe = require('../../lib/logistic/Pipe');
-  const srcMachine = getEntity(fromIdx);
-  const tgtMachine = getEntity(toIdx);
-  const srcPort = srcMachine.port(fromPort);
-  const tgtPort = tgtMachine.port(toPort);
+  const srcEntity = getEntity(fromIdx);
+  const tgtEntity = getEntity(toIdx);
+  const srcPort = srcEntity.port(fromPort);
+  const tgtPort = tgtEntity.port(toPort);
 
   const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
   const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
+  validateSplineLength('pipe', dist3D(wSrcPos, wTgtPos));
   const pipe = Pipe.create(
     { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
     { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
@@ -418,8 +435,8 @@ function softDeleteEntity(index) {
   saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
 }
 
-// ── Update entity position/rotation/properties ──────────────────────
-function updateEntity(index, def, anchor, bpYawDeg, cosB, sinB, bpQuat) {
+// ── Update entity properties ────────────────────────────────────────
+function updateEntity(index, def) {
   const saveState = getSaveState();
   if (!saveState) throw new Error('No save loaded');
   const item = saveState.items[index];
@@ -427,22 +444,8 @@ function updateEntity(index, def, anchor, bpYawDeg, cosB, sinB, bpQuat) {
 
   const entity = item.entity;
 
-  if (def.position) {
-    const rel = def.position;
-    const rx = rel.x * cosB - rel.y * sinB;
-    const ry = rel.x * sinB + rel.y * cosB;
-    entity.transform.translation = {
-      x: anchor.x + rx,
-      y: anchor.y + ry,
-      z: anchor.z + (rel.z || 0),
-    };
-  }
-
-  if (def.rotation !== undefined) {
-    entity.transform.rotation = def.rotation
-      ? composeYawQuats(bpQuat, yawToQuat(def.rotation))
-      : bpQuat;
-  }
+  if (def.position) throw new Error('Cannot reposition existing entity — only connections can reposition');
+  if (def.rotation !== undefined) throw new Error('Cannot rotate existing entity — only connections can reposition');
 
   if (def.properties) {
     Object.assign(entity.properties, def.properties);
@@ -483,7 +486,7 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
     }
 
     if (def.index !== undefined) {
-      const result = updateEntity(def.index, def, anchor, bpYawDeg, cosB, sinB, bpQuat);
+      const result = updateEntity(def.index, def);
       if (def.id) idMap[def.id] = def.index;
       updated.push({ id: def.id || null, index: def.index, item: result.item, classUpdate: result.classUpdate });
       continue;
@@ -546,6 +549,13 @@ function processConnections(connections, idMap, added) {
       results.push({ from: conn.from, to: conn.to, pipe: result.beltId });
     } else {
       const result = attachPorts(fromIdx, fromPort, toIdx, toPort);
+      // Validate lift height after snap
+      for (const idx of [fromIdx, toIdx]) {
+        const item = saveState.items[idx];
+        if (!item || item.type !== 'entity') continue;
+        const topZ = item.entity.properties?.mTopTransform?.value?.properties?.Translation?.value?.z;
+        if (topZ != null) validateSplineLength('lift', Math.abs(topZ));
+      }
       results.push({ from: conn.from, to: conn.to, ...result });
     }
   }
@@ -653,9 +663,7 @@ function editEntities(batch) {
     rebuildTouchedItems(connectionResults, added, updated);
   }
 
-  if (!batch.skipClearance) {
-    validateClearance(added, updated);
-  }
+  validateClearance(added, updated);
 
   console.log(`Edit: +${added.length} ~${updated.length} -${deleted.length}, ${connectionResults.length} connections`);
   return { added, updated, deleted, connections: connectionResults };

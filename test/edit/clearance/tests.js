@@ -30,18 +30,6 @@ describe('Clearance', () => {
     assert.strictEqual(r.added.length, 2);
   });
 
-  it('27. should bypass overlap with skipClearance', () => {
-    const r = editEntities({
-      anchor: { x: 220000, y: 0, z: 0 },
-      skipClearance: true,
-      entities: [
-        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-      ],
-    });
-    assert.strictEqual(r.added.length, 2);
-  });
-
   it('28. should not self-collide when updating alias at same position', () => {
     const r1 = editEntities({
       anchor: { x: 230000, y: 0, z: 0 },
@@ -50,7 +38,7 @@ describe('Clearance', () => {
     const idx = r1.added[0].index;
 
     const r2 = editEntities({
-      entities: [{ id: 'c1', index: idx, position: { x: 0, y: 0, z: 0 } }],
+      entities: [{ id: 'c1', index: idx, properties: {} }],
     });
     assert.strictEqual(r2.updated.length, 1);
   });

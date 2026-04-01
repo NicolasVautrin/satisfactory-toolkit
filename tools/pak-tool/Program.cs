@@ -15,6 +15,7 @@ var offset = ParseInt(args, "--offset") ?? 0;
 var limit = ParseInt(args, "--limit") ?? 50;
 var outputDir = ParseString(args, "--output")
     ?? Path.Combine(ProviderFactory.ToolkitDir, "data", "viewer-assets");
+var refresh = args.Contains("--refresh");
 var gameDir = ParseString(args, "--game-dir");
 if (gameDir != null) ProviderFactory.GameDirOverride = gameDir;
 
@@ -31,17 +32,17 @@ switch (mode)
         var provider = ProviderFactory.CreateProvider();
         Log.Information("Loaded {Count} files from provider", provider.Files.Count);
         var regexp = ParseString(args, "--regexp") ?? ".*";
-        ListExportsCommand.Run(provider, regexp, offset, limit);
+        ListExportsCommand.Run(provider, regexp, offset, limit, refresh);
         break;
     }
     case "export-details":
     {
-        var provider = ProviderFactory.CreateProvider();
-        Log.Information("Loaded {Count} files from provider", provider.Files.Count);
         var regexp = ParseString(args, "--regexp") ?? "";
         if (string.IsNullOrWhiteSpace(regexp)) { Log.Error("Usage: export-details --regexp <filter> [--jsonpath <path>] [--offset N] [--limit N]"); break; }
+        var provider = ProviderFactory.CreateProvider();
+        Log.Information("Loaded {Count} files from provider", provider.Files.Count);
         var jsonpath = ParseString(args, "--jsonpath");
-        ExportDetailsCommand.Run(provider, regexp, jsonpath, offset, limit);
+        ExportDetailsCommand.Run(provider, regexp, jsonpath, offset, limit, refresh);
         break;
     }
 

@@ -201,24 +201,44 @@ describe('Lift', () => {
       const lift2 = getBuilder(liftIdx);
       assertLiftTopCardinal(lift2);
 
-      const topPos = lift2.port('top').worldPos();
-      const entityPos = getEntity(liftIdx).entity.transform.translation;
-      const topOffsetX = topPos.x - entityPos.x;
-      const topOffsetY = topPos.y - entityPos.y;
+      // Verify top port dir opposes bottom port dir for BACK, and is perpendicular for RIGHT/LEFT
+      const topDir = lift2.port('top').worldDir();
+      const botDir = lift2.port('bottom').worldDir();
+      const dot = topDir.x * botDir.x + topDir.y * botDir.y;
 
       if (name === 'FRONT') {
-        assert(topOffsetX > 0, `FRONT: top port should be at +X, got offset ${topOffsetX}`);
-        assertApprox(topOffsetY, 0, 50, `FRONT: top port Y offset should be ~0`);
+        assertApprox(dot, 1, 0.1, `FRONT: top and bottom arms should be parallel (dot=${dot})`);
       } else if (name === 'BACK') {
-        assert(topOffsetX < 0, `BACK: top port should be at -X, got offset ${topOffsetX}`);
-        assertApprox(topOffsetY, 0, 50, `BACK: top port Y offset should be ~0`);
-      } else if (name === 'RIGHT') {
-        assertApprox(topOffsetX, 0, 50, `RIGHT: top port X offset should be ~0`);
-        assert(topOffsetY > 0, `RIGHT: top port should be at +Y, got offset ${topOffsetY}`);
-      } else if (name === 'LEFT') {
-        assertApprox(topOffsetX, 0, 50, `LEFT: top port X offset should be ~0`);
-        assert(topOffsetY < 0, `LEFT: top port should be at -Y, got offset ${topOffsetY}`);
+        assertApprox(dot, -1, 0.1, `BACK: top and bottom arms should oppose (dot=${dot})`);
+      } else if (name === 'RIGHT' || name === 'LEFT') {
+        assertApprox(dot, 0, 0.1, `${name}: top and bottom arms should be perpendicular (dot=${dot})`);
       }
     }
+  });
+
+  it('33. should reject lift too tall', () => {
+    assert.throws(() => {
+      editEntities({
+        anchor: { x: 210000, y: 0, z: 0 },
+        entities: [
+          { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+          { id: 'lift1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 5000 } },
+        ],
+        connections: [{ from: 'lift1:bottom', to: 'c1:Output0' }],
+      });
+    }, /too long/);
+  });
+
+  it('34. should reject lift too short', () => {
+    assert.throws(() => {
+      editEntities({
+        anchor: { x: 220000, y: 0, z: 0 },
+        entities: [
+          { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+          { id: 'lift1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 300 } },
+        ],
+        connections: [{ from: 'lift1:bottom', to: 'c1:Output0' }],
+      });
+    }, /too short/);
   });
 });

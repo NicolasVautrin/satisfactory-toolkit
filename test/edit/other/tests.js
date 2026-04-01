@@ -124,20 +124,18 @@ describe('Other', () => {
     assert.strictEqual(getEntity(idx), null);
   });
 
-  it('11. should update entity position', () => {
+  it('11. should reject repositioning an existing entity', () => {
     const r1 = editEntities({
       anchor: { x: 70000, y: 0, z: 0 },
       entities: [{ id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } }],
     });
     const idx = added(r1, 'c1').entity.saveIndex;
 
-    editEntities({
-      anchor: { x: 80000, y: 5000, z: 1000 },
-      entities: [{ index: idx, position: { x: 0, y: 0, z: 0 } }],
-    });
-    const t = getEntity(idx).entity.transform.translation;
-    assertApprox(t.x, 80000, 2);
-    assertApprox(t.y, 5000, 2);
-    assertApprox(t.z, 1000, 2);
+    assert.throws(() => {
+      editEntities({
+        anchor: { x: 80000, y: 5000, z: 1000 },
+        entities: [{ index: idx, position: { x: 0, y: 0, z: 0 } }],
+      });
+    }, /Cannot reposition/);
   });
 });

@@ -78,4 +78,31 @@ describe('Belt', () => {
     const t = m1.entity.transform.translation;
     assert(t.x > 110000 && t.x < 114000, `Merger x should be between belt endpoints, got ${t.x}`);
   });
+
+  it('31. should reject belt too long', () => {
+    assert.throws(() => {
+      editEntities({
+        anchor: { x: 400000, y: 0, z: 0 },
+        entities: [
+          { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+          { id: 'c2', type: 'constructor', position: { x: 6000, y: 0, z: 0 } },
+        ],
+        connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
+      });
+    }, /too long/);
+  });
+
+  it('32. should reject belt too short', () => {
+    // Two splitters 50 UU apart — Output1→Input1 ports nearly co-located
+    assert.throws(() => {
+      editEntities({
+        anchor: { x: 410000, y: 0, z: 0 },
+        entities: [
+          { id: 's1', type: 'splitter', position: { x: 0, y: 0, z: 0 } },
+          { id: 's2', type: 'splitter', position: { x: 50, y: 0, z: 0 } },
+        ],
+        connections: [{ from: 's1:Output1', to: 's2:Input1', belt: 6 }],
+      });
+    }, /too short/);
+  });
 });

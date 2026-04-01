@@ -22,6 +22,12 @@ data/water_mask_potrace.svg
 bin/
 obj/
 
+# Test reports
+test/reports/
+
+# pak-tool cache
+tools/pak-tool/exports-index.json
+
 # Local config
 .claude/settings.local.json
 .mcp.json

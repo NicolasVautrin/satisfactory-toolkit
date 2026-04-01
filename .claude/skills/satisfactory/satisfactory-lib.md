@@ -585,6 +585,10 @@ lift.port('bottom');  // port bas
 lift.port('top');     // port haut
 ```
 
+**Direction des ports** : Le `_dir` des ports est `{x:1, y:0, z:0}` (+X local) — aligné avec la direction du bras. `worldDir()` retourne la direction du bras en world space. Quand un lift snap, son bras pointe vers l'anchor (port dir oppose anchor dir). `PORT_DIR_AXIS = {x:1, y:0}` est l'unique constante d'axe (offset et direction unifiés).
+
+**Limites de hauteur** : min 400 UU (4m), max 4800 UU (48m). Validé par l'éditeur.
+
 **Polarité** : Les ports d'un lift sont bidirectionnels (`flowType = null`) à la création. La première connexion à un port polarisé (producer Input/Output, belt ConveyorAny0/1) fixe la polarité du lift :
 - `lift.bottom` connecté à un `Output` → bottom = INPUT, top = OUTPUT
 - `lift.bottom` connecté à un `Input` → bottom = OUTPUT, top = INPUT

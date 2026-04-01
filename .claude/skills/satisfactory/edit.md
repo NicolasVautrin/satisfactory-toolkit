@@ -128,9 +128,30 @@ Exemple :
 
 Le `topDir` est appliqué **après** les connexions (deferred) pour que le repositionnement ne l'écrase pas.
 
+## Limites de longueur / hauteur
+
+Validées automatiquement lors de la création de belts, pipes et lifts. Définies dans `data/splineLimits.json`.
+
+| Type | Min (UU) | Max (UU) |
+|------|----------|----------|
+| belt | 200 | 5600 |
+| pipe | 200 | 5600 |
+| track | 1200 | 9900 |
+| lift | 400 | 4800 |
+
+Un belt/pipe trop court ou trop long, ou un lift hors limites, provoque une erreur avec rollback.
+
+## Repositionnement interdit
+
+Les entités existantes (référencées par `index`) ne peuvent **pas** être repositionnées via `position` ou `rotation`. Seules les `properties` peuvent être mises à jour. Le repositionnement ne se fait que via les connexions (snap).
+
+## Clearance
+
+La validation de clearance (détection de chevauchement OBB) est **toujours active** — pas de bypass possible. Les entités spline (belts, pipes, lifts, tracks) sont exclues du check.
+
 ## Rollback
 
-Si une connexion échoue, **toutes** les entités ajoutées dans le batch sont supprimées (rollback atomique).
+Si une connexion ou validation échoue, **toutes** les entités ajoutées dans le batch sont supprimées (rollback atomique).
 
 ## Exemples
 

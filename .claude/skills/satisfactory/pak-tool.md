@@ -28,6 +28,8 @@ Les **logs** (Serilog) vont sur **stderr**. La **sortie JSON** va sur **stdout**
 
 Scanne tous les packages, construit `{pkg}::{exportName}::{exportClass}`, filtre par regex. **Header-only** : pas de désérialisation.
 
+**Cache** : Le premier appel scanne ~30k packages et crée `tools/pak-tool/exports-index.json` (~60 Mo, ~434k exports). Les appels suivants chargent le cache (~1s au lieu de ~2min). Utiliser `--refresh` pour forcer le re-scan.
+
 ```bash
 # Tous les exports contenant "smelter"
 dotnet run -- list-exports --regexp "smelter" --limit 5
@@ -35,15 +37,15 @@ dotnet run -- list-exports --regexp "smelter" --limit 5
 # Seulement les StaticMesh
 dotnet run -- list-exports --regexp "::StaticMesh$" --limit 10
 
-# SplineComponent dans les packages River
-dotnet run -- list-exports --regexp "River.*::SplineComponent" --limit 10
+# Forcer le re-scan (ignore le cache)
+dotnet run -- list-exports --regexp "smelter" --limit 5 --refresh
 ```
 
 Sortie JSON : tableau de strings au format `pkg::name::class`.
 
 ### export-details — Deep dump d'exports
 
-Même filtre `--regexp` sur `pkg::name::class`, puis désérialise et dump en JSON complet (Newtonsoft). Filtre optionnel `--jsonpath`.
+Utilise le cache de `list-exports` pour filtrer les exports, puis désérialise et dump en JSON complet (Newtonsoft). Filtre optionnel `--jsonpath`. Si le cache n'existe pas, lancer `list-exports` d'abord.
 
 ```bash
 # Dump complet d'un export
