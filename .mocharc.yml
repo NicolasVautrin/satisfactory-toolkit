@@ -1,0 +1,2 @@
+spec: test/edit/**/*.js
+timeout: 30000
