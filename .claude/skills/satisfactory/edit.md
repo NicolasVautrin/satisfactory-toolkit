@@ -110,6 +110,24 @@ Les ports d'un lift sont bidirectionnels (`flowType = null`) à la création. La
 
 Deux lifts top↔top ne peuvent se connecter que si leurs polarités sont **opposées**.
 
+## Direction du bras top (lift)
+
+La propriété `properties.topDir` sur une entité lift permet d'orienter le bras supérieur. 4 directions cardinales en entity-local space :
+
+| Nom | Valeur | Description |
+|-----|--------|-------------|
+| FRONT | `{x:1, y:0}` | Même direction que le bras bottom |
+| BACK | `{x:-1, y:0}` | Opposé au forward |
+| RIGHT | `{x:0, y:1}` | Droite |
+| LEFT | `{x:0, y:-1}` | Gauche |
+
+Exemple :
+```json
+{"id": "lift1", "type": "lift", "position": {"x": 0, "y": 0, "z": 0}, "properties": {"topDir": {"x": 0, "y": 1}}}
+```
+
+Le `topDir` est appliqué **après** les connexions (deferred) pour que le repositionnement ne l'écrase pas.
+
 ## Rollback
 
 Si une connexion échoue, **toutes** les entités ajoutées dans le batch sont supprimées (rollback atomique).

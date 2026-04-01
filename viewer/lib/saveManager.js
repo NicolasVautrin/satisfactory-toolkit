@@ -14,6 +14,12 @@ let cbpState = null;
 function getSaveState() { return saveState; }
 function getCbpState() { return cbpState; }
 
+function addItem(entity) {
+  saveState.items.push({ type: 'entity', entity });
+  entity.saveIndex = saveState.items.length - 1;
+  return entity.saveIndex;
+}
+
 // ── Classes to skip ────────────────────────────────────────────────
 const SKIP_CLASSES = /FlowIndicator/;
 
@@ -151,16 +157,11 @@ function deleteEntities(indices) {
     }
   }
 
-  saveState.entities = saveState.entities.filter(e => !entitiesToRemove.has(e));
-  saveState.lwInstances = saveState.lwInstances.filter(lw => !lwToRemove.has(lw));
-  saveState.items = saveState.items.filter((_, i) => !toDelete.has(i));
-  saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
-
-  const compByName = new Map();
-  for (const obj of saveState.allObjects) {
-    if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
+  for (const idx of toDelete) {
+    saveState.items[idx] = null;
+    if (saveState.viewerEntityRepository) saveState.viewerEntityRepository.entities[idx] = null;
   }
-  saveState.viewerEntityRepository = buildViewerEntitiesFromSave(saveState.entities, saveState.lwInstances, compByName);
+  saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
 
   console.log(`Deleted ${toDelete.size} (${entitiesToRemove.size} entities + ${lwToRemove.size} lightweight)`);
   return { deleted: toDelete.size };
@@ -291,6 +292,10 @@ function injectBlueprint(placementTransform) {
     ...saveState.entities.map(e => ({ type: 'entity', entity: e })),
     ...saveState.lwInstances.map(lw => ({ type: 'lw', lw })),
   ];
+  saveState.items.forEach((item, i) => {
+    if (item.entity) item.entity.saveIndex = i;
+    else if (item.lw) item.lw.saveIndex = i;
+  });
 
   const entityCount = newObjects.filter(o => o.type === 'SaveEntity').length;
   console.log(`Inject complete: ${entityCount} entities, save updated`);
@@ -344,7 +349,7 @@ function serializeSave() {
 
 module.exports = {
   loadSave, loadCbp, loadBlueprint,
-  getSaveState, getCbpState,
+  getSaveState, getCbpState, addItem,
   deleteEntities, ensureSaveState,
   injectBlueprint, getPlayerPosition, setPlayerPosition, serializeSave,
 };

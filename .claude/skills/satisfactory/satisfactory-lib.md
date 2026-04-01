@@ -593,6 +593,16 @@ lift.port('top');     // port haut
 
 Deux lifts top↔top ne peuvent se connecter que si leurs polarités sont opposées (un OUTPUT, un INPUT).
 
+**Direction du bras top** : `lift.setTopDir(lDir)` — oriente le bras supérieur dans une direction cardinale en entity-local space. 4 constantes disponibles :
+
+```js
+const { FRONT, BACK, RIGHT, LEFT } = ConveyorLift.TopDir;
+lift.setTopDir(FRONT);  // {x:1, y:0}  — même direction que le bras bottom
+lift.setTopDir(BACK);   // {x:-1, y:0} — opposé au forward
+lift.setTopDir(RIGHT);  // {x:0, y:1}  — droite
+lift.setTopDir(LEFT);   // {x:0, y:-1} — gauche
+```
+
 **Méthodes de connexion** :
 - `lift.attachBelt(portName, beltPort)` — snap le lift sur un port belt (repositionne + wire)
 - `toLift.attachLift(portName, fromLiftPort)` — connexion lift↔lift (cardinal snap, valide la polarité)

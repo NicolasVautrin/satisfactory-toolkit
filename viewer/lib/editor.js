@@ -2,7 +2,7 @@
  * Entity editor — add, update, delete, connect, insert, clearance check.
  * Operates on the saveState managed by saveManager.js.
  */
-const { getSaveState, deleteEntities, ensureSaveState } = require('./saveManager');
+const { getSaveState, addItem, deleteEntities, ensureSaveState } = require('./saveManager');
 const { buildViewerEntityFromEditor } = require('./viewerEntityFactory');
 
 // ── Yaw helpers ─────────────────────────────────────────────────────
@@ -93,8 +93,7 @@ function addEntity(typePath, position, rotation, properties) {
     saveState.viewerEntityRepository.clearance = classUpdate.clearance;
     saveState.viewerEntityRepository.portLayouts = classUpdate.portLayouts;
   }
-  saveState.items.push({ type: 'entity', entity });
-  const entityIndex = saveState.items.length - 1;
+  const entityIndex = addItem(entity);
   saveState.viewerEntityRepository.entities.push(item);
 
   console.log(`Added entity ${cls} at (${position.x}, ${position.y}, ${position.z}) index=${entityIndex}`);
@@ -231,9 +230,11 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const srcPort = srcMachine.port(fromPort);
   const tgtPort = tgtMachine.port(toPort);
 
+  const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
+  const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
   const belt = ConveyorBelt.create(
-    { pos: { ...srcPort.pos }, dir: srcPort.dir ? { ...srcPort.dir } : null },
-    { pos: { ...tgtPort.pos }, dir: tgtPort.dir ? { ...tgtPort.dir } : null },
+    { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
+    { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
     typeof tier === 'number' ? tier : 6,
   );
 
@@ -256,8 +257,7 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
     saveState.viewerEntityRepository.clearance = classUpdate.clearance;
     saveState.viewerEntityRepository.portLayouts = classUpdate.portLayouts;
   }
-  saveState.items.push({ type: 'entity', entity: belt.entity });
-  const beltIndex = saveState.items.length - 1;
+  const beltIndex = addItem(belt.entity);
   saveState.viewerEntityRepository.entities.push(item);
 
   const beltInput = belt.port(ConveyorBelt.Ports.INPUT);
@@ -283,9 +283,11 @@ function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const srcPort = srcMachine.port(fromPort);
   const tgtPort = tgtMachine.port(toPort);
 
+  const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
+  const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
   const pipe = Pipe.create(
-    { pos: { ...srcPort.pos }, dir: srcPort.dir ? { ...srcPort.dir } : null },
-    { pos: { ...tgtPort.pos }, dir: tgtPort.dir ? { ...tgtPort.dir } : null },
+    { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
+    { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
     typeof tier === 'number' ? tier : 2,
   );
 
@@ -308,8 +310,7 @@ function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
     saveState.viewerEntityRepository.clearance = classUpdate.clearance;
     saveState.viewerEntityRepository.portLayouts = classUpdate.portLayouts;
   }
-  saveState.items.push({ type: 'entity', entity: pipe.entity });
-  const pipeIndex = saveState.items.length - 1;
+  const pipeIndex = addItem(pipe.entity);
   saveState.viewerEntityRepository.entities.push(item);
 
   const pipeConn0 = pipe.port('PipelineConnection0');
@@ -376,8 +377,7 @@ function insertOnSpline(entityIndex, splineIndex, position, reverse) {
     saveState.viewerEntityRepository.clearance = splineCU.clearance;
     saveState.viewerEntityRepository.portLayouts = splineCU.portLayouts;
   }
-  saveState.items.push({ type: 'entity', entity: newSpline.entity });
-  const newSplineIndex = saveState.items.length - 1;
+  const newSplineIndex = addItem(newSpline.entity);
   saveState.viewerEntityRepository.entities.push(splineViewItem);
 
   // Rebuild the original spline's viewer item
@@ -500,6 +500,12 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
     const result = addEntity(typePath, position, rotation, def.properties);
     if (def.id) idMap[def.id] = result.entityIndex;
     added.push({ id: def.id || null, index: result.entityIndex, instanceName: result.entity.instanceName, item: result.item, classUpdate: result.classUpdate });
+
+    // Defer topDir for lifts — must be applied after connections reposition the lift
+    if (def.properties?.topDir && typePath.includes('ConveyorLift')) {
+      if (!batch._pendingTopDirs) batch._pendingTopDirs = [];
+      batch._pendingTopDirs.push({ index: result.entityIndex, topDir: def.properties.topDir });
+    }
   }
 }
 
@@ -581,7 +587,6 @@ function rebuildTouchedItems(connectionResults, added, updated) {
 function validateClearance(added, updated) {
   const saveState = getSaveState();
   const { checkClearance, formatCollisions } = require('../../lib/shared/Clearance');
-  const ConveyorLift = require('../../lib/logistic/ConveyorLift');
   const Registry = require('../../lib/Registry');
   const registry = Registry.default();
 
@@ -592,8 +597,7 @@ function validateClearance(added, updated) {
     const cls = item.entity.typePath.split('.').pop();
     const Builder = registry.get(cls);
     if (Builder?.IS_SPLINE) continue;
-    const boxes = cls.startsWith('Build_ConveyorLift') ? ConveyorLift.buildBoxes(item.entity) : undefined;
-    batchEntities.push({ id: entry.id || `index ${entry.index}`, entity: item.entity, boxes });
+    batchEntities.push({ id: entry.id || `index ${entry.index}`, entity: item.entity });
   }
 
   if (batchEntities.length === 0) return;
@@ -630,6 +634,18 @@ function editEntities(batch) {
       deleteEntities(indicesToDelete);
       console.log(`Edit rollback: deleted ${indicesToDelete.length} entities after error: ${err.message}`);
       throw err;
+    }
+  }
+
+  // Apply deferred topDir for lifts (after connections repositioned them)
+  // topDir is the arm direction in entity-local space
+  if (batch._pendingTopDirs) {
+    const ConveyorLift = require('../../lib/logistic/ConveyorLift');
+    for (const { index, topDir } of batch._pendingTopDirs) {
+      const lift = getEntity(index);
+      if (lift instanceof ConveyorLift) {
+        lift.setTopDir(topDir);
+      }
     }
   }
 
