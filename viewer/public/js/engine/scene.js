@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 
+// ── Display mode (centralized) ────────────────────────────
+const DEFAULT_DISPLAY = 'lod0';
+let _display = localStorage.getItem('viewer_display') || DEFAULT_DISPLAY;
+export function getDisplay() { return _display; }
+export function setDisplay(d) { _display = d; localStorage.setItem('viewer_display', d); }
+
 // ── Coordinate transform (Unreal → Viewer) ─────────────────
 export function gameToViewer(x, y, z) {
   return new THREE.Vector3(-x, y, z);

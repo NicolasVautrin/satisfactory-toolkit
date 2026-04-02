@@ -51,7 +51,11 @@ function addEntity(typePath, position, rotation, properties) {
       let result;
       if (cls.startsWith('Build_ConveyorLift')) {
         const height = properties?.height || 400;
-        const topRot = properties?.topRot || { x: 0, y: 0, z: 0, w: 1 };
+        let topRot = properties?.topRot || { x: 0, y: 0, z: 0, w: 1 };
+        if (properties?.topDir) {
+          const Quaternion = require('../../lib/shared/Quaternion');
+          topRot = Quaternion.fromLocalToWorldZ({ x: 1, y: 0 }, properties.topDir).toPlain();
+        }
         const tierMatch = cls.match(/Mk(\d)/);
         const tier = tierMatch ? parseInt(tierMatch[1]) : 6;
         result = Builder.create(position, height, rot, topRot, tier);
@@ -236,6 +240,103 @@ function validateSplineLength(type, length) {
     throw new Error(`${type} too long: ${Math.round(length)} UU (max ${limits.max})`);
 }
 
+// ── Spline curvature / slope validation ───────────────────────────
+const GUARD_DIST = 100; // 2 × PORT_TANGENT
+
+function validateSplineShape(type, entity, wSrcDir, wDstDir) {
+  const Builder = require('../../lib/shared/Builder');
+  const { sampleHermiteSpline } = require('../../lib/shared/hermite');
+  const Vector3D = require('../../lib/shared/Vector3D');
+
+  const pts = Builder._parseSplinePoints(entity);
+  if (!pts || pts.length < 2) return;
+
+  // U-turn check using world-space port directions passed by caller.
+  // wSrcDir = source port direction (points away from source building, into the belt)
+  // wDstDir = dest port direction (points away from dest building, away from belt)
+  // span = source port → dest port
+  // Normal: wSrcDir roughly aligned with span (belt exits source toward dest)
+  //         wDstDir roughly aligned with span (dest port faces away from source)
+  // U-turn: wSrcDir points backward (away from dest) OR wDstDir points backward (toward source)
+  if (wSrcDir && wDstDir) {
+    const p0 = pts[0], pN = pts[pts.length - 1];
+    const span = new Vector3D(pN.x - p0.x, pN.y - p0.y, 0);
+    const spanXY = span.length;
+    if (spanXY > 1e-6) {
+      const sn = { x: span.x / spanXY, y: span.y / spanXY };
+      const cosSrc = wSrcDir.x * sn.x + wSrcDir.y * sn.y;
+      const cosDst = wDstDir.x * sn.x + wDstDir.y * sn.y;
+      // Source port points away from building, into the belt → should align with span (cosSrc > 0)
+      // Dest port points away from building, away from belt → should oppose span (cosDst < 0)
+      // U-turn if source points backward (cosSrc < -0.5) or dest points forward (cosDst > 0.5)
+      if (cosSrc < -0.5 || cosDst > 0.5) {
+        throw new Error(`${type} would require U-turn`);
+      }
+    }
+  }
+
+  const limits = splineLimits[type];
+  if (!limits || (!limits.minRadiusXY && !limits.maxSlopeDeg)) return;
+
+  const sampled = sampleHermiteSpline(pts, 100);
+  const t = entity.transform.translation;
+  const r = entity.transform.rotation;
+  const world = sampled.map(p => new Vector3D(p).rotate(r).add(new Vector3D(t)));
+
+  // Skip guard sections (GUARD_DIST from each end) for curvature/slope checks
+  let guardSamples = 0;
+  let cumLen = 0;
+  for (let i = 1; i < world.length; i++) {
+    cumLen += world[i].sub(world[i - 1]).length;
+    if (cumLen >= GUARD_DIST) { guardSamples = i; break; }
+  }
+  let totalLen = cumLen;
+  for (let i = guardSamples + 1; i < world.length; i++) totalLen += world[i].sub(world[i - 1]).length;
+  let endGuardStart = world.length - 1;
+  cumLen = 0;
+  for (let i = world.length - 1; i > 0; i--) {
+    cumLen += world[i].sub(world[i - 1]).length;
+    if (cumLen >= GUARD_DIST) { endGuardStart = i; break; }
+  }
+  const iStart = guardSamples;
+  const iEnd = endGuardStart;
+
+  // Min curvature radius in XY plane (excluding guards)
+  if (limits.minRadiusXY) {
+    let minR = Infinity;
+    for (let i = Math.max(1, iStart); i < Math.min(world.length - 1, iEnd); i++) {
+      const v1x = world[i].x - world[i - 1].x, v1y = world[i].y - world[i - 1].y;
+      const v2x = world[i + 1].x - world[i].x, v2y = world[i + 1].y - world[i].y;
+      const l1 = Math.sqrt(v1x * v1x + v1y * v1y);
+      const l2 = Math.sqrt(v2x * v2x + v2y * v2y);
+      if (l1 < 1e-6 || l2 < 1e-6) continue;
+      const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (angle > 1e-10) {
+        const rv = (l1 + l2) / 2 / angle;
+        if (rv < minR) minR = rv;
+      }
+    }
+    if (minR < limits.minRadiusXY) {
+      throw new Error(`${type} curvature too tight: radius ${Math.round(minR)} UU (min ${limits.minRadiusXY})`);
+    }
+  }
+
+  // Max slope (excluding guards)
+  if (limits.maxSlopeDeg) {
+    const maxTan = Math.tan(limits.maxSlopeDeg * Math.PI / 180);
+    for (let i = Math.max(1, iStart); i <= iEnd; i++) {
+      const dx = world[i].x - world[i - 1].x, dy = world[i].y - world[i - 1].y;
+      const dz = world[i].z - world[i - 1].z;
+      const hDist = Math.sqrt(dx * dx + dy * dy);
+      if (hDist > 1e-6 && Math.abs(dz) / hDist > maxTan) {
+        const slopeDeg = Math.atan(Math.abs(dz) / hDist) * 180 / Math.PI;
+        throw new Error(`${type} slope too steep: ${slopeDeg.toFixed(1)}° (max ${limits.maxSlopeDeg}°)`);
+      }
+    }
+  }
+}
+
 // ── Create a belt between two ports ──────────────────────────────────
 function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
   const saveState = getSaveState();
@@ -253,6 +354,7 @@ function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
     { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
     typeof tier === 'number' ? tier : 6,
   );
+  validateSplineShape('belt', belt.entity, wSrcDir, wTgtDir);
 
   const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
     saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
@@ -307,6 +409,7 @@ function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
     { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
     typeof tier === 'number' ? tier : 2,
   );
+  validateSplineShape('pipe', pipe.entity, wSrcDir, wTgtDir);
 
   const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
     saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
@@ -504,11 +607,6 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
     if (def.id) idMap[def.id] = result.entityIndex;
     added.push({ id: def.id || null, index: result.entityIndex, instanceName: result.entity.instanceName, item: result.item, classUpdate: result.classUpdate });
 
-    // Defer topDir for lifts — must be applied after connections reposition the lift
-    if (def.properties?.topDir && typePath.includes('ConveyorLift')) {
-      if (!batch._pendingTopDirs) batch._pendingTopDirs = [];
-      batch._pendingTopDirs.push({ index: result.entityIndex, topDir: def.properties.topDir });
-    }
   }
 }
 
@@ -647,17 +745,6 @@ function editEntities(batch) {
     }
   }
 
-  // Apply deferred topDir for lifts (after connections repositioned them)
-  // topDir is the arm direction in entity-local space
-  if (batch._pendingTopDirs) {
-    const ConveyorLift = require('../../lib/logistic/ConveyorLift');
-    for (const { index, topDir } of batch._pendingTopDirs) {
-      const lift = getEntity(index);
-      if (lift instanceof ConveyorLift) {
-        lift.setTopDir(topDir);
-      }
-    }
-  }
 
   if (connectionResults.length > 0) {
     rebuildTouchedItems(connectionResults, added, updated);

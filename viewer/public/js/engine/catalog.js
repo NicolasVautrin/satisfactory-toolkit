@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fetchBatchGlb } from './batchGlb.js';
+import { getDisplay } from './scene.js';
 
 // ── State ──────────────────────────────────────────────────────
 const loader = new GLTFLoader();
@@ -17,8 +18,8 @@ const _glbToViewer = new THREE.Matrix4().set(
 // Cache: lod → Map<className, { geometry, material }>
 const cache = new Map();
 let currentLod = (() => {
-  const d = typeof localStorage !== 'undefined' && localStorage.getItem('viewer_display');
-  return (d && d !== 'boxes') ? d : 'lod2';
+  const d = getDisplay();
+  return d !== 'boxes' ? d : 'lod0';
 })();
 const availableLods = ['lod0', 'lod1', 'lod2', 'lod3', 'lod4', 'lod5'];
 let classNamesUsed = [];

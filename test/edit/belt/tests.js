@@ -4,11 +4,12 @@ const { getEntity, added, splineMidpoint } = require('../helpers');
 
 describe('Belt', () => {
   it('3. should auto-create belt between two constructors', () => {
+    // Constructors aligned on Y axis so Output0 (+Y) faces Input0 (-Y)
     const r = editEntities({
       anchor: { x: 5000, y: 0, z: 0 },
       entities: [
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 2000, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 2000, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
     });
@@ -18,11 +19,13 @@ describe('Belt', () => {
   });
 
   it('12. should connect splitter to constructor via belt:6', () => {
+    // Splitter Output1 (+X) → belt → Constructor Input0
+    // Constructor rotated -90° so Input0 faces -X (toward splitter)
     const r = editEntities({
       anchor: { x: 90000, y: 0, z: 0 },
       entities: [
         { id: 's1', type: 'splitter', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c1', type: 'constructor', position: { x: 1000, y: 0, z: 0 } },
+        { id: 'c1', type: 'constructor', position: { x: 2000, y: 0, z: 0 }, rotation: -90 },
       ],
       connections: [{ from: 's1:Output1', to: 'c1:Input0', belt: 6 }],
     });
@@ -34,7 +37,7 @@ describe('Belt', () => {
       anchor: { x: 100000, y: 0, z: 0 },
       entities: [
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 3000, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
     });
@@ -51,7 +54,7 @@ describe('Belt', () => {
     assert.strictEqual(r2.added.length, 2, 'Expected splitter + belt2');
     const s1 = added(r2, 's1');
     const t = s1.entity.transform.translation;
-    assert(t.x > 100000 && t.x < 104000, `Splitter x should be between belt endpoints, got ${t.x}`);
+    assert(t.y > 0 && t.y < 3600, `Splitter y should be between belt endpoints, got ${t.y}`);
   });
 
   it('14. should insert merger on belt and reposition it', () => {
@@ -59,7 +62,7 @@ describe('Belt', () => {
       anchor: { x: 110000, y: 0, z: 0 },
       entities: [
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 3000, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
     });
@@ -76,7 +79,7 @@ describe('Belt', () => {
     assert.strictEqual(r2.added.length, 2, 'Expected merger + belt2');
     const m1 = added(r2, 'm1');
     const t = m1.entity.transform.translation;
-    assert(t.x > 110000 && t.x < 114000, `Merger x should be between belt endpoints, got ${t.x}`);
+    assert(t.y > 0 && t.y < 3600, `Merger y should be between belt endpoints, got ${t.y}`);
   });
 
   it('31. should reject belt too long', () => {

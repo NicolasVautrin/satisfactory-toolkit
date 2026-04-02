@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { renderer, scene, gameToViewer, requestRender } from './scene.js';
+import { renderer, scene, gameToViewer, requestRender, getDisplay } from './scene.js';
 import { getLandscapeMap, getViewerLandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
@@ -63,8 +63,8 @@ export function setSceneryVisible(visible) {
 
 export function isSceneryLoaded() { return loaded; }
 
-let currentSceneryLod = (typeof localStorage !== 'undefined' && localStorage.getItem('viewer_display')) || 'lod2';
-if (currentSceneryLod === 'boxes') currentSceneryLod = 'lod2'; // boxes mode has no scenery LOD, use default
+let currentSceneryLod = getDisplay();
+if (currentSceneryLod === 'boxes') currentSceneryLod = 'lod0';
 
 export async function setSceneryLod(lod) {
   if (lod === currentSceneryLod && loaded) return false;

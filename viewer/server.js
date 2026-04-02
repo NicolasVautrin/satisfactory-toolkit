@@ -238,6 +238,12 @@ app.get('/api/game/entity/:index', (req, res) => {
     if (info) { ports = info.ports; splineLength = info.splineLength; }
   }
 
+  // Raw spline control points (Hermite) in entity-local space
+  let splinePoints = null;
+  if (Builder?._parseSplinePoints) {
+    splinePoints = Builder._parseSplinePoints(entity);
+  }
+
   const result = {
     instanceName: entity.instanceName,
     typePath: entity.typePath,
@@ -249,6 +255,7 @@ app.get('/api/game/entity/:index', (req, res) => {
     components: comps,
   };
   if (splineLength != null) result.splineLength = splineLength;
+  if (splinePoints) result.splinePoints = splinePoints;
   res.json(result);
 });
 

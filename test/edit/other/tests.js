@@ -58,7 +58,7 @@ describe('Other', () => {
       anchor: { x: 30000, y: 0, z: 0 },
       entities: [
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 3000, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
     });
@@ -78,7 +78,7 @@ describe('Other', () => {
       anchor: { x: 35000, y: 0, z: 0 },
       entities: [
         { id: 'c3', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c4', type: 'constructor', position: { x: 3000, y: 0, z: 0 } },
+        { id: 'c4', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
       connections: [{ from: 'c3:Output0', to: 'c4:Input0', belt: 6 }],
     });

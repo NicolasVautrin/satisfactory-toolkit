@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { renderer, scene, camera, resize, initRenderer, consumeRender } from './engine/scene.js';
+import { renderer, scene, camera, resize, initRenderer, consumeRender, getDisplay } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState, onCameraChanged } from './engine/camera.js';
 import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, rebuildSaveScene, setCatVisible, setCbpVisible, setPortsVisible, setRenderMode } from './engine/entities.js';
 import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable } from './engine/catalog.js';
@@ -220,7 +220,7 @@ onSelectionChange(() => {
 async function onSaveLoaded(data, filename) {
   data.filename = filename;
   // Apply saved display mode
-  const display = localStorage.getItem('viewer_display') || 'lod2';
+  const display = getDisplay();
   if (display !== 'boxes') {
     setRenderMode('textured');
     await setLod(display);
@@ -340,7 +340,7 @@ fetch('/api/game/entities')
     if (result?.save) await onSaveLoaded(result.save, result.saveName || 'save');
     if (result?.cbp) onCbpLoaded(result.cbp, result.cbpName || 'cbp');
   })
-  .catch(() => {});
+  .catch(err => console.error('[Auto-refresh]', err));
 
 // WebSocket
 async function refreshFromServer(name) {

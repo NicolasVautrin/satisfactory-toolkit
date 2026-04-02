@@ -1,4 +1,5 @@
 import { refreshIcons } from './icons.js';
+import { getDisplay, setDisplay } from '../engine/scene.js';
 
 // ── Top bar with dropdown menus ──────────────────────────────
 
@@ -105,7 +106,7 @@ export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloa
   const displayMenu = createMenu(container, 'Display');
 
   // Unified display options: Boxes (no meshes) + LOD levels
-  let currentDisplay = localStorage.getItem('viewer_display') || 'lod2';
+  let currentDisplay = getDisplay();
   const displayItems = {};
 
   function addDisplayOption(key, label) {
@@ -115,7 +116,7 @@ export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloa
     item.addEventListener('click', () => {
       if (key === currentDisplay) return;
       currentDisplay = key;
-      localStorage.setItem('viewer_display', key);
+      setDisplay(key);
       for (const el of Object.values(displayItems)) el.classList.remove('checked');
       item.classList.add('checked');
       closeAll();

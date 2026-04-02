@@ -129,19 +129,21 @@ describe('Lift', () => {
   });
 
   it('22. should connect lift tops with opposite polarity through belts', () => {
+    // Constructor Output0 faces -X (rot 90°), lift bottom faces +X → facing each other
     const r1 = editEntities({
       anchor: { x: 180000, y: 0, z: 0 },
       entities: [
-        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'lift1', type: 'lift', position: { x: 500, y: 0, z: 0 } },
+        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
+        { id: 'lift1', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
     });
+    // Lift2 bottom faces +X, constructor Input0 faces +X (rot -90°) → facing each other
     const r2 = editEntities({
-      anchor: { x: 184000, y: 0, z: 0 },
+      anchor: { x: 186000, y: 0, z: 0 },
       entities: [
         { id: 'lift2', type: 'lift', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 500, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 1500, y: 0, z: 0 }, rotation: -90 },
       ],
       connections: [{ from: 'lift2:bottom', to: 'c2:Input0', belt: 6 }],
     });
@@ -159,16 +161,16 @@ describe('Lift', () => {
     const r1 = editEntities({
       anchor: { x: 190000, y: 0, z: 0 },
       entities: [
-        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'lift1', type: 'lift', position: { x: 500, y: 0, z: 0 } },
+        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
+        { id: 'lift1', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
       connections: [{ from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
     });
     const r2 = editEntities({
       anchor: { x: 194000, y: 0, z: 0 },
       entities: [
-        { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'lift2', type: 'lift', position: { x: 500, y: 0, z: 0 } },
+        { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
+        { id: 'lift2', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
       connections: [{ from: 'c2:Output0', to: 'lift2:bottom', belt: 6 }],
     });

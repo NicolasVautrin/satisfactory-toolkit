@@ -3,7 +3,7 @@ import { camera, renderer, requestRender } from './scene.js';
 
 // ── Camera state ────────────────────────────────────────────
 // Base sensitivity values are frozen — only modifiable via the setters below.
-const DEFAULTS = { flyStep: 5000, panSpeed: 1.5, rotateSpeed: 0.003 };
+const DEFAULTS = { flyStep: 2500, panSpeed: 1.5, rotateSpeed: 0.003 };
 const LIMITS = {
   flyStep:     { min: 100,    max: 100000 },
   panSpeed:    { min: 0.1,    max: 20 },
@@ -18,7 +18,7 @@ export const camState = {
   get rotateSpeed() { return _base.rotateSpeed; },
   get panSpeed()    { return _base.panSpeed; },
   get flyStep()     { return _base.flyStep; },
-  adaptive: false,
+  adaptive: true,
 };
 
 export function setFlyStep(v)     { _base.flyStep = Math.max(LIMITS.flyStep.min, Math.min(LIMITS.flyStep.max, v)); }
