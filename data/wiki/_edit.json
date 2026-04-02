@@ -41,7 +41,6 @@
   "request": {
     "anchor": "Position absolue {x,y,z} ou relative caméra {fromCamera: distance_uu}. Toutes les positions d'entités sont relatives à l'anchor.",
     "rotation": "Yaw global en degrés (optionnel). Tourne toutes les positions relatives autour de l'anchor.",
-    "skipClearance": "true pour désactiver la validation de collision des bounding boxes.",
     "entities": {
       "add": "{id, type, position} — type = alias wiki (ex: constructor, splitter, belt). position relative à l'anchor.",
       "alias": "{id, index} — référence une entité existante sans la modifier. Obligatoire pour la cibler dans connections.",
@@ -85,8 +84,21 @@
     "clearance": [
       "Les bounding boxes des entités ne doivent pas se chevaucher",
       "Les entités spline (belt, pipe, lift, track) sont exclues du check",
-      "En cas d'overlap : rollback + message listant les collisions",
-      "skipClearance: true pour désactiver la validation"
+      "En cas d'overlap : rollback + message listant les collisions"
+    ],
+    "splineShape": [
+      "U-turn : le port source doit pointer vers la destination (cos > -0.5), le port dest doit pointer à l'opposé de la source (cos < 0.5). Sinon : 'belt would require U-turn'.",
+      "Courbure XY min : belt 180 UU, track 900 UU. Mesurée hors guard sections (100 UU à chaque extrémité). Sinon : 'belt curvature too tight'.",
+      "Pente max : belt 40°, track 25°. Mesurée hors guard sections. Sinon : 'belt slope too steep'.",
+      "Les pipes n'ont pas de contrainte de courbure/pente, mais le check U-turn s'applique."
+    ],
+    "portAlignment": [
+      "IMPORTANT : les ports source et dest doivent pointer dans des directions compatibles avec le tracé du belt/pipe.",
+      "Constructor Input0 est en -Y, Output0 en +Y. Pour un belt droit entre deux constructors, les aligner sur l'axe Y (pas X).",
+      "Splitter/merger : utiliser rotation pour aligner les ports avec la direction souhaitée du belt.",
+      "Lift bottom pointe en +X local. Après snap, la direction world dépend de la rotation du lift. Le lift top FRONT = même direction que bottom.",
+      "topDir du lift est en entity-local space. Après snap sur un port -X (rotation 180°) : RIGHT local {0,1} → world -Y, LEFT local {0,-1} → world +Y.",
+      "topDir est en entity-local space ({x:0,y:1} = RIGHT, etc.). Converti en quaternion à la création du lift. Le bottom snap change la rotation de l'entity mais pas mTopTransform.Rotation, donc le topDir world dépend de la rotation finale du lift."
     ]
   },
   "behavior": {
@@ -96,11 +108,11 @@
   },
   "examples": {
     "create_2_constructors_with_belt": {
-      "description": "Créer deux constructors reliés par un belt Mk6",
+      "description": "Créer deux constructors reliés par un belt Mk6. Output0 (+Y) face à Input0 (-Y) → aligner sur Y.",
       "anchor": { "fromCamera": 5000 },
       "entities": [
         { "id": "c1", "type": "constructor", "position": { "x": 0, "y": 0, "z": 0 } },
-        { "id": "c2", "type": "constructor", "position": { "x": 1000, "y": 0, "z": 0 } }
+        { "id": "c2", "type": "constructor", "position": { "x": 0, "y": 2000, "z": 0 } }
       ],
       "connections": [
         { "from": "c1:Output0", "to": "c2:Input0", "belt": 6 }

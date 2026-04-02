@@ -126,7 +126,7 @@ Exemple :
 {"id": "lift1", "type": "lift", "position": {"x": 0, "y": 0, "z": 0}, "properties": {"topDir": {"x": 0, "y": 1}}}
 ```
 
-Le `topDir` est appliqué **après** les connexions (deferred) pour que le repositionnement ne l'écrase pas.
+Le `topDir` est en entity-local space. Il est converti en quaternion (`topRot`) à la création du lift. Le bottom snap change la rotation de l'entity mais pas `mTopTransform.Rotation`, donc la direction world du bras top dépend de la rotation finale du lift après snap.
 
 ## Limites de longueur / hauteur
 
@@ -140,6 +140,83 @@ Validées automatiquement lors de la création de belts, pipes et lifts. Défini
 | lift | 400 | 4800 |
 
 Un belt/pipe trop court ou trop long, ou un lift hors limites, provoque une erreur avec rollback.
+
+## Validation de forme des splines (courbure / pente / U-turn)
+
+Après création d'un belt ou pipe auto (`belt:tier` / `pipe:tier`), `validateSplineShape()` vérifie :
+
+### U-turn (belts + pipes)
+Le belt/pipe ne doit pas faire demi-tour. Vérifié via les directions des ports world-space :
+- Le port source doit pointer **vers** la destination (`cos(dirSrc, span) > -0.5`)
+- Le port destination doit pointer **à l'opposé** de la source (`cos(dirDst, span) < 0.5`)
+
+Si violation → erreur `"belt would require U-turn"` + rollback.
+
+### Courbure XY min (belts + tracks)
+Rayon de courbure minimum dans le plan XY, mesuré sur la spline samplée (hors guard sections de 100 UU à chaque extrémité).
+
+| Type | Min radius XY |
+|------|---------------|
+| belt | 180 UU |
+| track | 900 UU |
+
+### Pente max (belts + tracks)
+Pente maximale en Z, mesurée segment par segment sur la spline samplée (hors guard sections).
+
+| Type | Max slope |
+|------|-----------|
+| belt | 40° |
+| track | 25° |
+
+### Guard sections et splines
+Les splines Hermite ont des **guard sections** de 100 UU (2×PORT_TANGENT) à chaque extrémité. Ces sections sont droites et alignées avec la direction du port — elles permettent au belt/pipe de dégager du bâtiment avant de tourner.
+
+La courbure la plus serrée se produit à la **transition guard → segment central**, quand la direction du port est perpendiculaire à la direction globale du belt. C'est pourquoi la validation de courbure/pente exclut les guard sections.
+
+## Placement des entités pour `belt:tier` auto
+
+**IMPORTANT** : lors de la création de belts auto entre bâtiments, les ports source et destination doivent être orientés de manière compatible. Règles :
+
+1. **Le port source doit pointer vers la destination** — pas perpendiculairement, pas en arrière.
+2. **Le port destination doit pointer à l'opposé de la source** — le belt arrive "de face" au port.
+3. **Les constructors ont Input0 en -Y et Output0 en +Y.** Pour un belt droit entre deux constructors, les placer sur l'axe Y (pas X).
+4. **Les splitters/mergers ont des ports en ±X et ±Y.** Utiliser `rotation` pour aligner les ports avec la direction du belt.
+5. **Les lift bottom ports pointent en +X (local).** Après snap sur un splitter/merger, la direction world dépend de la rotation du lift. Placer les entités connectées au lift top **dans la direction du bras top**.
+6. **Le `topDir` d'un lift est en entity-local space.** Après snap, la rotation du lift change → le topDir world est transformé. Pour un lift snappé sur un port -X (rotation 180°), `topDir: {x:0, y:1}` (RIGHT local) → world -Y, `topDir: {x:0, y:-1}` (LEFT local) → world +Y.
+7. **Le `topDir` est en entity-local space.** Après snap sur un port -X (rotation 180°), `topDir: {x:0, y:1}` (RIGHT local) → world -Y, `topDir: {x:0, y:-1}` (LEFT local) → world +Y.
+
+### Exemple : constructor → belt → lift bottom
+```json
+{
+  "entities": [
+    {"id": "c1", "type": "constructor", "position": {"x": 0, "y": 0, "z": 0}, "rotation": 90},
+    {"id": "lift1", "type": "lift", "position": {"x": -1500, "y": 0, "z": 0}}
+  ],
+  "connections": [
+    {"from": "c1:Output0", "to": "lift1:bottom", "belt": 6}
+  ]
+}
+```
+Constructor rotation 90° → Output0 pointe en -X. Lift en -X → belt va en -X, lift bottom pointe en +X (face au belt). ✓
+
+### Exemple : splitter + lift + constructor (1 edit)
+```json
+{
+  "anchor": {"x": 0, "y": 0, "z": 0},
+  "entities": [
+    {"id": "c1", "type": "constructor", "position": {"x": 0, "y": 0, "z": 0}},
+    {"id": "c2", "type": "constructor", "position": {"x": 0, "y": 0, "z": 2000}},
+    {"id": "spl", "type": "splitter", "position": {"x": 0, "y": -800, "z": 0}, "rotation": 90},
+    {"id": "liftIn", "type": "lift", "position": {"x": 0, "y": 0, "z": 0},
+     "properties": {"height": 2000, "topDir": {"x": 0, "y": 1}}}
+  ],
+  "connections": [
+    {"from": "spl:Output1", "to": "c1:Input0", "belt": 6},
+    {"from": "liftIn:bottom", "to": "spl:Output2"},
+    {"from": "liftIn:top", "to": "c2:Input0", "belt": 6}
+  ]
+}
+```
 
 ## Repositionnement interdit
 
@@ -156,12 +233,13 @@ Si une connexion ou validation échoue, **toutes** les entités ajoutées dans l
 ## Exemples
 
 **Deux constructors reliés par un belt :**
+Constructor Output0 pointe en +Y, Input0 en -Y → placer c2 en +Y de c1 pour un belt droit.
 ```json
 {
   "anchor": {"fromCamera": 5000},
   "entities": [
     {"id": "c1", "type": "constructor", "position": {"x": 0, "y": 0, "z": 0}},
-    {"id": "c2", "type": "constructor", "position": {"x": 1000, "y": 0, "z": 0}}
+    {"id": "c2", "type": "constructor", "position": {"x": 0, "y": 2000, "z": 0}}
   ],
   "connections": [
     {"from": "c1:Output0", "to": "c2:Input0", "belt": 6}
