@@ -1,8 +1,6 @@
 const assert = require('assert');
 const { editEntities } = require('../../../viewer/lib/editor');
-const ConveyorLift = require('../../../lib/logistic/ConveyorLift');
 const { assertApprox, getEntity, getBuilder, assertPortsAligned, assertLiftTopCardinal, added } = require('../helpers');
-const { FRONT, BACK, RIGHT, LEFT } = ConveyorLift.TopDir;
 
 describe('Lift', () => {
   it('8. should connect lift bottom to producer and reposition with correct ports', () => {
@@ -186,35 +184,27 @@ describe('Lift', () => {
   });
 
   it('24. should set top arm direction for all 4 cardinal directions', () => {
-    const r = editEntities({
-      anchor: { x: 200000, y: 0, z: 0 },
-      entities: [
-        { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'lift1', type: 'lift', position: { x: 0, y: 0, z: 0 } },
-      ],
-      connections: [{ from: 'lift1:bottom', to: 'c1:Output0' }],
-    });
-    const liftIdx = added(r, 'lift1').entity.saveIndex;
+    // Create 4 lifts with different topDir values, all snapped to same constructor
+    const FRONT = { x: 1, y: 0 }, BACK = { x: -1, y: 0 }, RIGHT = { x: 0, y: 1 }, LEFT = { x: 0, y: -1 };
+    const dirs = [['FRONT', FRONT, 1], ['BACK', BACK, -1], ['RIGHT', RIGHT, 0], ['LEFT', LEFT, 0]];
 
-    for (const [name, lDir] of [['FRONT', FRONT], ['BACK', BACK], ['RIGHT', RIGHT], ['LEFT', LEFT]]) {
-      const lift = getBuilder(liftIdx);
-      lift.setTopDir(lDir);
+    for (let i = 0; i < dirs.length; i++) {
+      const [name, topDir, expectedDot] = dirs[i];
+      const r = editEntities({
+        anchor: { x: 200000 + i * 4000, y: 0, z: 0 },
+        entities: [
+          { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
+          { id: 'lift1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { topDir } },
+        ],
+        connections: [{ from: 'lift1:bottom', to: 'c1:Output0' }],
+      });
+      const lift = added(r, 'lift1');
+      assertLiftTopCardinal(lift);
 
-      const lift2 = getBuilder(liftIdx);
-      assertLiftTopCardinal(lift2);
-
-      // Verify top port dir opposes bottom port dir for BACK, and is perpendicular for RIGHT/LEFT
-      const topDir = lift2.port('top').worldDir();
-      const botDir = lift2.port('bottom').worldDir();
-      const dot = topDir.x * botDir.x + topDir.y * botDir.y;
-
-      if (name === 'FRONT') {
-        assertApprox(dot, 1, 0.1, `FRONT: top and bottom arms should be parallel (dot=${dot})`);
-      } else if (name === 'BACK') {
-        assertApprox(dot, -1, 0.1, `BACK: top and bottom arms should oppose (dot=${dot})`);
-      } else if (name === 'RIGHT' || name === 'LEFT') {
-        assertApprox(dot, 0, 0.1, `${name}: top and bottom arms should be perpendicular (dot=${dot})`);
-      }
+      const topD = lift.port('top').worldDir();
+      const botD = lift.port('bottom').worldDir();
+      const dot = topD.x * botD.x + topD.y * botD.y;
+      assertApprox(dot, expectedDot, 0.1, `${name}: dot=${dot}, expected=${expectedDot}`);
     }
   });
 

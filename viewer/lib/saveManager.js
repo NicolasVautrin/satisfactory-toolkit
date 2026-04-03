@@ -40,14 +40,13 @@ function loadSave(name, buf) {
   const Foundation = require('../../lib/structural/Foundation');
   const lwSub = Foundation.getSubsystem(allObjects);
   const lwInstances = [];
-  if (lwSub?.properties?.mBuildableClassToInstanceArray?.values) {
-    for (const entry of lwSub.properties.mBuildableClassToInstanceArray.values) {
-      const typePath = entry.value?.properties?.mBuildableClass?.value?.pathName;
+  const buildables = lwSub?.specialProperties?.buildables;
+  if (buildables) {
+    for (const entry of buildables) {
+      const typePath = entry.typeReference?.pathName;
       if (!typePath) continue;
       const cls = typePath.split('.').pop();
-      const instances = entry.value?.properties?.mInstances?.values;
-      if (!instances) continue;
-      for (const inst of instances) {
+      for (const inst of entry.instances) {
         lwInstances.push({ ...inst, typePath, cls });
       }
     }

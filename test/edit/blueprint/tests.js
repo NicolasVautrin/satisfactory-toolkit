@@ -7,27 +7,29 @@ describe('Blueprint', () => {
     // All constructors face +Y (Output0) / -Y (Input0), stacked in Z.
     // Splitter rot 90°: Output1→+Y, Output2→-X, Output3→+X
     // Merger rot 90°: Input1→-Y, Input2→-X, Input3→+X
-    // Lift topDirs orient tops toward constructors:
-    //   liftIn snapped -X (rot 180°): topDir RIGHT {0,1} → world -Y... no, want +Y → LEFT {0,-1} → world +Y
-    //   liftIn snapped +X (rot 0°): topDir RIGHT {0,1} → world +Y ✓
-    //   liftOut snapped -X (rot 180°): topDir LEFT {0,-1} → world +Y... want -Y → RIGHT {0,1} → world -Y
-    //   liftOut snapped +X (rot 0°): topDir LEFT {0,-1} → world -Y ✓
+    // c2/c3 offset in X to align with lift tops.
+    //
+    // Lift rotation after snap (bottom local = +X, wOpposed = -anchorDir):
+    //   snap -X port → wOpposed +X → entity rot 0° (identity)
+    //   snap +X port → wOpposed -X → entity rot 180°
+    //
+    // TopDir (entity-local) → world direction:
+    //   liftIn1  rot 0°:   RIGHT {0,1}  → world +Y (toward c2)
+    //   liftIn2  rot 180°: LEFT  {0,-1} → world +Y (toward c3)
+    //   liftOut1 rot 0°:   LEFT  {0,-1} → world -Y (toward c2)
+    //   liftOut2 rot 180°: RIGHT {0,1}  → world -Y (toward c3)
     const r = editEntities({
       anchor: { x: 300000, y: 0, z: 0 },
       entities: [
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
-        { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 2000 } },
-        { id: 'c3', type: 'constructor', position: { x: 0, y: 0, z: 4000 } },
-        { id: 'spl', type: 'splitter', position: { x: 0, y: -800, z: 0 }, rotation: 90 },
-        { id: 'mrg', type: 'merger', position: { x: 0, y: 800, z: 0 }, rotation: 90 },
-        // liftIn1 snaps spl:Output2 (-X) → lift rot 180° → topDir LEFT {0,-1} → world +Y
-        { id: 'liftIn1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 2000, topDir: { x: 0, y: -1 } } },
-        // liftIn2 snaps spl:Output3 (+X) → lift rot 0° → topDir RIGHT {0,1} → world +Y
-        { id: 'liftIn2', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 4000, topDir: { x: 0, y: 1 } } },
-        // liftOut1 snaps mrg:Input2 (-X) → lift rot 180° → topDir RIGHT {0,1} → world -Y
-        { id: 'liftOut1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 2000, topDir: { x: 0, y: 1 } } },
-        // liftOut2 snaps mrg:Input3 (+X) → lift rot 0° → topDir LEFT {0,-1} → world -Y
-        { id: 'liftOut2', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 4000, topDir: { x: 0, y: -1 } } },
+        { id: 'c2', type: 'constructor', position: { x: -400, y: 0, z: 1000 } },
+        { id: 'c3', type: 'constructor', position: { x: 400, y: 0, z: 2000 } },
+        { id: 'spl', type: 'splitter', position: { x: 0, y: -1000, z: 0 }, rotation: 90 },
+        { id: 'mrg', type: 'merger', position: { x: 0, y: 1000, z: 0 }, rotation: 90 },
+        { id: 'liftIn1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 1100, topDir: { x: 0, y: 1 } } },
+        { id: 'liftIn2', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 2100, topDir: { x: 0, y: -1 } } },
+        { id: 'liftOut1', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 1100, topDir: { x: 0, y: -1 } } },
+        { id: 'liftOut2', type: 'lift', position: { x: 0, y: 0, z: 0 }, properties: { height: 2100, topDir: { x: 0, y: 1 } } },
       ],
       connections: [
         // Input side
