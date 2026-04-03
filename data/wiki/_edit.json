@@ -97,8 +97,8 @@
       "Constructor Input0 est en -Y, Output0 en +Y. Pour un belt droit entre deux constructors, les aligner sur l'axe Y (pas X).",
       "Splitter/merger : utiliser rotation pour aligner les ports avec la direction souhaitée du belt.",
       "Lift bottom pointe en +X local. Après snap, la direction world dépend de la rotation du lift. Le lift top FRONT = même direction que bottom.",
-      "topDir du lift est en entity-local space. Après snap sur un port -X (rotation 180°) : RIGHT local {0,1} → world -Y, LEFT local {0,-1} → world +Y.",
-      "topDir est en entity-local space ({x:0,y:1} = RIGHT, etc.). Converti en quaternion à la création du lift. Le bottom snap change la rotation de l'entity mais pas mTopTransform.Rotation, donc le topDir world dépend de la rotation finale du lift."
+      "Rotation du lift après snap : le lift tourne pour que son bottom (+X local) fasse face au port anchor. Rotation = angle de +X vers -anchorDir. Snap sur port -X → rotation 0° (identité). Snap sur port +X → rotation 180°.",
+      "topDir est en entity-local space ({x:0,y:1} = RIGHT, etc.). Direction world = topDir transformé par la rotation de l'entité. Rot 0° : RIGHT → world +Y, LEFT → world -Y. Rot 180° : RIGHT → world -Y, LEFT → world +Y."
     ]
   },
   "behavior": {

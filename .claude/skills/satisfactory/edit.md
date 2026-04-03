@@ -182,8 +182,8 @@ La courbure la plus serrée se produit à la **transition guard → segment cent
 3. **Les constructors ont Input0 en -Y et Output0 en +Y.** Pour un belt droit entre deux constructors, les placer sur l'axe Y (pas X).
 4. **Les splitters/mergers ont des ports en ±X et ±Y.** Utiliser `rotation` pour aligner les ports avec la direction du belt.
 5. **Les lift bottom ports pointent en +X (local).** Après snap sur un splitter/merger, la direction world dépend de la rotation du lift. Placer les entités connectées au lift top **dans la direction du bras top**.
-6. **Le `topDir` d'un lift est en entity-local space.** Après snap, la rotation du lift change → le topDir world est transformé. Pour un lift snappé sur un port -X (rotation 180°), `topDir: {x:0, y:1}` (RIGHT local) → world -Y, `topDir: {x:0, y:-1}` (LEFT local) → world +Y.
-7. **Le `topDir` est en entity-local space.** Après snap sur un port -X (rotation 180°), `topDir: {x:0, y:1}` (RIGHT local) → world -Y, `topDir: {x:0, y:-1}` (LEFT local) → world +Y.
+6. **Rotation du lift après snap** : le lift tourne pour que son bottom (+X local) fasse face au port anchor. La rotation = angle de +X vers `wOpposed` (= -anchorDir). Exemples : snap sur port -X → wOpposed +X → rotation **0°** (identité). Snap sur port +X → wOpposed -X → rotation **180°**.
+7. **Le `topDir` est en entity-local space.** La direction world du bras top = topDir transformé par la rotation de l'entité. Pour un lift à rotation 0° : RIGHT {0,1} → world +Y, LEFT {0,-1} → world -Y. Pour un lift à rotation 180° : RIGHT {0,1} → world -Y, LEFT {0,-1} → world +Y.
 
 ### Exemple : constructor → belt → lift bottom
 ```json
