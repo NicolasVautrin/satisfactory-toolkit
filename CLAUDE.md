@@ -2,6 +2,10 @@
 
 Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'optimisation logistique dans Satisfactory.
 
+## Règles
+
+- **Ne jamais modifier les fichiers dans un submodule Git** (`tools/pak-tool/lib/CUE4Parse/`). Placer le code additionnel dans le projet principal (ex: `tools/pak-tool/Helpers/`, `tools/pak-tool/Commands/`).
+
 ## Setup
 
 Node.js est installé via nvm4w. Il faut ajouter le chemin au PATH avant d'exécuter les commandes :

@@ -24,6 +24,10 @@ using CUE4Parse_Conversion.Textures;
 using CUE4Parse_Conversion.UEFormat.Enums;
 using PakTool.Helpers;
 using Serilog;
+pushusing SharpGLTF.Geometry;
+using SharpGLTF.Geometry.VertexTypes;
+using SharpGLTF.Scenes;
+using VERTEX = SharpGLTF.Geometry.VertexTypes.VertexPositionNormalTangent;
 
 namespace PakTool.Commands;
 
@@ -115,10 +119,9 @@ public static class ExportCommand
                             }
                             if (lodParts.Count > 0)
                             {
-                                var materialExports = options.ExportMaterials ? new List<MaterialExporter2>() : null;
-                                using var ar = new FArchiveWriter();
-                                new Gltf(className, lodParts, materialExports, options).Save(options.MeshFormat, ar);
-                                bestMeshes.TryAdd(className, (new Dictionary<int, byte[]> { [0] = ar.GetBuffer() }, ar.GetBuffer().LongLength));
+                                var glbData = BuildCompositeGlb(className, lodParts, options);
+                                if (glbData != null)
+                                    bestMeshes.TryAdd(className, (new Dictionary<int, byte[]> { [0] = glbData }, glbData.LongLength));
                             }
                         }
                     }
@@ -159,6 +162,21 @@ public static class ExportCommand
 
         JsonOutput.WriteExport("catalog", outputDir, exported, watch.Elapsed.ToString(), errors,
             files.ToArray());
+    }
+
+    private static byte[]? BuildCompositeGlb(string name, List<(CStaticMeshLod lod, Matrix4x4 transform)> parts, ExporterOptions options)
+    {
+        var sceneBuilder = new SceneBuilder();
+        var materialExports = options.ExportMaterials ? new List<MaterialExporter2>() : null;
+        var idx = 0;
+        foreach (var (lod, transform) in parts)
+        {
+            var mesh = new MeshBuilder<VERTEX, VertexColorXTextureX, VertexEmpty>($"{name}_{idx++}");
+            for (var i = 0; i < lod.Sections.Value.Length; i++)
+                Gltf.ExportStaticMeshSections(i, lod, lod.Sections.Value[i], materialExports, mesh, options);
+            sceneBuilder.AddRigidMesh(mesh, transform);
+        }
+        return sceneBuilder.ToGltf2().WriteGLB().Array;
     }
 
     /// <summary>
