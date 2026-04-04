@@ -3,7 +3,7 @@
  * Operates on the saveState managed by saveManager.js.
  */
 const { getSaveState, addItem, deleteEntities, ensureSaveState } = require('./saveManager');
-const { buildViewerEntityFromEditor } = require('./viewerEntityFactory');
+const { buildViewerEntityFromEditor, isPortConnected } = require('./viewerEntityFactory');
 const splineLimits = require('../../data/splineLimits.json');
 
 // ── Yaw helpers ─────────────────────────────────────────────────────
@@ -124,7 +124,8 @@ function getEntity(entityIndex) {
 
   const FlowPort = require('../../lib/shared/FlowPort');
   for (const port of Object.values(builder._ports)) {
-    const connPath = port.component?.properties?.mConnectedComponent?.value?.pathName;
+    const connPath = port.component?.properties?.mConnectedComponent?.value?.pathName
+      || port.component?.properties?.mConnectedComponents?.values?.[0]?.pathName;
     if (connPath) {
       const connComp = saveState.allObjects.find(o => o.instanceName === connPath);
       if (connComp) {
@@ -152,14 +153,12 @@ function attachPorts(sourceIndex, sourcePort, targetIndex, targetPort) {
   const srcEntity = getEntity(sourceIndex);
   const tgtEntity = getEntity(targetIndex);
 
-  const srcPort = srcEntity.port(sourcePort);
-  const tgtPort = tgtEntity.port(targetPort);
-
   const ConveyorLift = require('../../lib/logistic/ConveyorLift');
   if (srcEntity instanceof ConveyorLift && tgtEntity instanceof ConveyorLift) {
+    const srcPort = srcEntity.port(sourcePort);
     tgtEntity.attachLift(targetPort, srcPort);
   } else {
-    srcPort.attach(tgtPort);
+    srcEntity.connectPorts(sourcePort, tgtEntity, targetPort);
   }
 
   updateEntityConnections(sourceIndex);
@@ -221,7 +220,7 @@ function updateEntityConnections(entityIndex) {
     const compSuffix = name;
     const compPath = `${entity.instanceName}.${compSuffix}`;
     const comp = saveState.allObjects.find(o => o.instanceName === compPath);
-    return comp?.properties?.mConnectedComponent?.value?.pathName ? 1 : 0;
+    return isPortConnected(comp) ? 1 : 0;
   });
   saveState.viewerEntityRepository.entities[entityIndex].cn = cn;
 }
@@ -252,12 +251,8 @@ function validateSplineShape(type, entity, wSrcDir, wDstDir) {
   if (!pts || pts.length < 2) return;
 
   // U-turn check using world-space port directions passed by caller.
-  // wSrcDir = source port direction (points away from source building, into the belt)
-  // wDstDir = dest port direction (points away from dest building, away from belt)
-  // span = source port → dest port
-  // Normal: wSrcDir roughly aligned with span (belt exits source toward dest)
-  //         wDstDir roughly aligned with span (dest port faces away from source)
-  // U-turn: wSrcDir points backward (away from dest) OR wDstDir points backward (toward source)
+  // Belt/pipe: wSrcDir points into the spline (toward dest), wDstDir points away (opposing span)
+  // Track: both tangents point in the direction of travel (co-directional with span)
   if (wSrcDir && wDstDir) {
     const p0 = pts[0], pN = pts[pts.length - 1];
     const span = new Vector3D(pN.x - p0.x, pN.y - p0.y, 0);
@@ -266,11 +261,16 @@ function validateSplineShape(type, entity, wSrcDir, wDstDir) {
       const sn = { x: span.x / spanXY, y: span.y / spanXY };
       const cosSrc = wSrcDir.x * sn.x + wSrcDir.y * sn.y;
       const cosDst = wDstDir.x * sn.x + wDstDir.y * sn.y;
-      // Source port points away from building, into the belt → should align with span (cosSrc > 0)
-      // Dest port points away from building, away from belt → should oppose span (cosDst < 0)
-      // U-turn if source points backward (cosSrc < -0.5) or dest points forward (cosDst > 0.5)
-      if (cosSrc < -0.5 || cosDst > 0.5) {
-        throw new Error(`${type} would require U-turn`);
+      if (type === 'track') {
+        // Track tangents should roughly align with span (both co-directional)
+        if (cosSrc < -0.5 || cosDst < -0.5) {
+          throw new Error(`${type} would require U-turn`);
+        }
+      } else {
+        // Belt/pipe: source into span (cosSrc > 0), dest opposes span (cosDst < 0)
+        if (cosSrc < -0.5 || cosDst > 0.5) {
+          throw new Error(`${type} would require U-turn`);
+        }
       }
     }
   }
@@ -337,114 +337,94 @@ function validateSplineShape(type, entity, wSrcDir, wDstDir) {
   }
 }
 
-// ── Create a belt between two ports ──────────────────────────────────
-function createBeltBetween(fromIdx, fromPort, toIdx, toPort, tier) {
+// ── Inject a spline entity into the save + viewer ────────────────────
+function injectSplineEntity(builder) {
   const saveState = getSaveState();
-  const ConveyorBelt = require('../../lib/logistic/ConveyorBelt');
-  const srcEntity = getEntity(fromIdx);
-  const tgtEntity = getEntity(toIdx);
-  const srcPort = srcEntity.port(fromPort);
-  const tgtPort = tgtEntity.port(toPort);
-
-  const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
-  const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
-  validateSplineLength('belt', dist3D(wSrcPos, wTgtPos));
-  const belt = ConveyorBelt.create(
-    { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
-    { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
-    typeof tier === 'number' ? tier : 6,
-  );
-  validateSplineShape('belt', belt.entity, wSrcDir, wTgtDir);
-
   const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
     saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
   ) || Object.keys(saveState.save.levels)[0];
   const mainLevel = saveState.save.levels[mainLevelKey];
-  const allObjs = belt.allObjects();
+  const allObjs = builder.allObjects();
   mainLevel.objects.push(...allObjs);
   saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
-  saveState.entities.push(belt.entity);
+  saveState.entities.push(builder.entity);
 
   const compByName = new Map();
   for (const obj of allObjs) {
     if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
   }
-  const { item, classUpdate, isNewClass } = buildViewerEntityFromEditor(belt.entity, saveState.viewerEntityRepository, compByName);
+  const { item, classUpdate, isNewClass } = buildViewerEntityFromEditor(builder.entity, saveState.viewerEntityRepository, compByName);
   if (isNewClass) {
     saveState.viewerEntityRepository.classNames = classUpdate.classNames;
     saveState.viewerEntityRepository.clearance = classUpdate.clearance;
     saveState.viewerEntityRepository.portLayouts = classUpdate.portLayouts;
   }
-  const beltIndex = addItem(belt.entity);
+  const index = addItem(builder.entity);
   saveState.viewerEntityRepository.entities.push(item);
-
-  const beltInput = belt.port(ConveyorBelt.Ports.INPUT);
-  const beltOutput = belt.port(ConveyorBelt.Ports.OUTPUT);
-  beltInput.attach(srcPort);
-  beltOutput.attach(tgtPort);
-
-  updateEntityConnections(fromIdx);
-  updateEntityConnections(toIdx);
-  updateEntityConnections(beltIndex);
-
-  const beltId = `_belt_${fromIdx}_${toIdx}`;
-  console.log(`Created belt ${beltId} index=${beltIndex} between ${fromIdx}:${fromPort} → ${toIdx}:${toPort}`);
-  return { beltId, beltIndex, instanceName: belt.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
+  return { index, item, classUpdate: isNewClass ? classUpdate : null };
 }
 
-// ── Create a pipe between two ports ─────────────────────────────────
-function createPipeBetween(fromIdx, fromPort, toIdx, toPort, tier) {
-  const saveState = getSaveState();
-  const Pipe = require('../../lib/logistic/Pipe');
-  const srcEntity = getEntity(fromIdx);
-  const tgtEntity = getEntity(toIdx);
-  const srcPort = srcEntity.port(fromPort);
-  const tgtPort = tgtEntity.port(toPort);
+// ── Spline type registry ─────────────────────────────────────────────
+const SPLINE_TYPES = {
+  belt:  { require: () => require('../../lib/logistic/ConveyorBelt'), defaultTier: 6 },
+  pipe:  { require: () => require('../../lib/logistic/Pipe'),         defaultTier: 2 },
+  track: { require: () => require('../../lib/railway/RailroadTrack'), defaultTier: null },
+};
 
-  const wSrcPos = srcPort.worldPos(), wSrcDir = srcPort.worldDir();
-  const wTgtPos = tgtPort.worldPos(), wTgtDir = tgtPort.worldDir();
-  validateSplineLength('pipe', dist3D(wSrcPos, wTgtPos));
-  const pipe = Pipe.create(
+// ── Create a spline entity between two endpoints ─────────────────────
+// Each endpoint is either { idx, port } (existing port) or { pos, dir? } (free position, track only).
+function createSplineBetween(type, srcEndpoint, tgtEndpoint, tier) {
+  const splineType = SPLINE_TYPES[type];
+  if (!splineType) throw new Error(`Unknown spline type "${type}"`);
+  const Builder = splineType.require();
+
+  // Resolve world positions and directions
+  let wSrcPos, wSrcDir, wTgtPos, wTgtDir;
+  if (srcEndpoint.idx !== undefined) {
+    const srcEntity = getEntity(srcEndpoint.idx);
+    const srcPort = srcEntity.port(srcEndpoint.port);
+    wSrcPos = srcPort.worldPos(); wSrcDir = srcPort.worldDir();
+  } else {
+    wSrcPos = srcEndpoint.pos; wSrcDir = srcEndpoint.dir || null;
+  }
+  if (tgtEndpoint.idx !== undefined) {
+    const tgtEntity = getEntity(tgtEndpoint.idx);
+    const tgtPort = tgtEntity.port(tgtEndpoint.port);
+    wTgtPos = tgtPort.worldPos(); wTgtDir = tgtPort.worldDir();
+  } else {
+    wTgtPos = tgtEndpoint.pos; wTgtDir = tgtEndpoint.dir || null;
+  }
+
+  validateSplineLength(type, dist3D(wSrcPos, wTgtPos));
+  const createTier = typeof tier === 'number' ? tier : splineType.defaultTier;
+  const args = [
     { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
     { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
-    typeof tier === 'number' ? tier : 2,
-  );
-  validateSplineShape('pipe', pipe.entity, wSrcDir, wTgtDir);
+  ];
+  if (createTier != null) args.push(createTier);
+  const builder = Builder.create(...args);
+  validateSplineShape(type, builder.entity, wSrcDir, wTgtDir);
 
-  const mainLevelKey = Object.keys(saveState.save.levels).find(k =>
-    saveState.save.levels[k].objects.some(o => o.rootObject === 'Persistent_Level')
-  ) || Object.keys(saveState.save.levels)[0];
-  const mainLevel = saveState.save.levels[mainLevelKey];
-  const allObjs = pipe.allObjects();
-  mainLevel.objects.push(...allObjs);
-  saveState.allObjects = Object.values(saveState.save.levels).flatMap(l => l.objects);
-  saveState.entities.push(pipe.entity);
+  const { index: splineIndex, item, classUpdate } = injectSplineEntity(builder);
 
-  const compByName = new Map();
-  for (const obj of allObjs) {
-    if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
+  // Connect ports where endpoints reference existing entities
+  // Start port = first Ports value, end port = last Ports value
+  const portValues = Object.values(Builder.Ports);
+  const startPort = portValues[0], endPort = portValues[portValues.length - 1];
+  if (srcEndpoint.idx !== undefined) {
+    const srcEntity = getEntity(srcEndpoint.idx);
+    builder.connectPorts(startPort, srcEntity, srcEndpoint.port);
+    updateEntityConnections(srcEndpoint.idx);
   }
-  const { item, classUpdate, isNewClass } = buildViewerEntityFromEditor(pipe.entity, saveState.viewerEntityRepository, compByName);
-  if (isNewClass) {
-    saveState.viewerEntityRepository.classNames = classUpdate.classNames;
-    saveState.viewerEntityRepository.clearance = classUpdate.clearance;
-    saveState.viewerEntityRepository.portLayouts = classUpdate.portLayouts;
+  if (tgtEndpoint.idx !== undefined) {
+    const tgtEntity = getEntity(tgtEndpoint.idx);
+    builder.connectPorts(endPort, tgtEntity, tgtEndpoint.port);
+    updateEntityConnections(tgtEndpoint.idx);
   }
-  const pipeIndex = addItem(pipe.entity);
-  saveState.viewerEntityRepository.entities.push(item);
+  updateEntityConnections(splineIndex);
 
-  const pipeConn0 = pipe.port('PipelineConnection0');
-  const pipeConn1 = pipe.port('PipelineConnection1');
-  pipeConn0.attach(srcPort);
-  pipeConn1.attach(tgtPort);
-
-  updateEntityConnections(fromIdx);
-  updateEntityConnections(toIdx);
-  updateEntityConnections(pipeIndex);
-
-  const beltId = `_pipe_${fromIdx}_${toIdx}`;
-  console.log(`Created pipe ${beltId} index=${pipeIndex} between ${fromIdx}:${fromPort} → ${toIdx}:${toPort}`);
-  return { beltId, beltIndex: pipeIndex, instanceName: pipe.entity.instanceName, item, classUpdate: isNewClass ? classUpdate : null };
+  console.log(`Created ${type} index=${splineIndex}`);
+  return { splineIndex, instanceName: builder.entity.instanceName, item, classUpdate };
 }
 
 // ── Insert entity onto a spline (belt/pipe), cutting it in two ──────
@@ -611,8 +591,10 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
 }
 
 // ── Process connections (direct, belt, pipe, insertion) ──────────────
-function processConnections(connections, idMap, added) {
+function processConnections(connections, idMap, added, anchor, bpYawDeg) {
   const saveState = getSaveState();
+  const bpYawRad = (bpYawDeg || 0) * Math.PI / 180;
+  const cosB = Math.cos(bpYawRad), sinB = Math.sin(bpYawRad);
   const results = [];
   for (const conn of connections) {
     if (conn.on !== undefined) {
@@ -620,32 +602,49 @@ function processConnections(connections, idMap, added) {
       const splineIdx = idMap[conn.on];
       if (entityIdx === undefined) throw new Error(`Unknown entity id "${conn.from}" in insertion`);
       if (splineIdx === undefined) throw new Error(`Unknown entity id "${conn.on}" in insertion`);
+      if (!conn.id) throw new Error('"id" is required on insertion connections');
       const pos = conn.position || saveState.items[entityIdx].entity.transform.translation;
       const result = insertOnSpline(entityIdx, splineIdx, pos, conn.reverse);
-      idMap[result.newSplineId] = result.newSplineIndex;
-      added.push({ id: result.newSplineId, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
-      results.push({ from: conn.from, on: conn.on, newSpline: result.newSplineId });
+      idMap[conn.id] = result.newSplineIndex;
+      added.push({ id: conn.id, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+      results.push({ from: conn.from, on: conn.on, [conn.id]: result.newSplineIndex });
       continue;
     }
 
-    const [fromId, fromPort] = conn.from.split(':');
-    const [toId, toPort] = conn.to.split(':');
-    const fromIdx = idMap[fromId];
-    const toIdx = idMap[toId];
-    if (fromIdx === undefined) throw new Error(`Unknown entity id "${fromId}" in connection`);
-    if (toIdx === undefined) throw new Error(`Unknown entity id "${toId}" in connection`);
+    // Resolve endpoint: string "id:port" → {idx, port}, object {x,y,z} → {pos} (track only)
+    function resolveEndpoint(ep, label) {
+      if (typeof ep === 'object' && ep !== null && 'x' in ep) {
+        if (!conn.track) throw new Error(`Positional endpoints only supported for track connections (${label})`);
+        // Transform relative position by anchor + batch rotation
+        const rx = ep.x * cosB - ep.y * sinB;
+        const ry = ep.x * sinB + ep.y * cosB;
+        const pos = { x: anchor.x + rx, y: anchor.y + ry, z: anchor.z + (ep.z || 0) };
+        let dir = null;
+        if (ep.rotation !== undefined) {
+          const totalYaw = (ep.rotation + (bpYawDeg || 0)) * Math.PI / 180;
+          dir = { x: -Math.cos(totalYaw), y: -Math.sin(totalYaw), z: 0 };
+        }
+        return { pos, dir };
+      }
+      const [id, port] = ep.split(':');
+      const idx = idMap[id];
+      if (idx === undefined) throw new Error(`Unknown entity id "${id}" in connection ${label}`);
+      return { idx, port };
+    }
+    const srcEndpoint = resolveEndpoint(conn.from, 'from');
+    const tgtEndpoint = resolveEndpoint(conn.to, 'to');
 
-    if (conn.belt) {
-      const result = createBeltBetween(fromIdx, fromPort, toIdx, toPort, conn.belt);
-      idMap[result.beltId] = result.beltIndex;
-      added.push({ id: result.beltId, index: result.beltIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
-      results.push({ from: conn.from, to: conn.to, belt: result.beltId });
-    } else if (conn.pipe) {
-      const result = createPipeBetween(fromIdx, fromPort, toIdx, toPort, conn.pipe);
-      idMap[result.beltId] = result.beltIndex;
-      added.push({ id: result.beltId, index: result.beltIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
-      results.push({ from: conn.from, to: conn.to, pipe: result.beltId });
+    const splineType = conn.belt ? 'belt' : conn.pipe ? 'pipe' : conn.track ? 'track' : null;
+    if (splineType) {
+      if (!conn.id) throw new Error(`"id" is required on ${splineType} auto-connections`);
+      const tier = conn.belt || conn.pipe;
+      const result = createSplineBetween(splineType, srcEndpoint, tgtEndpoint, tier);
+      idMap[conn.id] = result.splineIndex;
+      added.push({ id: conn.id, index: result.splineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+      results.push({ from: conn.from, to: conn.to, [splineType]: conn.id });
     } else {
+      const fromIdx = srcEndpoint.idx, fromPort = srcEndpoint.port;
+      const toIdx = tgtEndpoint.idx, toPort = tgtEndpoint.port;
       const result = attachPorts(fromIdx, fromPort, toIdx, toPort);
       // Validate lift height after snap
       for (const idx of [fromIdx, toIdx]) {
@@ -736,7 +735,9 @@ function editEntities(batch) {
   let connectionResults = [];
   if (batch.connections) {
     try {
-      connectionResults = processConnections(batch.connections, idMap, added);
+      const anchor = batch.anchor || { x: 0, y: 0, z: 0 };
+      const bpYawDeg = batch.rotation || 0;
+      connectionResults = processConnections(batch.connections, idMap, added, anchor, bpYawDeg);
     } catch (err) {
       const indicesToDelete = added.map(r => r.index);
       deleteEntities(indicesToDelete);

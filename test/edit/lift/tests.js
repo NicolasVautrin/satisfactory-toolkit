@@ -134,7 +134,7 @@ describe('Lift', () => {
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
         { id: 'lift1', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
-      connections: [{ from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
+      connections: [{ id: 'b1', from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
     });
     // Lift2 bottom faces +X, constructor Input0 faces +X (rot -90°) → facing each other
     const r2 = editEntities({
@@ -143,7 +143,7 @@ describe('Lift', () => {
         { id: 'lift2', type: 'lift', position: { x: 0, y: 0, z: 0 } },
         { id: 'c2', type: 'constructor', position: { x: 1500, y: 0, z: 0 }, rotation: -90 },
       ],
-      connections: [{ from: 'lift2:bottom', to: 'c2:Input0', belt: 6 }],
+      connections: [{ id: 'b1', from: 'lift2:bottom', to: 'c2:Input0', belt: 6 }],
     });
     const r3 = editEntities({
       entities: [
@@ -162,7 +162,7 @@ describe('Lift', () => {
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
         { id: 'lift1', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
-      connections: [{ from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
+      connections: [{ id: 'b1', from: 'c1:Output0', to: 'lift1:bottom', belt: 6 }],
     });
     const r2 = editEntities({
       anchor: { x: 194000, y: 0, z: 0 },
@@ -170,7 +170,7 @@ describe('Lift', () => {
         { id: 'c2', type: 'constructor', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
         { id: 'lift2', type: 'lift', position: { x: -1500, y: 0, z: 0 } },
       ],
-      connections: [{ from: 'c2:Output0', to: 'lift2:bottom', belt: 6 }],
+      connections: [{ id: 'b1', from: 'c2:Output0', to: 'lift2:bottom', belt: 6 }],
     });
     assert.throws(() => {
       editEntities({

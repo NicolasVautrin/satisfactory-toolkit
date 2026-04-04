@@ -33,17 +33,17 @@ describe('Blueprint', () => {
       ],
       connections: [
         // Input side
-        { from: 'spl:Output1', to: 'c1:Input0', belt: 6 },
+        { id: 'b1', from: 'spl:Output1', to: 'c1:Input0', belt: 6 },
         { from: 'liftIn1:bottom', to: 'spl:Output2' },
-        { from: 'liftIn1:top', to: 'c2:Input0', belt: 6 },
+        { id: 'b2', from: 'liftIn1:top', to: 'c2:Input0', belt: 6 },
         { from: 'liftIn2:bottom', to: 'spl:Output3' },
-        { from: 'liftIn2:top', to: 'c3:Input0', belt: 6 },
+        { id: 'b3', from: 'liftIn2:top', to: 'c3:Input0', belt: 6 },
         // Output side
-        { from: 'c1:Output0', to: 'mrg:Input1', belt: 6 },
+        { id: 'b4', from: 'c1:Output0', to: 'mrg:Input1', belt: 6 },
         { from: 'liftOut1:bottom', to: 'mrg:Input2' },
-        { from: 'c2:Output0', to: 'liftOut1:top', belt: 6 },
+        { id: 'b5', from: 'c2:Output0', to: 'liftOut1:top', belt: 6 },
         { from: 'liftOut2:bottom', to: 'mrg:Input3' },
-        { from: 'c3:Output0', to: 'liftOut2:top', belt: 6 },
+        { id: 'b6', from: 'c3:Output0', to: 'liftOut2:top', belt: 6 },
       ],
     });
 

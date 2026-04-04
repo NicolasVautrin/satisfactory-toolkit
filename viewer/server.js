@@ -8,6 +8,7 @@ const { initSession } = require('../satisfactoryLib');
 const Blueprint = require('../lib/Blueprint');
 const { loadSave, loadCbp, loadBlueprint, getSaveState, getCbpState, injectBlueprint } = require('./lib/saveManager');
 const { editEntities } = require('./lib/editor');
+const { isPortConnected } = require('./lib/viewerEntityFactory');
 const { mergeCbpIntoSave } = require('./lib/merge');
 
 // ── Express ────────────────────────────────────────────────────────
@@ -303,7 +304,7 @@ app.get('/api/game/nearby', (req, res) => {
           pos: p.pos,
           flow: p.flow,
           type: p.type,
-          connected: !!(compMap[p.name]?.properties?.mConnectedComponent?.value?.pathName),
+          connected: isPortConnected(compMap[p.name]),
         }));
       }
     }

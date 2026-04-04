@@ -74,4 +74,14 @@ function added(result, id) {
   return getBuilder(entry.index);
 }
 
-module.exports = { assertApprox, getEntity, getBuilder, splineMidpoint, assertPortsAligned, assertLiftTopCardinal, added };
+/** Assert port is connected and wired to the expected target port */
+function assertConnected(builder, portName, targetBuilder, targetPortName, label = '') {
+  const prefix = label ? `${label}: ` : '';
+  const port = builder.port(portName);
+  assert(port.isConnected, `${prefix}${portName} should be connected`);
+  const targetPort = targetBuilder.port(targetPortName);
+  assert.strictEqual(port._wiredTo?.pathName, targetPort.pathName,
+    `${prefix}${portName} should be wired to ${targetPortName} (got ${port._wiredTo?.pathName})`);
+}
+
+module.exports = { assertApprox, getEntity, getBuilder, splineMidpoint, assertPortsAligned, assertLiftTopCardinal, assertConnected, added };

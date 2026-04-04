@@ -49,9 +49,10 @@
     "connections": {
       "ids": "IMPORTANT : from, to, on utilisent exclusivement les id déclarés dans entities[]. Pour cibler une entité existante, la déclarer d'abord comme alias.",
       "direct": "{from:\"id:port\", to:\"id:port\"} — from snappe sur to. from doit être mobile.",
-      "belt": "{from:\"id:port\", to:\"id:port\", belt:tier} — auto-crée un belt (tier 1-6). Les deux ports peuvent être fixes.",
-      "pipe": "{from:\"id:port\", to:\"id:port\", pipe:tier} — auto-crée un pipe (tier 1-2). Les deux ports peuvent être fixes.",
-      "insertion": "{from:\"id\", on:\"id\", position:{x,y,z}} — insère l'entité from (splitter/merger/junction/pump vierge) sur le belt/pipe on, coupe la spline en deux."
+      "belt": "{id:\"b1\", from:\"id:port\", to:\"id:port\", belt:tier} — auto-crée un belt (tier 1-6). id obligatoire.",
+      "pipe": "{id:\"p1\", from:\"id:port\", to:\"id:port\", pipe:tier} — auto-crée un pipe (tier 1-2). id obligatoire.",
+      "track": "{id:\"r1\", from:..., to:..., track:true} — auto-crée un rail. from/to = \"id:port\" ou {x,y,z} (position libre, track uniquement). id obligatoire.",
+      "insertion": "{id:\"b2\", from:\"id\", on:\"id\", position:{x,y,z}} — insère l'entité from sur le belt/pipe on, coupe la spline en deux. id = la 2e spline créée. id obligatoire."
     }
   },
   "port_names": {
@@ -63,7 +64,8 @@
     "splitter": "Input1, Output1, Output2, Output3",
     "merger": "Input1, Input2, Input3, Output1",
     "junction": "0, 1, 2, 3 (4 directions, tous type pipe)",
-    "pump": "input, output (type pipe)"
+    "pump": "input, output (type pipe)",
+    "track": "TrackConnection0 (START), TrackConnection1 (END) — bidirectionnels"
   },
   "rules": {
     "connections": [
@@ -115,7 +117,7 @@
         { "id": "c2", "type": "constructor", "position": { "x": 0, "y": 2000, "z": 0 } }
       ],
       "connections": [
-        { "from": "c1:Output0", "to": "c2:Input0", "belt": 6 }
+        { "id": "b1", "from": "c1:Output0", "to": "c2:Input0", "belt": 6 }
       ]
     },
     "connect_to_existing_entity": {
@@ -125,7 +127,7 @@
         { "id": "c1", "type": "constructor", "position": { "x": 1000, "y": 0, "z": 0 } }
       ],
       "connections": [
-        { "from": "existing:Output0", "to": "c1:Input0", "belt": 6 }
+        { "id": "b1", "from": "existing:Output0", "to": "c1:Input0", "belt": 6 }
       ]
     },
     "insert_splitter_on_belt": {
@@ -135,7 +137,7 @@
         { "id": "s1", "type": "splitter" }
       ],
       "connections": [
-        { "from": "s1", "on": "belt1", "position": { "x": 1000, "y": 2000, "z": 500 } }
+        { "id": "belt2", "from": "s1", "on": "belt1", "position": { "x": 1000, "y": 2000, "z": 500 } }
       ]
     },
     "insert_junction_on_pipe": {
@@ -145,7 +147,14 @@
         { "id": "j1", "type": "pipe-junction" }
       ],
       "connections": [
-        { "from": "j1", "on": "pipe1", "position": { "x": 2000, "y": 500, "z": 375 } }
+        { "id": "pipe2", "from": "j1", "on": "pipe1", "position": { "x": 2000, "y": 500, "z": 375 } }
+      ]
+    },
+    "create_tracks": {
+      "description": "Créer 2 rails bout à bout par positions libres",
+      "connections": [
+        { "id": "r1", "from": { "x": 0, "y": 0, "z": 0 }, "to": { "x": 2000, "y": 0, "z": 0 }, "track": true },
+        { "id": "r2", "from": "r1:TrackConnection1", "to": { "x": 4000, "y": 0, "z": 0 }, "track": true }
       ]
     },
     "delete_entity": {

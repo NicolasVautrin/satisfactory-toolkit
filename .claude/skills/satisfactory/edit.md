@@ -49,6 +49,7 @@ L'endpoint accept des alias courts au lieu du typePath complet :
 - Lifts : `lift` (Mk6), `lift-1` à `lift-6`
 - Splitters/Mergers : `splitter`, `smart-splitter`, `prog-splitter`, `merger`, `prio-merger`
 - Pipes : `pipe-junction`, `pipe-pump`, `pipe-hole`
+- Railway : `track`
 - Power : `power-line`
 
 ## Types de connexions
@@ -56,11 +57,47 @@ L'endpoint accept des alias courts au lieu du typePath complet :
 | Format | Description |
 |---|---|
 | `{from:"id:port", to:"id:port"}` | **Directe** — `from` snappe sur `to`. `from` doit être mobile (belt/pipe/lift ou splitter/merger/junction/pump vierge). |
-| `{from:"id:port", to:"id:port", belt:tier}` | **Belt auto** — crée un belt (tier 1-6) entre les deux ports. Les deux peuvent être fixes. |
-| `{from:"id:port", to:"id:port", pipe:tier}` | **Pipe auto** — crée un pipe (tier 1-2) entre les deux ports pipe. Les deux peuvent être fixes. |
-| `{from:"id", on:"id", position:{x,y,z}}` | **Insertion** — insère l'entité `from` sur le belt/pipe `on`, coupe la spline en deux. |
+| `{id:"b1", from:"id:port", to:"id:port", belt:tier}` | **Belt auto** — crée un belt (tier 1-6) entre les deux ports. `id` obligatoire. |
+| `{id:"p1", from:"id:port", to:"id:port", pipe:tier}` | **Pipe auto** — crée un pipe (tier 1-2) entre les deux ports pipe. `id` obligatoire. |
+| `{id:"r1", from:..., to:..., track:true}` | **Track auto** — crée un rail entre deux endpoints. `from`/`to` = `"id:port"` ou `{x,y,z,rotation?}` (position libre). `id` obligatoire. |
+| `{id:"b2", from:"id", on:"id", position:{x,y,z}}` | **Insertion** — insère l'entité `from` sur le belt/pipe `on`, coupe la spline en deux. `id` = la 2e spline créée. `id` obligatoire. |
 
-Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe.
+Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe. Pour les splines auto (belt/pipe/track), `from` = port START, `to` = port END.
+
+Les endpoints positionnels (`{x,y,z}` au lieu de `"id:port"`) ne sont supportés que pour les tracks.
+
+### Endpoints positionnels track
+
+Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés) qui spécifie la direction du tangent de la spline :
+- `rotation: 0` → direction (-1, 0, 0) = -X (même convention que les stations à rotation 0°)
+- `rotation: 90` → direction (0, -1, 0) = -Y
+- `rotation: 180` → direction (+1, 0, 0) = +X
+- `rotation: 270` → direction (0, +1, 0) = +Y
+
+Sans `rotation`, la spline est droite (tangent = direction du segment).
+
+Les positions sont relatives à l'anchor et transformées par la rotation du batch (comme les positions d'entités).
+
+### Docking station (gares)
+
+Les dock stations (belt-station, pipe-station) se connectent via les ports TrackConnection. Le builder détecte automatiquement la connexion dock↔station et :
+- Repositionne le dock adjacent à la station/dock cible
+- Connecte les tracks intégrés
+- Connecte les platform connections internes
+
+Convention : `from` = dock mobile, `to` = station/dock fixe. Le choix du port (TC0 ou TC1) détermine le côté et l'orientation du dock.
+
+### Outil de validation de splines
+
+Pour planifier des layouts track/belt/pipe, utiliser `tools/validateSpline.js` :
+```bash
+node tools/validateSpline.js --type track --from "0,0,0" --fromRot 0 --to "4000,4000,0" --toRot 270
+node tools/validateSpline.js --type belt --from "0,0,0" --fromDir "0,1,0" --to "0,2000,100" --toDir "0,-1,0"
+```
+
+Options : `--type belt|pipe|track`, `--from "x,y,z"`, `--to "x,y,z"`, `--fromDir "x,y,z"` / `--toDir "x,y,z"` (vecteur) ou `--fromRot N` / `--toRot N` (yaw degrés).
+
+Affiche : longueur, U-turn, courbure min XY, pente max, pass/fail. **Utiliser systématiquement avant d'écrire un test track** pour valider chaque segment.
 
 ## Noms de ports
 
@@ -84,6 +121,7 @@ Voir la page wiki de chaque entité pour les noms exacts. Exemples courants :
 | Merger | `Input1`, `Input2`, `Input3`, `Output1` | Fixés |
 | Junction | `0`, `1`, `2`, `3` | Tous input (4 directions) |
 | Pump | `input`, `output` | Fixés |
+| Track | `TrackConnection0` (START), `TrackConnection1` (END) | Bidirectionnels |
 
 ## Règles de snap
 
@@ -193,7 +231,7 @@ La courbure la plus serrée se produit à la **transition guard → segment cent
     {"id": "lift1", "type": "lift", "position": {"x": -1500, "y": 0, "z": 0}}
   ],
   "connections": [
-    {"from": "c1:Output0", "to": "lift1:bottom", "belt": 6}
+    {"id": "b1", "from": "c1:Output0", "to": "lift1:bottom", "belt": 6}
   ]
 }
 ```
@@ -211,9 +249,9 @@ Constructor rotation 90° → Output0 pointe en -X. Lift en -X → belt va en -X
      "properties": {"height": 2000, "topDir": {"x": 0, "y": 1}}}
   ],
   "connections": [
-    {"from": "spl:Output1", "to": "c1:Input0", "belt": 6},
+    {"id": "b1", "from": "spl:Output1", "to": "c1:Input0", "belt": 6},
     {"from": "liftIn:bottom", "to": "spl:Output2"},
-    {"from": "liftIn:top", "to": "c2:Input0", "belt": 6}
+    {"id": "b2", "from": "liftIn:top", "to": "c2:Input0", "belt": 6}
   ]
 }
 ```

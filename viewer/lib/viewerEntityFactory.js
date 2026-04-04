@@ -91,7 +91,7 @@ function buildViewerEntity(entity, reg, compByName) {
       item.ports = ports;
       item.cn = ports.map(p => {
         const comp = compByName.get(entity.instanceName + '.' + p.n);
-        return comp?.properties?.mConnectedComponent?.value?.pathName ? 1 : 0;
+        return isPortConnected(comp) ? 1 : 0;
       });
       // Infer flow from connected component names
       for (let pi = 0; pi < ports.length; pi++) {
@@ -127,7 +127,7 @@ function buildViewerEntity(entity, reg, compByName) {
     if (portEntries.length > 0) {
       item.cn = portEntries.map(([portName]) => {
         const comp = compByName.get(entity.instanceName + '.' + portName);
-        return comp?.properties?.mConnectedComponent?.value?.pathName ? 1 : 0;
+        return isPortConnected(comp) ? 1 : 0;
       });
     }
   }
@@ -206,4 +206,15 @@ function buildViewerEntityFromEditor(entity, existingEntityData, compByName) {
   return { item, classUpdate, isNewClass: isNew };
 }
 
-module.exports = { classify, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp, buildViewerEntityFromEditor };
+/**
+ * Check if a connection component has any active connection.
+ * Handles both mConnectedComponent (belt/pipe) and mConnectedComponents (track).
+ */
+function isPortConnected(comp) {
+  if (!comp) return false;
+  if (comp.properties?.mConnectedComponent?.value?.pathName) return true;
+  const arr = comp.properties?.mConnectedComponents?.values;
+  return !!(arr && arr.length > 0);
+}
+
+module.exports = { classify, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp, buildViewerEntityFromEditor, isPortConnected };

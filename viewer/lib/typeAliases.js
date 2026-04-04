@@ -65,6 +65,12 @@ const ALIASES = {
   'pipe-pump':     'Build_PipelinePumpMk2_C',
   'pipe-hole':     'Build_FoundationPassthrough_Pipe_C',
 
+  // ── Railway ──────────────────────────────────
+  track:              'Build_RailroadTrack_C',
+  'train-station':    'Build_TrainStation_C',
+  'belt-station':     'Build_TrainDockingStation_C',
+  'pipe-station':     'Build_TrainDockingStationLiquid_C',
+
   // ── Power ────────────────────────────────────
   'power-line':   'Build_PowerLine_C',
 };

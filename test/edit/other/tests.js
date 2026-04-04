@@ -60,7 +60,7 @@ describe('Other', () => {
         { id: 'c1', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
         { id: 'c2', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
-      connections: [{ from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
+      connections: [{ id: 'b1', from: 'c1:Output0', to: 'c2:Input0', belt: 6 }],
     });
     const beltIdx = r1.added.find(a => a.instanceName?.includes('ConveyorBelt')).index;
     const mid = splineMidpoint(getEntity(beltIdx).entity);
@@ -70,7 +70,7 @@ describe('Other', () => {
         { id: 'belt1', index: beltIdx },
         { id: 's1', type: 'splitter' },
       ],
-      connections: [{ from: 's1', on: 'belt1', position: mid }],
+      connections: [{ id: 'sp2', from: 's1', on: 'belt1', position: mid }],
     });
     const splIdx = added(r2, 's1').entity.saveIndex;
 
@@ -80,7 +80,7 @@ describe('Other', () => {
         { id: 'c3', type: 'constructor', position: { x: 0, y: 0, z: 0 } },
         { id: 'c4', type: 'constructor', position: { x: 0, y: 3000, z: 0 } },
       ],
-      connections: [{ from: 'c3:Output0', to: 'c4:Input0', belt: 6 }],
+      connections: [{ id: 'b1', from: 'c3:Output0', to: 'c4:Input0', belt: 6 }],
     });
     const belt2Idx = r3.added.find(a => a.instanceName?.includes('ConveyorBelt')).index;
     const mid2 = splineMidpoint(getEntity(belt2Idx).entity);
@@ -91,7 +91,7 @@ describe('Other', () => {
           { id: 'belt2', index: belt2Idx },
           { id: 's1', index: splIdx },
         ],
-        connections: [{ from: 's1', on: 'belt2', position: mid2 }],
+        connections: [{ id: 'sp2', from: 's1', on: 'belt2', position: mid2 }],
       });
     }, /already connected|Cannot reposition/);
   });
