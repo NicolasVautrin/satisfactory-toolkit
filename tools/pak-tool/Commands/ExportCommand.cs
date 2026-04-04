@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Numerics;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Actor;
 using CUE4Parse.UE4.Assets.Exports.Component;
 using CUE4Parse.UE4.Assets.Exports.Component.Landscape;
@@ -14,8 +16,10 @@ using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Writers;
 using CUE4Parse_Conversion;
 using CUE4Parse_Conversion.Landscape;
+using CUE4Parse_Conversion.Materials;
 using CUE4Parse_Conversion.Meshes;
 using CUE4Parse_Conversion.Meshes.glTF;
+using CUE4Parse_Conversion.Meshes.PSK;
 using CUE4Parse_Conversion.Textures;
 using CUE4Parse_Conversion.UEFormat.Enums;
 using PakTool.Helpers;
@@ -42,6 +46,16 @@ public static class ExportCommand
     public static void Catalog(string outputDir, int parallelism)
     {
         var options = DefaultOptions;
+
+        // Clean existing catalog directories
+        var catalogDir = Path.Combine(outputDir, "catalog");
+        if (Directory.Exists(catalogDir))
+        {
+            foreach (var lodDir in Directory.GetDirectories(catalogDir, "lod*"))
+                Directory.Delete(lodDir, true);
+            Log.Information("Cleaned existing catalog directories");
+        }
+
         var scanProvider = ProviderFactory.CreateProvider();
         var buildablePaths = scanProvider.Files.Keys
             .Where(k => k.Contains("/Buildable/", StringComparison.OrdinalIgnoreCase))
@@ -69,8 +83,10 @@ public static class ExportCommand
                 try
                 {
                     var cleanPath = packagePath.Replace(".uasset", "");
-                    var allExports = myProvider.LoadPackage(cleanPath).GetExports();
+                    var allExports = myProvider.LoadPackage(cleanPath).GetExports().ToArray();
+                    var className = MathHelpers.ExtractClassName(packagePath);
 
+                    // Pass 1: direct UStaticMesh in this package
                     foreach (var obj in allExports)
                     {
                         if (obj is not UStaticMesh staticMesh) continue;
@@ -78,12 +94,33 @@ public static class ExportCommand
                         var meshExporter = new MeshExporter(staticMesh, options);
                         if (meshExporter.MeshLods.Count == 0) continue;
 
-                        var className = MathHelpers.ExtractClassName(packagePath);
                         var lod0Size = meshExporter.MeshLods[0].FileData.LongLength;
 
                         bestMeshes.AddOrUpdate(className,
                             _ => (ExtractLods(meshExporter), lod0Size),
                             (_, existing) => existing.lod0Size >= lod0Size ? existing : (ExtractLods(meshExporter), lod0Size));
+                    }
+
+                    // Pass 2: resolve mesh references for Build_* packages without inline UStaticMesh
+                    if (className.StartsWith("Build_") && !bestMeshes.ContainsKey(className))
+                    {
+                        var meshParts = ResolveMeshesFromBlueprint(allExports);
+                        if (meshParts.Count > 0)
+                        {
+                            var lodParts = new List<(CStaticMeshLod lod, Matrix4x4 transform)>();
+                            foreach (var (mesh, transform) in meshParts)
+                            {
+                                if (mesh.TryConvert(out var converted) && converted.LODs.Count > 0)
+                                    lodParts.Add((converted.LODs[0], transform));
+                            }
+                            if (lodParts.Count > 0)
+                            {
+                                var materialExports = options.ExportMaterials ? new List<MaterialExporter2>() : null;
+                                using var ar = new FArchiveWriter();
+                                new Gltf(className, lodParts, materialExports, options).Save(options.MeshFormat, ar);
+                                bestMeshes.TryAdd(className, (new Dictionary<int, byte[]> { [0] = ar.GetBuffer() }, ar.GetBuffer().LongLength));
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -99,11 +136,12 @@ public static class ExportCommand
 
         Task.WaitAll(consumers);
 
-        // Write best meshes to disk
+        // Write best meshes to disk (only Build_* classes)
         var files = new List<object>();
         var exported = 0;
         foreach (var (className, (lods, _)) in bestMeshes)
         {
+            if (!className.StartsWith("Build_")) continue;
             foreach (var (lodIndex, data) in lods)
             {
                 var relPath = Path.Combine("catalog", $"lod{lodIndex}", $"{className}.glb");
@@ -116,11 +154,64 @@ public static class ExportCommand
         }
 
         watch.Stop();
-        Log.Information("Done: {ClassCount} catalog meshes, {MeshCount} files in {Time} ({Errors} errors)",
-            bestMeshes.Count, files.Count, watch.Elapsed, errors);
+        Log.Information("Done: {ClassCount} catalog meshes ({Total} total), {MeshCount} files in {Time} ({Errors} errors)",
+            exported, bestMeshes.Count, files.Count, watch.Elapsed, errors);
 
-        JsonOutput.WriteExport("catalog", outputDir, bestMeshes.Count, watch.Elapsed.ToString(), errors,
+        JsonOutput.WriteExport("catalog", outputDir, exported, watch.Elapsed.ToString(), errors,
             files.ToArray());
+    }
+
+    /// <summary>
+    /// Resolve all mesh references from a Blueprint package that has no inline UStaticMesh.
+    /// Returns multiple meshes with their relative transforms for composite GLB export.
+    /// </summary>
+    private static List<(UStaticMesh mesh, Matrix4x4 transform)> ResolveMeshesFromBlueprint(UObject[] allExports)
+    {
+        var result = new List<(UStaticMesh, Matrix4x4)>();
+        var seen = new HashSet<string>();
+
+        void TryAdd(UStaticMesh? mesh, UObject comp)
+        {
+            if (mesh == null || !seen.Add(mesh.Name)) return;
+            var transform = Matrix4x4.Identity;
+            if (comp is UStaticMeshComponent smc)
+            {
+                var loc = smc.GetRelativeLocation();
+                var rot = smc.GetRelativeRotation();
+                var scl = smc.GetRelativeScale3D();
+                transform = MathHelpers.UnrealToGltfTransform(loc, rot, scl);
+            }
+            result.Add((mesh, transform));
+        }
+
+        // Pattern C: native UStaticMeshComponent subclass
+        foreach (var obj in allExports)
+            if (obj is UStaticMeshComponent smc)
+                TryAdd(smc.GetLoadedStaticMesh(), obj);
+
+        // Pattern A: direct StaticMesh property (FGColoredInstanceMeshProxy, etc.)
+        foreach (var obj in allExports)
+        {
+            var meshRef = obj.GetOrDefault<FPackageIndex>("StaticMesh");
+            if (meshRef is { IsNull: false })
+                TryAdd(meshRef.Load<UStaticMesh>(), obj);
+        }
+
+        // Pattern B: AbstractInstanceDataObject → Instances[].StaticMesh
+        foreach (var obj in allExports)
+        {
+            var instances = obj.GetOrDefault<UScriptArray>("Instances");
+            if (instances == null) continue;
+            foreach (var prop in instances.Properties)
+            {
+                if ((prop.GenericValue as FScriptStruct)?.StructType is not FStructFallback sf) continue;
+                var meshRef = sf.GetOrDefault<FPackageIndex>("StaticMesh");
+                if (meshRef is { IsNull: false })
+                    TryAdd(meshRef.Load<UStaticMesh>(), obj);
+            }
+        }
+
+        return result;
     }
 
     // ── export scenery ───────────────────────────────────────
