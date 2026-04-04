@@ -24,7 +24,7 @@ using CUE4Parse_Conversion.Textures;
 using CUE4Parse_Conversion.UEFormat.Enums;
 using PakTool.Helpers;
 using Serilog;
-pushusing SharpGLTF.Geometry;
+using SharpGLTF.Geometry;
 using SharpGLTF.Geometry.VertexTypes;
 using SharpGLTF.Scenes;
 using VERTEX = SharpGLTF.Geometry.VertexTypes.VertexPositionNormalTangent;

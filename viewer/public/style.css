@@ -263,6 +263,7 @@ body {
   pointer-events: none; display: none; z-index: 50;
 }
 
+
 /* ── Loading overlay ─────────────────────────────────────── */
 #loading {
   position: fixed; top: 50%; left: 50%;

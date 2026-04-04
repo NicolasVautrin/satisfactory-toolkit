@@ -8,6 +8,7 @@ import { buildLandscape, setLandscapeVisible, layoutLoaded, updateStreaming } fr
 import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
 import { buildWater, setWaterVisible } from './engine/water.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
+import { buildStationLabels, clearStationLabels, setLabelsVisible } from './engine/labels.js';
 import { gameToViewer } from './engine/scene.js';
 
 import { createToolbar } from './ui/toolbar.js';
@@ -229,6 +230,7 @@ async function onSaveLoaded(data, filename) {
     setRenderMode('boxes');
   }
   buildSaveScene(data);
+  buildStationLabels(data);
   clearSelection();
   if (!restoreCameraState(camKey())) fitCamera(data.entities, gameToViewer);
   setLoading(null);

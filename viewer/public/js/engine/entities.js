@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { scene, camera, gameToViewer, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
+import { scene, camera, gameToViewer, gameToViewerQuat, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
+import { setLabelsVisible } from './labels.js';
 import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export function setCatVisible(cat, visible) {
   for (const mesh of portMeshes) {
     if (mesh.userData.cat === cat) mesh.visible = visible && portsVisible;
   }
+  if (cat === 5) setLabelsVisible(visible); // Railway → station labels
   requestRender();
 }
 
@@ -102,7 +104,7 @@ function quatRotateVec(qx, qy, qz, qw, vx, vy, vz) {
 
 function boxMatrix(e, box) {
   _pos.copy(gameToViewer(e.tx, e.ty, e.tz));
-  _quat.set(e.rx, -e.ry, -e.rz, e.rw);
+  _quat.copy(gameToViewerQuat(e.rx, e.ry, e.rz, e.rw));
   if (box) {
     _scale.set(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z);
     _pos.add(boxLocalOffset(box, _quat));
@@ -114,7 +116,7 @@ function boxMatrix(e, box) {
 
 function meshMatrix(e) {
   _pos.copy(gameToViewer(e.tx, e.ty, e.tz));
-  _quat.set(e.rx, -e.ry, -e.rz, e.rw);
+  _quat.copy(gameToViewerQuat(e.rx, e.ry, e.rz, e.rw));
   _scale.set(1, 1, 1);
   _m.compose(_pos, _quat, _scale);
 }

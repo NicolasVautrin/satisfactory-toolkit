@@ -136,13 +136,19 @@ function buildViewerEntity(entity, reg, compByName) {
 }
 
 // ── Build entity data for save (parser format) ─────────────────────
-function buildViewerEntitiesFromSave(entities, lwInstances, compByName) {
+function buildViewerEntitiesFromSave(entities, lwInstances, compByName, stationNames) {
   const reg = createClassRegistry();
   const items = [];
+  const stationLabels = [];
 
-  for (const e of entities) {
+  for (let i = 0; i < entities.length; i++) {
+    const e = entities[i];
     registerClass(e.typePath.split('.').pop(), reg);
     items.push(buildViewerEntity(e, reg, compByName));
+
+    // Collect station label
+    const name = stationNames?.get(e.instanceName);
+    if (name) stationLabels.push({ ei: i, name });
   }
 
   // Lightweight buildables
@@ -155,7 +161,7 @@ function buildViewerEntitiesFromSave(entities, lwInstances, compByName) {
     items.push(item);
   }
 
-  return { classNames: reg.classNames, clearance: reg.clearance, entities: items, portLayouts: collectPortLayouts(reg.classNames) };
+  return { classNames: reg.classNames, clearance: reg.clearance, entities: items, portLayouts: collectPortLayouts(reg.classNames), stationLabels };
 }
 
 // ── Build entity data for CBP (SCIM format) ────────────────────────

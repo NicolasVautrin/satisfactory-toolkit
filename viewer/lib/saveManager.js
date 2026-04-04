@@ -53,11 +53,22 @@ function loadSave(name, buf) {
   }
   console.log(`Lightweight buildables: ${lwInstances.length}`);
 
+  // Station names from FGTrainStationIdentifier
+  const stationNames = new Map();
+  for (const obj of allObjects) {
+    if (obj.typePath !== '/Script/FactoryGame.FGTrainStationIdentifier') continue;
+    const stRef = obj.properties?.mStation?.value?.pathName;
+    const name = obj.properties?.mStationName?.value?.value
+              ?? obj.properties?.mStationName?.value;
+    if (stRef && name) stationNames.set(stRef, name);
+  }
+  console.log(`Station names: ${stationNames.size}`);
+
   const compByName = new Map();
   for (const obj of allObjects) {
     if (obj.type === 'SaveComponent') compByName.set(obj.instanceName, obj);
   }
-  const viewerEntityRepository = buildViewerEntitiesFromSave(entities, lwInstances, compByName);
+  const viewerEntityRepository = buildViewerEntitiesFromSave(entities, lwInstances, compByName, stationNames);
 
   saveState = {
     name,

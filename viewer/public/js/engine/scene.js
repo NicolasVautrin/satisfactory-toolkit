@@ -15,6 +15,12 @@ export function gameToViewer2D(x, y) {
   return { x: -x, y: y };
 }
 
+// UE quaternion → viewer quaternion
+const _gtvq = new THREE.Quaternion();
+export function gameToViewerQuat(rx, ry, rz, rw) {
+  return _gtvq.set(rx, -ry, -rz, rw);
+}
+
 // Box offset in entity-local UE space → viewer space
 const _boxOffset = new THREE.Vector3();
 export function boxLocalOffset(box, quat) {
