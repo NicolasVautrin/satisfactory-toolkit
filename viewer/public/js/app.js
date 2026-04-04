@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { renderer, scene, camera, resize, initRenderer, consumeRender, getDisplay } from './engine/scene.js';
 import { camState, initCameraControls, fitCamera, saveCameraState, restoreCameraState, onCameraChanged } from './engine/camera.js';
 import { getSaveData, getCbpData, buildSaveScene, buildCbpScene, rebuildSaveScene, setCatVisible, setCbpVisible, setPortsVisible, setRenderMode } from './engine/entities.js';
-import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable } from './engine/catalog.js';
+import { setLod, getAvailableLods, initMeshCatalog, hasMeshesAvailable, loadSplineSegments } from './engine/catalog.js';
 import { selectedIndices, onSelectionChange, clearSelection, removeClassFromSelection } from './engine/selection.js';
 import { buildLandscape, setLandscapeVisible, layoutLoaded, updateStreaming } from './engine/landscape.js';
 import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
@@ -226,8 +226,10 @@ async function onSaveLoaded(data, filename) {
     setRenderMode('textured');
     await setLod(display);
     await initMeshCatalog(data.classNames);
+    await loadSplineSegments();
   } else {
     setRenderMode('boxes');
+    await loadSplineSegments();
   }
   buildSaveScene(data);
   buildStationLabels(data);

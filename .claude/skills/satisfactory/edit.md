@@ -49,7 +49,7 @@ L'endpoint accept des alias courts au lieu du typePath complet :
 - Lifts : `lift` (Mk6), `lift-1` à `lift-6`
 - Splitters/Mergers : `splitter`, `smart-splitter`, `prog-splitter`, `merger`, `prio-merger`
 - Pipes : `pipe-junction`, `pipe-pump`, `pipe-hole`
-- Railway : `track`
+- Railway : `track`, `train-station`, `belt-station`, `pipe-station`
 - Power : `power-line`
 
 ## Types de connexions
@@ -122,6 +122,9 @@ Voir la page wiki de chaque entité pour les noms exacts. Exemples courants :
 | Junction | `0`, `1`, `2`, `3` | Tous input (4 directions) |
 | Pump | `input`, `output` | Fixés |
 | Track | `TrackConnection0` (START), `TrackConnection1` (END) | Bidirectionnels |
+| Train Station | `TrackConnection0`, `TrackConnection1` | Bidirectionnels (via integrated track) |
+| Belt Station | `TrackConnection0`, `TrackConnection1`, `Input0`, `Output0`, `Input1`, `Output1` | TC = track, I/O = belt |
+| Pipe Station | `TrackConnection0`, `TrackConnection1`, `PipeFactoryInput0/1`, `PipeFactoryOutput0/1` | TC = track, pipes |
 
 ## Règles de snap
 
@@ -131,11 +134,15 @@ Voir la page wiki de chaque entité pour les noms exacts. Exemples courants :
 | splitter / merger (vierge) | endpoint belt ou lift | aucun port déjà connecté |
 | junction / pump (vierge) | endpoint pipe | aucun port déjà connecté |
 | producer / extracteur | rien | utiliser `belt:tier` ou `pipe:tier` |
+| belt-station / pipe-station | train-station ou autre dock (port TC) | repositionnable, dock uniquement sur station ou dock |
 
 - Après la première connexion, splitter/merger/junction/pump deviennent **fixes** (ne peuvent plus snapper).
 - Un port belt ne peut se connecter qu'à un port belt, un port pipe qu'à un port pipe.
 - Un port input se connecte à un port output (pas input↔input ni output↔output).
 - Flag `IS_SPLINE = true` sur ConveyorBelt, Pipe, ConveyorLift, RailroadTrack — validation dans `snapTo()`.
+- Les dock stations sont **repositionnables** : elles se repositionnent automatiquement à côté de la station/dock cible lors du docking.
+- Un dock ne peut se connecter qu'à une **train-station** ou un **autre dock** (pas à un track autonome).
+- Les connexions dock↔station et dock↔dock se font via les ports **TrackConnection** (TC0/TC1).
 
 ## Polarité des lifts
 
@@ -178,6 +185,8 @@ Validées automatiquement lors de la création de belts, pipes et lifts. Défini
 | lift | 400 | 4800 |
 
 Un belt/pipe trop court ou trop long, ou un lift hors limites, provoque une erreur avec rollback.
+
+**Tracks aux stations** : un track connecté à un port de station (integrated track) doit faire **exactement 1200 UU**. Utiliser des stubs courts aux stations, puis connecter les tracks du réseau aux stubs. Voir guards de connexion dans `trains.md`.
 
 ## Validation de forme des splines (courbure / pente / U-turn)
 

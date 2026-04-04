@@ -319,6 +319,29 @@ const mainTrack = RailroadTrack.create(
 station.track.connect('TrackConnection1', mainTrack, 'TrackConnection0');
 ```
 
+### Guards de connexion
+
+`RailroadTrack.connect()` valide les connexions avant de les établir :
+
+| Guard | Règle | Erreur |
+|-------|-------|--------|
+| Anti-doublon | Deux ports déjà connectés entre eux → rejeté | `Ports already connected` |
+| Switch limit | Max 3 connexions par port (3 branches max par aiguillage) | `already has 3 connections` |
+| Integrated max 1 | Port d'un track intégré (station/dock) → max 1 connexion | `Integrated track port already connected` |
+| Connected-to-integrated | Port connecté à un track intégré → max 1 connexion | `connected to an integrated track` |
+| Stub length | Track non-intégré connecté à un integrated → exactement 1200 UU | `must be exactly 1200 UU` |
+
+**Conséquence** : les tracks externes se connectent aux stations via des **stubs de 1200 UU** :
+
+```js
+const stub = RailroadTrack.create(
+  { pos: stationTC1Pos, dir: stationTC1Dir },
+  { pos: stubEndPos, dir: stationTC1Dir }, // 1200 UU dans la direction du port
+);
+station.track.connect('TrackConnection1', stub, 'TrackConnection0');
+mainTrack.connect('TrackConnection0', stub, 'TrackConnection1');
+```
+
 ### Créer un aiguillage (switch)
 
 Un aiguillage se crée en connectant **plusieurs tracks au même port** :

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { scene, camera, gameToViewer, gameToViewerQuat, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
 import { setLabelsVisible } from './labels.js';
-import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes } from './catalog.js';
+import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes, getSplineGeometry } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;
@@ -121,6 +121,11 @@ function meshMatrix(e) {
   _m.compose(_pos, _quat, _scale);
 }
 
+const _up = new THREE.Vector3(0, 0, 1);
+const _right = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _rotM = new THREE.Matrix4();
+
 function splineMatrix(p1, p2, section) {
   const v1 = gameToViewer(p1[0], p1[1], p1[2]);
   const v2 = gameToViewer(p2[0], p2[1], p2[2]);
@@ -129,7 +134,21 @@ function splineMatrix(p1, p2, section) {
   if (len < 0.01) return false;
   _dir.divideScalar(len);
   _pos.set((v1.x + v2.x) / 2, (v1.y + v2.y) / 2, (v1.z + v2.z) / 2);
-  _quat.setFromUnitVectors(_yAxis, _dir);
+
+  // Build quaternion with consistent up vector to avoid roll twist
+  _fwd.copy(_dir);
+  _right.crossVectors(_fwd, _up);
+  if (_right.lengthSq() < 0.001) {
+    // Direction is nearly vertical — fall back to shortest rotation
+    _quat.setFromUnitVectors(_yAxis, _dir);
+  } else {
+    _right.normalize();
+    _up.crossVectors(_right, _fwd).normalize();
+    _rotM.makeBasis(_right, _fwd, _up);
+    _quat.setFromRotationMatrix(_rotM);
+    _up.set(0, 0, 1); // restore up for next call
+  }
+
   _scale.set(section, len, section);
   _m.compose(_pos, _quat, _scale);
   return true;
@@ -254,6 +273,7 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
   const catBoxBuckets = Array.from({ length: 8 }, () => []);
   const catBeltBuckets = Array.from({ length: 8 }, () => []);
   const catPipeBuckets = Array.from({ length: 8 }, () => []);
+  const catTrackBuckets = Array.from({ length: 8 }, () => []);
   const meshBuckets = {}; // className → { cat, items[] }
   const portMarkerBuckets = {};
   const portConeBuckets = {};
@@ -267,7 +287,7 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
     if (e.boxes) {
       for (const box of e.boxes) catBoxBuckets[e.cat].push({ ei, e, box });
     } else if (e.sp && e.sp.length >= 2) {
-      const bucket = e.cat === 2 ? catBeltBuckets : catPipeBuckets;
+      const bucket = e.cat === 2 ? catBeltBuckets : e.cat === 5 ? catTrackBuckets : catPipeBuckets;
       for (let s = 0; s < e.sp.length - 1; s++) {
         bucket[e.cat].push({ ei, p1: e.sp[s], p2: e.sp[s + 1] });
       }
@@ -317,16 +337,29 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
     }
 
     if (catBeltBuckets[cat].length > 0) {
-      flushBucket(catBeltBuckets[cat], _boxGeom,
+      const beltGeom = getSplineGeometry('belt') || _boxGeom;
+      const beltSection = beltGeom === _boxGeom ? BELT_SECTION : 1;
+      flushBucket(catBeltBuckets[cat], beltGeom,
         { color: 0xffffff, transparent: true, opacity: splineOpacity, _bucketColor: catColor },
-        (inst) => splineMatrix(inst.p1, inst.p2, BELT_SECTION),
+        (inst) => splineMatrix(inst.p1, inst.p2, beltSection),
         displayArray, cat);
     }
 
     if (catPipeBuckets[cat].length > 0) {
-      flushBucket(catPipeBuckets[cat], _cylGeom,
+      const pipeGeom = getSplineGeometry('pipe') || _cylGeom;
+      const pipeSection = pipeGeom === _cylGeom ? SPLINE_RADIUS : 1;
+      flushBucket(catPipeBuckets[cat], pipeGeom,
         { color: 0xffffff, transparent: true, opacity: splineOpacity, _bucketColor: catColor },
-        (inst) => splineMatrix(inst.p1, inst.p2, SPLINE_RADIUS),
+        (inst) => splineMatrix(inst.p1, inst.p2, pipeSection),
+        displayArray, cat);
+    }
+
+    if (catTrackBuckets[cat].length > 0) {
+      const trackGeom = getSplineGeometry('track') || _boxGeom;
+      const trackSection = trackGeom === _boxGeom ? BELT_SECTION : 1;
+      flushBucket(catTrackBuckets[cat], trackGeom,
+        { color: 0xffffff, transparent: true, opacity: splineOpacity, _bucketColor: catColor },
+        (inst) => splineMatrix(inst.p1, inst.p2, trackSection),
         displayArray, cat);
     }
   }

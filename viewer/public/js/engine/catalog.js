@@ -6,6 +6,7 @@ import { getDisplay } from './scene.js';
 
 // ── State ──────────────────────────────────────────────────────
 const loader = new GLTFLoader();
+const splineGeometries = {};
 // GLB is in glTF coords (Y-up, meters); viewer uses Unreal-like coords (Z-up, cm)
 // glTF(x,y,z) → viewer(-x*100, z*100, y*100) — flip X, swap Y↔Z
 const _glbToViewer = new THREE.Matrix4().set(
@@ -64,6 +65,26 @@ export function getMeshMaterial(className) {
 
 export function updateClassNames(classNames) {
   classNamesUsed = classNames;
+}
+
+export async function loadSplineSegments() {
+  const types = ['spline_belt', 'spline_pipe', 'spline_track'];
+  const entries = await fetchBatchGlb('catalog', types);
+  // Rotate so length axis (-X after glbToViewer) aligns with Y (splineMatrix length axis)
+  const rotMatrix = new THREE.Matrix4().makeRotationZ(-Math.PI / 2);
+  for (const entry of entries) {
+    const result = await parseGlb(entry.name, entry.glb);
+    if (result) {
+      result.geometry.applyMatrix4(rotMatrix);
+      const key = entry.name.replace('spline_', '');
+      splineGeometries[key] = result.geometry;
+    }
+  }
+  console.log(`[Catalog] Loaded ${Object.keys(splineGeometries).length} spline segments`);
+}
+
+export function getSplineGeometry(type) {
+  return splineGeometries[type] || null;
 }
 
 export async function loadMissingMeshes() {

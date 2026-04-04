@@ -5,6 +5,16 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 ## Règles
 
 - **Ne jamais modifier les fichiers dans un submodule Git** (`tools/pak-tool/lib/CUE4Parse/`). Placer le code additionnel dans le projet principal (ex: `tools/pak-tool/Helpers/`, `tools/pak-tool/Commands/`).
+- **Contexte du projet** — les fichiers de référence sont importés automatiquement ci-dessous :
+
+@.claude/skills/satisfactory/trains.md
+@.claude/skills/satisfactory/satisfactory-lib.md
+@.claude/skills/satisfactory/edit.md
+@.claude/skills/satisfactory/map.md
+@.claude/skills/satisfactory/optimization.md
+@.claude/skills/satisfactory/server.md
+@.claude/skills/satisfactory/viewer.md
+@.claude/skills/satisfactory/pak-tool.md
 
 ## Setup
 

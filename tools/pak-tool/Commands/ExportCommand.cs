@@ -156,6 +156,9 @@ public static class ExportCommand
             exported++;
         }
 
+        // ── Export spline segments (belt, pipe, track) ──────────────────
+        ExportSplineSegments(scanProvider, outputDir, options, files);
+
         watch.Stop();
         Log.Information("Done: {ClassCount} catalog meshes ({Total} total), {MeshCount} files in {Time} ({Errors} errors)",
             exported, bestMeshes.Count, files.Count, watch.Elapsed, errors);
@@ -180,6 +183,68 @@ public static class ExportCommand
     }
 
     /// <summary>
+    /// Export normalized spline segment GLBs (belt, pipe, track) centered and scaled to 1 UU length.
+    /// </summary>
+    private static void ExportSplineSegments(CUE4Parse.FileProvider.DefaultFileProvider provider,
+        string outputDir, ExporterOptions options, List<object> files)
+    {
+        var segments = new[] {
+            (mesh: "SM_ConveyorBelt_Mk1", file: "spline_belt"),
+            (mesh: "SM_Pipe",             file: "spline_pipe"),
+            (mesh: "SM_TrainTrack_02",    file: "spline_track"),
+        };
+
+        foreach (var (meshName, fileName) in segments)
+        {
+            try
+            {
+                var meshPath = provider.Files.Keys
+                    .FirstOrDefault(k => k.Contains($"/{meshName}.") && k.EndsWith(".uasset"));
+                if (meshPath == null) { Log.Warning("Spline mesh not found: {Name}", meshName); continue; }
+
+                var allExports = provider.LoadPackage(meshPath.Replace(".uasset", "")).GetExports().ToArray();
+                var staticMesh = allExports.OfType<UStaticMesh>().FirstOrDefault();
+                if (staticMesh == null || !staticMesh.TryConvert(out var converted) || converted.LODs.Count == 0)
+                { Log.Warning("Could not convert spline mesh: {Name}", meshName); continue; }
+
+                var lod = converted.LODs[0];
+                var bounds = staticMesh.RenderData?.Bounds;
+
+                var transform = Matrix4x4.Identity;
+                if (bounds != null)
+                {
+                    var center = bounds.Origin;
+                    var meshLen = bounds.BoxExtent.X * 2;
+                    var scaleX = meshLen > 0 ? 1f / meshLen : 1f;
+                    // Normalize length (X) to 1 UU; section (Y/Z) in cm (glTF convention)
+                    // UnrealToGltfTransform already converts cm→m (×0.01) for translation
+                    // but scale is applied raw, so use 0.01 for Y/Z to get real cm in glTF
+                    transform = MathHelpers.UnrealToGltfTransform(
+                        new FVector(-center.X * scaleX, -center.Y * 0.01f, -center.Z * 0.01f),
+                        new FRotator(0, 0, 0),
+                        new FVector(scaleX, 0.01f, 0.01f));
+                }
+
+                var glbData = BuildCompositeGlb(fileName,
+                    new List<(CStaticMeshLod, Matrix4x4)> { (lod, transform) }, options);
+                if (glbData != null)
+                {
+                    var relPath = Path.Combine("catalog", $"{fileName}.glb");
+                    var outPath = Path.Combine(outputDir, relPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
+                    File.WriteAllBytes(outPath, glbData);
+                    files.Add(new { path = relPath, sizeKB = glbData.Length / 1024 });
+                    Log.Information("Exported spline segment: {File} ({Size} KB)", fileName, glbData.Length / 1024);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("Error exporting spline segment {Name}: {Msg}", meshName, ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
     /// Resolve all mesh references from a Blueprint package that has no inline UStaticMesh.
     /// Returns multiple meshes with their relative transforms for composite GLB export.
     /// </summary>
@@ -192,7 +257,22 @@ public static class ExportCommand
         {
             if (mesh == null || !seen.Add(mesh.Name)) return;
             var transform = Matrix4x4.Identity;
-            if (comp is UStaticMeshComponent smc)
+            if (mesh.Name.StartsWith("SM_TrainTrack"))
+            {
+                // Center the track mesh on the station origin and stretch to 1600 UU
+                var bounds = mesh.RenderData?.Bounds;
+                if (bounds != null)
+                {
+                    var center = bounds.Origin;
+                    var meshLen = bounds.BoxExtent.X * 2; // full length along X
+                    var scaleX = meshLen > 0 ? 1600f / meshLen : 1f;
+                    transform = MathHelpers.UnrealToGltfTransform(
+                        new FVector(-center.X * scaleX, -center.Y, -center.Z),
+                        new FRotator(0, 0, 0),
+                        new FVector(scaleX, 1, 1));
+                }
+            }
+            else if (comp is UStaticMeshComponent smc)
             {
                 var loc = smc.GetRelativeLocation();
                 var rot = smc.GetRelativeRotation();

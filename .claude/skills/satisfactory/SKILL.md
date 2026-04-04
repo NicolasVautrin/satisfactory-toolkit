@@ -1,6 +1,6 @@
 ---
 name: satisfactory
-description: Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib, viewer 3D d'entités, pak-tool (extraction d'assets .pak)
+description: "Guide Satisfactory - trains, réseau ferré, manipulation de saves, optimisation logistique (gares, sink points), création programmatique de bâtiments/logistique via satisfactoryLib, viewer 3D d'entités, pak-tool (extraction d'assets .pak). TRIGGER when: nouvelle session ou après compactage — lire TOUS les fichiers .md du répertoire du skill (trains.md, edit.md, server.md, viewer.md, map.md, optimization.md, pak-tool.md, satisfactory-lib.md) pour charger le contexte complet du projet."
 user-invocable: true
 allowed-tools: Read, WebSearch, WebFetch
 argument-hint: [sujet]
@@ -62,4 +62,5 @@ Pour les sujets non couverts par les fichiers de référence, utilise WebSearch 
 2. **Consulte d'abord les fichiers de référence** avant de chercher sur le web
 3. **Cite les sources** quand tu utilises des informations du web
 4. **Sois pratique** : donne des conseils actionnables, pas juste de la théorie
-5. Si le joueur demande quelque chose sur un sujet : `$ARGUMENTS`
+5. Si aucun argument n'est fourni (`$ARGUMENTS` est vide), lis **tous** les fichiers de référence ci-dessus pour avoir le contexte complet
+6. Si le joueur demande quelque chose sur un sujet spécifique : `$ARGUMENTS`

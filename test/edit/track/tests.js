@@ -38,7 +38,7 @@ describe('Track', () => {
       connections: [
         { from: 'dock1:TrackConnection1', to: 'ts:TrackConnection0' },
         { from: 'dock2:TrackConnection1', to: 'dock1:TrackConnection0' },
-        { id: 'r1', from: 'ts:TrackConnection1', to: { x: -5000, y: 0, z: 0 }, track: true },
+        { id: 'r1', from: 'ts:TrackConnection1', to: { x: -2000, y: 0, z: 0 }, track: true },
       ],
     });
 
@@ -65,9 +65,9 @@ describe('Track', () => {
   });
 
   it('35. should create a loop between 2 stations', () => {
-    // StationA at origin rot 0° (track -X), StationB at Y=8000 rot 180° (track +X)
-    // Left side (3 segments): A:TC1 → turn → turn → straight → B:TC1
-    // Right side (3 segments): B:TC0 → straight → turn → turn → A:TC0
+    // StA at (0,0) rot 0°: TC0=(+800,0) TC1=(-800,0)
+    // StB at (0,8000) rot 180°: TC0=(-800,8000) TC1=(+800,8000)
+    // 4 stubs of exactly 1200 UU at station ports, then 2 arcs (2 segments each)
     const r = editEntities({
       anchor: { x: 700000, y: 0, z: 0 },
       entities: [
@@ -75,19 +75,22 @@ describe('Track', () => {
         { id: 'stB', type: 'train-station', position: { x: 0, y: 8000, z: 0 }, rotation: 180 },
       ],
       connections: [
-        // Left side: A:TC1(-800,0) → mid1(-4800,4000) → mid2(-800,8000) → B:TC1(800,8000)
-        { id: 'L1', from: 'stA:TrackConnection1', to: { x: -4800, y: 4000, z: 0, rotation: 270 }, track: true },
-        { id: 'L2', from: 'L1:TrackConnection1', to: { x: -800, y: 8000, z: 0, rotation: 180 }, track: true },
-        { id: 'L3', from: 'L2:TrackConnection1', to: 'stB:TrackConnection1', track: true },
-        // Right side: B:TC0(-800,8000) → mid3(800,8000) → mid4(4800,4000) → A:TC0(800,0)
-        { id: 'R1', from: 'stB:TrackConnection0', to: { x: 800, y: 8000, z: 0, rotation: 180 }, track: true },
-        { id: 'R2', from: 'R1:TrackConnection1', to: { x: 4800, y: 4000, z: 0, rotation: 90 }, track: true },
-        { id: 'R3', from: 'R2:TrackConnection1', to: 'stA:TrackConnection0', track: true },
+        // Stubs (exactly 1200 UU each)
+        { id: 'sL1', from: 'stA:TrackConnection1', to: { x: -2000, y: 0, z: 0 }, track: true },
+        { id: 'sR3', from: 'stA:TrackConnection0', to: { x: 2000, y: 0, z: 0 }, track: true },
+        { id: 'sR1', from: 'stB:TrackConnection0', to: { x: -2000, y: 8000, z: 0 }, track: true },
+        { id: 'sL3', from: 'stB:TrackConnection1', to: { x: 2000, y: 8000, z: 0 }, track: true },
+        // Left arc (2 segments): sL1(-2000,0) → mid(-6000,4000) → sR1(-2000,8000)
+        { id: 'L1', from: 'sL1:TrackConnection1', to: { x: -6000, y: 4000, z: 0, rotation: 270 }, track: true },
+        { id: 'L2', from: 'sR1:TrackConnection1', to: { x: -6000, y: 4000, z: 0, rotation: 90 }, track: true },
+        // Right arc (2 segments): sL3(+2000,8000) → mid(+6000,4000) → sR3(+2000,0)
+        { id: 'R1', from: 'sL3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 90 }, track: true },
+        { id: 'R2', from: 'sR3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 270 }, track: true },
       ],
     });
 
-    // 2 stations + 6 tracks
-    assert(r.added.length >= 8, `Expected 2 stations + 6 tracks, got ${r.added.length}`);
+    // 2 stations + 4 stubs + 4 arcs = 10
+    assert(r.added.length >= 10, `Expected 2 stations + 8 tracks, got ${r.added.length}`);
 
     const stA = added(r, 'stA');
     const stB = added(r, 'stB');
@@ -96,23 +99,20 @@ describe('Track', () => {
     assertApprox(stA.entity.transform.translation.y, 0, 10, 'StA Y');
     assertApprox(stB.entity.transform.translation.y, 8000, 10, 'StB Y');
 
-    // All 6 track segments should exist
-    for (const id of ['L1', 'L2', 'L3', 'R1', 'R2', 'R3']) {
+    // All track segments should exist
+    for (const id of ['sL1', 'sR3', 'sR1', 'sL3', 'L1', 'L2', 'R1', 'R2']) {
       assert(r.added.find(a => a.id === id), `Track ${id} should exist`);
     }
 
-    // Verify the circuit is connected end-to-end
-    const L1 = getBuilder(r.added.find(a => a.id === 'L1').index);
-    const L3 = getBuilder(r.added.find(a => a.id === 'L3').index);
-    const R1 = getBuilder(r.added.find(a => a.id === 'R1').index);
-    const R3 = getBuilder(r.added.find(a => a.id === 'R3').index);
+    // Verify stubs are connected to stations
+    const sL1 = getBuilder(r.added.find(a => a.id === 'sL1').index);
+    const sR3 = getBuilder(r.added.find(a => a.id === 'sR3').index);
+    const sR1 = getBuilder(r.added.find(a => a.id === 'sR1').index);
+    const sL3 = getBuilder(r.added.find(a => a.id === 'sL3').index);
 
-    // Left side connects A:TC1 → ... → B:TC1
-    assertConnected(L1, 'TrackConnection0', stA, 'TrackConnection1', 'L1→stA');
-    assertConnected(L3, 'TrackConnection1', stB, 'TrackConnection1', 'L3→stB');
-
-    // Right side connects B:TC0 → ... → A:TC0
-    assertConnected(R1, 'TrackConnection0', stB, 'TrackConnection0', 'R1→stB');
-    assertConnected(R3, 'TrackConnection1', stA, 'TrackConnection0', 'R3→stA');
+    assertConnected(sL1, 'TrackConnection0', stA, 'TrackConnection1', 'sL1→stA:TC1');
+    assertConnected(sR3, 'TrackConnection0', stA, 'TrackConnection0', 'sR3→stA:TC0');
+    assertConnected(sR1, 'TrackConnection0', stB, 'TrackConnection0', 'sR1→stB:TC0');
+    assertConnected(sL3, 'TrackConnection0', stB, 'TrackConnection1', 'sL3→stB:TC1');
   });
 });
