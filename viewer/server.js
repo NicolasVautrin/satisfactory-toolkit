@@ -243,9 +243,8 @@ app.get('/api/game/entity/:index', (req, res) => {
 
   // Raw spline control points (Hermite) in entity-local space
   let splinePoints = null;
-  if (Builder?._parseSplinePoints) {
-    splinePoints = Builder._parseSplinePoints(entity);
-  }
+  const SplineBuilder = require('../lib/shared/SplineBuilder');
+  splinePoints = SplineBuilder._parseSplinePoints(entity);
 
   const result = {
     instanceName: entity.instanceName,

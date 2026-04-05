@@ -373,7 +373,7 @@ const info = Builder.getPorts(entity);
 
 3 comportements selon le type de Builder :
 - **Builders fixes** (producteurs, extracteurs, splitters...) : transforme `PORT_LAYOUT` (offsets locaux) en world space via rotation quaternion + translation
-- **Builders spline** (ConveyorBelt, Pipe, RailroadTrack) : calcule depuis `mSplineData` — ports aux endpoints de la spline, directions depuis les tangentes, longueur par sampling Hermite
+- **Builders spline** (ConveyorBelt, Pipe, RailroadTrack) : calcule depuis `mSplineData` — ports aux endpoints de la spline, directions outward, longueur par sampling Hermite
 - **ConveyorLift** : calcule depuis `mTopTransform` via `buildPortsLayout()`
 
 ### Héritage

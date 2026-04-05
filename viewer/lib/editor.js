@@ -137,7 +137,7 @@ function getEntity(entityIndex) {
     if (port._snapPropName) {
       const snappedPath = port.component?.properties?.[port._snapPropName]?.value?.pathName;
       if (snappedPath) {
-        port._snappedTo = { pathName: snappedPath };
+        port._snappedBy.push({ pathName: snappedPath });
       }
     }
   }
@@ -225,116 +225,11 @@ function updateEntityConnections(entityIndex) {
   saveState.viewerEntityRepository.entities[entityIndex].cn = cn;
 }
 
-// ── Spline length validation ───────────────────────────────────────
+// ── Spline validation (delegated to lib/shared) ──────────────────
+const { validateSplineShape, validateSplineLength } = require('../../lib/shared/validateSpline');
+
 function dist3D(a, b) {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2);
-}
-
-function validateSplineLength(type, length) {
-  const limits = splineLimits[type];
-  if (!limits) return;
-  if (length < limits.min)
-    throw new Error(`${type} too short: ${Math.round(length)} UU (min ${limits.min})`);
-  if (length > limits.max)
-    throw new Error(`${type} too long: ${Math.round(length)} UU (max ${limits.max})`);
-}
-
-// ── Spline curvature / slope validation ───────────────────────────
-const GUARD_DIST = 100; // 2 × PORT_TANGENT
-
-function validateSplineShape(type, entity, wSrcDir, wDstDir) {
-  const Builder = require('../../lib/shared/Builder');
-  const { sampleHermiteSpline } = require('../../lib/shared/hermite');
-  const Vector3D = require('../../lib/shared/Vector3D');
-
-  const pts = Builder._parseSplinePoints(entity);
-  if (!pts || pts.length < 2) return;
-
-  // U-turn check using world-space port directions passed by caller.
-  // Belt/pipe: wSrcDir points into the spline (toward dest), wDstDir points away (opposing span)
-  // Track: both tangents point in the direction of travel (co-directional with span)
-  if (wSrcDir && wDstDir) {
-    const p0 = pts[0], pN = pts[pts.length - 1];
-    const span = new Vector3D(pN.x - p0.x, pN.y - p0.y, 0);
-    const spanXY = span.length;
-    if (spanXY > 1e-6) {
-      const sn = { x: span.x / spanXY, y: span.y / spanXY };
-      const cosSrc = wSrcDir.x * sn.x + wSrcDir.y * sn.y;
-      const cosDst = wDstDir.x * sn.x + wDstDir.y * sn.y;
-      if (type === 'track') {
-        // Track tangents should roughly align with span (both co-directional)
-        if (cosSrc < -0.5 || cosDst < -0.5) {
-          throw new Error(`${type} would require U-turn`);
-        }
-      } else {
-        // Belt/pipe: source into span (cosSrc > 0), dest opposes span (cosDst < 0)
-        if (cosSrc < -0.5 || cosDst > 0.5) {
-          throw new Error(`${type} would require U-turn`);
-        }
-      }
-    }
-  }
-
-  const limits = splineLimits[type];
-  if (!limits || (!limits.minRadiusXY && !limits.maxSlopeDeg)) return;
-
-  const sampled = sampleHermiteSpline(pts, 100);
-  const t = entity.transform.translation;
-  const r = entity.transform.rotation;
-  const world = sampled.map(p => new Vector3D(p).rotate(r).add(new Vector3D(t)));
-
-  // Skip guard sections (GUARD_DIST from each end) for curvature/slope checks
-  let guardSamples = 0;
-  let cumLen = 0;
-  for (let i = 1; i < world.length; i++) {
-    cumLen += world[i].sub(world[i - 1]).length;
-    if (cumLen >= GUARD_DIST) { guardSamples = i; break; }
-  }
-  let totalLen = cumLen;
-  for (let i = guardSamples + 1; i < world.length; i++) totalLen += world[i].sub(world[i - 1]).length;
-  let endGuardStart = world.length - 1;
-  cumLen = 0;
-  for (let i = world.length - 1; i > 0; i--) {
-    cumLen += world[i].sub(world[i - 1]).length;
-    if (cumLen >= GUARD_DIST) { endGuardStart = i; break; }
-  }
-  const iStart = guardSamples;
-  const iEnd = endGuardStart;
-
-  // Min curvature radius in XY plane (excluding guards)
-  if (limits.minRadiusXY) {
-    let minR = Infinity;
-    for (let i = Math.max(1, iStart); i < Math.min(world.length - 1, iEnd); i++) {
-      const v1x = world[i].x - world[i - 1].x, v1y = world[i].y - world[i - 1].y;
-      const v2x = world[i + 1].x - world[i].x, v2y = world[i + 1].y - world[i].y;
-      const l1 = Math.sqrt(v1x * v1x + v1y * v1y);
-      const l2 = Math.sqrt(v2x * v2x + v2y * v2y);
-      if (l1 < 1e-6 || l2 < 1e-6) continue;
-      const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-      if (angle > 1e-10) {
-        const rv = (l1 + l2) / 2 / angle;
-        if (rv < minR) minR = rv;
-      }
-    }
-    if (minR < limits.minRadiusXY) {
-      throw new Error(`${type} curvature too tight: radius ${Math.round(minR)} UU (min ${limits.minRadiusXY})`);
-    }
-  }
-
-  // Max slope (excluding guards)
-  if (limits.maxSlopeDeg) {
-    const maxTan = Math.tan(limits.maxSlopeDeg * Math.PI / 180);
-    for (let i = Math.max(1, iStart); i <= iEnd; i++) {
-      const dx = world[i].x - world[i - 1].x, dy = world[i].y - world[i - 1].y;
-      const dz = world[i].z - world[i - 1].z;
-      const hDist = Math.sqrt(dx * dx + dy * dy);
-      if (hDist > 1e-6 && Math.abs(dz) / hDist > maxTan) {
-        const slopeDeg = Math.atan(Math.abs(dz) / hDist) * 180 / Math.PI;
-        throw new Error(`${type} slope too steep: ${slopeDeg.toFixed(1)}° (max ${limits.maxSlopeDeg}°)`);
-      }
-    }
-  }
 }
 
 // ── Inject a spline entity into the save + viewer ────────────────────
@@ -376,49 +271,58 @@ const SPLINE_TYPES = {
 function createSplineBetween(type, srcEndpoint, tgtEndpoint, tier) {
   const splineType = SPLINE_TYPES[type];
   if (!splineType) throw new Error(`Unknown spline type "${type}"`);
-  const Builder = splineType.require();
+  const SplineBuilder = splineType.require();
 
-  // Resolve world positions and directions
-  let wSrcPos, wSrcDir, wTgtPos, wTgtDir;
+  // Resolve world positions (for length validation + initial straight creation)
+  const wSrcPos = srcEndpoint.idx !== undefined
+    ? getEntity(srcEndpoint.idx).port(srcEndpoint.port).worldPos()
+    : srcEndpoint.pos;
+  const wTgtPos = tgtEndpoint.idx !== undefined
+    ? getEntity(tgtEndpoint.idx).port(tgtEndpoint.port).worldPos()
+    : tgtEndpoint.pos;
+
+  validateSplineLength(type, dist3D(wSrcPos, wTgtPos));
+
+  // 1. Create straight spline (positions only, no dirs)
+  const createTier = typeof tier === 'number' ? tier : splineType.defaultTier;
+  const args = [
+    { pos: { ...wSrcPos }, dir: null },
+    { pos: { ...wTgtPos }, dir: null },
+  ];
+  if (createTier != null) args.push(createTier);
+  const builder = SplineBuilder.create(...args);
+
+  // 2. Snap ports — lets the builder negate dirs and rebuild spline with curves
+  const portValues = Object.values(SplineBuilder.Ports);
+  const startPortName = portValues[0], endPortName = portValues[portValues.length - 1];
+  const startPort = builder.port(startPortName);
+  const endPort = builder.port(endPortName);
+
   if (srcEndpoint.idx !== undefined) {
     const srcEntity = getEntity(srcEndpoint.idx);
-    const srcPort = srcEntity.port(srcEndpoint.port);
-    wSrcPos = srcPort.worldPos(); wSrcDir = srcPort.worldDir();
-  } else {
-    wSrcPos = srcEndpoint.pos; wSrcDir = srcEndpoint.dir || null;
+    startPort.snapTo(srcEntity.port(srcEndpoint.port));
+  } else if (srcEndpoint.dir) {
+    startPort.snapToPos(srcEndpoint.pos, srcEndpoint.dir);
   }
   if (tgtEndpoint.idx !== undefined) {
     const tgtEntity = getEntity(tgtEndpoint.idx);
-    const tgtPort = tgtEntity.port(tgtEndpoint.port);
-    wTgtPos = tgtPort.worldPos(); wTgtDir = tgtPort.worldDir();
-  } else {
-    wTgtPos = tgtEndpoint.pos; wTgtDir = tgtEndpoint.dir || null;
+    endPort.snapTo(tgtEntity.port(tgtEndpoint.port));
+  } else if (tgtEndpoint.dir) {
+    endPort.snapToPos(tgtEndpoint.pos, tgtEndpoint.dir);
   }
 
-  validateSplineLength(type, dist3D(wSrcPos, wTgtPos));
-  const createTier = typeof tier === 'number' ? tier : splineType.defaultTier;
-  const args = [
-    { pos: { ...wSrcPos }, dir: wSrcDir ? { ...wSrcDir } : null },
-    { pos: { ...wTgtPos }, dir: wTgtDir ? { ...wTgtDir } : null },
-  ];
-  if (createTier != null) args.push(createTier);
-  const builder = Builder.create(...args);
-  validateSplineShape(type, builder.entity, wSrcDir, wTgtDir);
-
+  // 3. Inject into save AFTER snaps (spline is final)
   const { index: splineIndex, item, classUpdate } = injectSplineEntity(builder);
 
-  // Connect ports where endpoints reference existing entities
-  // Start port = first Ports value, end port = last Ports value
-  const portValues = Object.values(Builder.Ports);
-  const startPort = portValues[0], endPort = portValues[portValues.length - 1];
+  // 4. Wire ports (logical connection only)
   if (srcEndpoint.idx !== undefined) {
     const srcEntity = getEntity(srcEndpoint.idx);
-    builder.connectPorts(startPort, srcEntity, srcEndpoint.port);
+    builder.wirePorts(startPort, srcEntity.port(srcEndpoint.port));
     updateEntityConnections(srcEndpoint.idx);
   }
   if (tgtEndpoint.idx !== undefined) {
     const tgtEntity = getEntity(tgtEndpoint.idx);
-    builder.connectPorts(endPort, tgtEntity, tgtEndpoint.port);
+    builder.wirePorts(endPort, tgtEntity.port(tgtEndpoint.port));
     updateEntityConnections(tgtEndpoint.idx);
   }
   updateEntityConnections(splineIndex);
@@ -590,6 +494,28 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
   }
 }
 
+// ── Resolve endpoint: string "id:port" → {idx, port}, object {x,y,z} → {pos, dir?} ──
+function resolveEndpoint(ep, label, conn, idMap, anchor, cosB, sinB, bpYawDeg) {
+  if (typeof ep === 'object' && ep !== null && 'x' in ep) {
+    if (!conn.track) throw new Error(`Positional endpoints only supported for track connections (${label})`);
+    const rx = ep.x * cosB - ep.y * sinB;
+    const ry = ep.x * sinB + ep.y * cosB;
+    const pos = { x: anchor.x + rx, y: anchor.y + ry, z: anchor.z + (ep.z || 0) };
+    let dir = null;
+    if (ep.rotation !== undefined) {
+      const totalYaw = (ep.rotation + (bpYawDeg || 0)) * Math.PI / 180;
+      // ep.rotation defines the port's outward direction; negate to get
+      // virtual anchor direction (snapToPos will negate again for opposition)
+      dir = { x: Math.cos(totalYaw), y: Math.sin(totalYaw), z: 0 };
+    }
+    return { pos, dir };
+  }
+  const [id, port] = ep.split(':');
+  const idx = idMap[id];
+  if (idx === undefined) throw new Error(`Unknown entity id "${id}" in connection ${label}`);
+  return { idx, port };
+}
+
 // ── Process connections (direct, belt, pipe, insertion) ──────────────
 function processConnections(connections, idMap, added, anchor, bpYawDeg) {
   const saveState = getSaveState();
@@ -611,28 +537,8 @@ function processConnections(connections, idMap, added, anchor, bpYawDeg) {
       continue;
     }
 
-    // Resolve endpoint: string "id:port" → {idx, port}, object {x,y,z} → {pos} (track only)
-    function resolveEndpoint(ep, label) {
-      if (typeof ep === 'object' && ep !== null && 'x' in ep) {
-        if (!conn.track) throw new Error(`Positional endpoints only supported for track connections (${label})`);
-        // Transform relative position by anchor + batch rotation
-        const rx = ep.x * cosB - ep.y * sinB;
-        const ry = ep.x * sinB + ep.y * cosB;
-        const pos = { x: anchor.x + rx, y: anchor.y + ry, z: anchor.z + (ep.z || 0) };
-        let dir = null;
-        if (ep.rotation !== undefined) {
-          const totalYaw = (ep.rotation + (bpYawDeg || 0)) * Math.PI / 180;
-          dir = { x: -Math.cos(totalYaw), y: -Math.sin(totalYaw), z: 0 };
-        }
-        return { pos, dir };
-      }
-      const [id, port] = ep.split(':');
-      const idx = idMap[id];
-      if (idx === undefined) throw new Error(`Unknown entity id "${id}" in connection ${label}`);
-      return { idx, port };
-    }
-    const srcEndpoint = resolveEndpoint(conn.from, 'from');
-    const tgtEndpoint = resolveEndpoint(conn.to, 'to');
+    const srcEndpoint = resolveEndpoint(conn.from, 'from', conn, idMap, anchor, cosB, sinB, bpYawDeg);
+    const tgtEndpoint = resolveEndpoint(conn.to, 'to', conn, idMap, anchor, cosB, sinB, bpYawDeg);
 
     const splineType = conn.belt ? 'belt' : conn.pipe ? 'pipe' : conn.track ? 'track' : null;
     if (splineType) {

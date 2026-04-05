@@ -51,12 +51,13 @@ const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
 let splineData;
 if (type === 'track') {
-  // Rail spline: 2-point hermite (same logic as makeRailSpline in RailroadTrack.js)
-  const TANGENT_SCALE = 0.6;
+  // Rail spline: 2-point hermite (same logic as makeSpline track branch in satisfactoryLib.js)
+  const TANGENT_SCALE = 1.17;
   const end = new Vector3D(dx, dy, dz);
   const len = end.length;
   const straight = len > 1 ? end.norm() : new Vector3D(1, 0, 0);
-  const dirInN = fromDir ? new Vector3D(fromDir).norm() : straight;
+  // Dirs are outward port directions. Negate dirIn for LeaveTangent (needs inward).
+  const dirInN = fromDir ? new Vector3D(fromDir).norm().scale(-1) : straight;
   const dirOutN = toDir ? new Vector3D(toDir).norm() : straight;
   const tScale = len * TANGENT_SCALE;
   splineData = [
@@ -64,15 +65,18 @@ if (type === 'track') {
     { x: dx, y: dy, z: dz, ax: dirOutN.x * tScale, ay: dirOutN.y * tScale, az: dirOutN.z * tScale, lx: dirOutN.x * tScale, ly: dirOutN.y * tScale, lz: dirOutN.z * tScale },
   ];
 } else {
-  // Belt / pipe: 4-point spline with guard sections
+  // Belt / pipe: 5-point spline with guard sections
   const { makeSpline } = require('../satisfactoryLib');
-  const wrapped = makeSpline(dx, dy, dz, fromDir, toDir);
-  const Builder = require('../lib/shared/Builder');
+  // Create minimal port-like objects for makeSpline
+  const fakeFrom = { localPos() { return { x: 0, y: 0, z: 0 }; }, localDir() { return fromDir; }, portType: type };
+  const fakeTo = { localPos() { return { x: dx, y: dy, z: dz }; }, localDir() { return toDir; }, portType: type };
+  const wrapped = makeSpline(fakeFrom, fakeTo);
+  const SplineBuilder = require('../lib/shared/SplineBuilder');
   const fakeEntity = {
     properties: { mSplineData: wrapped },
     transform: { translation: from, rotation: { x: 0, y: 0, z: 0, w: 1 } },
   };
-  splineData = Builder._parseSplinePoints(fakeEntity);
+  splineData = SplineBuilder._parseSplinePoints(fakeEntity);
 }
 
 if (!splineData || splineData.length < 2) {
@@ -108,17 +112,18 @@ for (let i = world.length - 1; i > 0; i--) {
   if (cumLen >= GUARD_DIST) { guardEnd = i; break; }
 }
 
-// U-turn check
-let uTurnResult = 'SKIP (no dirs)';
-if (fromDir && toDir) {
+// U-turn check (skip for tracks — they can make 90° turns, min radius suffices)
+let uTurnResult = type === 'track' ? 'SKIP (track)' : 'SKIP (no dirs)';
+if (type !== 'track' && fromDir && toDir) {
   const span = new Vector3D(dx, dy, 0);
   const spanXY = span.length;
   if (spanXY > 1e-6) {
     const sn = { x: span.x / spanXY, y: span.y / spanXY };
     const cosSrc = fromDir.x * sn.x + fromDir.y * sn.y;
     const cosDst = toDir.x * sn.x + toDir.y * sn.y;
+    // Track: TC0 outward opposes span (cosSrc ≈ -1), TC1 outward aligns (cosDst ≈ +1)
     const uTurnFail = type === 'track'
-      ? (cosSrc < -0.5 || cosDst < -0.5)
+      ? (cosSrc > 0.5 || cosDst < -0.5)
       : (cosSrc < -0.5 || cosDst > 0.5);
     if (uTurnFail) {
       uTurnResult = `FAIL (cosSrc=${cosSrc.toFixed(3)}, cosDst=${cosDst.toFixed(3)})`;

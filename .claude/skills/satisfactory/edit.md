@@ -70,15 +70,34 @@ Les endpoints positionnels (`{x,y,z}` au lieu de `"id:port"`) ne sont supportés
 
 ### Endpoints positionnels track
 
-Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés) qui spécifie la direction du tangent de la spline :
-- `rotation: 0` → direction (-1, 0, 0) = -X (même convention que les stations à rotation 0°)
+Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés) qui spécifie la **direction outward du port** (vers l'extérieur du track, à l'opposé du track) :
+- `rotation: 0` → direction (-1, 0, 0) = -X
 - `rotation: 90` → direction (0, -1, 0) = -Y
 - `rotation: 180` → direction (+1, 0, 0) = +X
 - `rotation: 270` → direction (0, +1, 0) = +Y
 
-Sans `rotation`, la spline est droite (tangent = direction du segment).
+**Convention outward** : tous les ports (belt, pipe, track) pointent vers l'extérieur. Pour un track :
+- `from` (= TC0) : la rotation donne la direction **opposée** au sens de parcours. Ex: track allant vers le nord → `from` rotation 90 (-Y = outward sud).
+- `to` (= TC1) : la rotation donne la direction **dans** le sens de parcours. Ex: track arrivant par le nord → `to` rotation 270 (+Y = outward nord).
+
+Sans `rotation`, la direction est calculée depuis le span (droite).
 
 Les positions sont relatives à l'anchor et transformées par la rotation du batch (comme les positions d'entités).
+
+### Outil de planification de chemin railway
+
+Pour planifier un chemin railway entre deux transforms, utiliser `tools/planTrackPath.js` :
+```bash
+node tools/planTrackPath.js --from "0,26000,0" --fromRot 270 --to "8000,26000,0" --toRot 90
+```
+
+L'outil prend deux transforms (position + rotation/direction) et retourne la liste minimale de segments track valides (longueur, courbure, pente). Utilise une courbe de Bézier cubique pour trouver les waypoints intermédiaires.
+
+Options : `--from "x,y,z"`, `--to "x,y,z"`, `--fromRot N` / `--toRot N` (yaw degrés, direction outward du port) ou `--fromDir "x,y,z"` / `--toDir "x,y,z"` (vecteur outward).
+
+Sortie : tableau récapitulatif + JSON directement utilisable dans les connections `editEntities`.
+
+**Utiliser systématiquement avant d'écrire un test track** pour valider chaque segment courbe et déterminer les positions d'apex.
 
 ### Docking station (gares)
 
@@ -218,7 +237,7 @@ Pente maximale en Z, mesurée segment par segment sur la spline samplée (hors g
 | track | 25° |
 
 ### Guard sections et splines
-Les splines Hermite ont des **guard sections** de 100 UU (2×PORT_TANGENT) à chaque extrémité. Ces sections sont droites et alignées avec la direction du port — elles permettent au belt/pipe de dégager du bâtiment avant de tourner.
+Les splines Hermite ont des **guard sections** de 100 UU (2×PORT_TANGENT) à chaque extrémité. Ces sections sont droites et alignées avec la direction outward du port — elles permettent au belt/pipe de dégager du bâtiment avant de tourner.
 
 La courbure la plus serrée se produit à la **transition guard → segment central**, quand la direction du port est perpendiculaire à la direction globale du belt. C'est pourquoi la validation de courbure/pente exclut les guard sections.
 

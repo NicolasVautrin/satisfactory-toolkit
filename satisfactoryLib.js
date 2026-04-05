@@ -348,61 +348,65 @@ function wrapSplineData(points) {
   };
 }
 
+const TRACK_TANGENT_SCALE = 1.17; // tangent magnitude relative to segment length (save median for 90° turns)
+
 /**
- * Creates spline data for a pipe from (0,0,0) to (dx, dy, dz) in local space.
- * 4-point Hermite spline matching Satisfactory's native format:
- *   P0 (endpoint) -> P1 (guard at GUARD_DIST) -> P2 (guard at GUARD_DIST from end) -> P3 (endpoint)
- * Guard segments: 100u (2×PORT_TANGENT) straight sections at each port.
- * Tangent norms: 1 at outer extremities, PORT_TANGENT at connections,
- * intermediate tangents oriented toward the central segment.
+ * Creates spline data from two FlowPorts.
+ * Port dirs are **outward** (away from the spline). This function converts to travel tangents.
+ * - Belt/pipe: 5-point Hermite with 100 UU guard sections at each port
+ * - Track: 2-point Hermite, tangent magnitude = len × 0.6
+ *
+ * Ports must have _pos/_dir in local space (entity rotation = identity, translation = origin).
+ * @param {FlowPort} portFrom  Start port (port 0)
+ * @param {FlowPort} portTo    End port (port 1)
+ * @returns {object} mSplineData property
  */
-function makeSpline(dx, dy, dz, dirIn, dirOut) {
-  const end = new Vector3D(dx, dy, dz);
+function makeSpline(portFrom, portTo) {
+  const p0 = portFrom.localPos();
+  const pN = portTo.localPos();
+  const end = new Vector3D(pN.x - p0.x, pN.y - p0.y, (pN.z || 0) - (p0.z || 0));
   const totalLen = end.length;
   if (totalLen < 1) {
     return wrapSplineData([
-      splinePoint(new Vector3D(0, 0, 0), new Vector3D(1, 0, 0), new Vector3D(1, 0, 0)),
-      splinePoint(new Vector3D(1, 0, 0), new Vector3D(1, 0, 0), new Vector3D(1, 0, 0)),
+      splinePoint(new Vector3D(p0), new Vector3D(1, 0, 0), new Vector3D(1, 0, 0)),
+      splinePoint(new Vector3D(p0.x + 1, p0.y, p0.z || 0), new Vector3D(1, 0, 0), new Vector3D(1, 0, 0)),
     ]);
   }
 
   const straightDir = end.norm();
-  if (!dirIn) dirIn = straightDir;
-  if (!dirOut) dirOut = straightDir;
+  const dirFrom = portFrom.localDir();
+  const dirTo = portTo.localDir();
 
-  const dirInNorm = new Vector3D(dirIn).norm();
-  // dirOut points away from destination building; pipe arrives in -dirOut direction
-  const arriveNorm = new Vector3D(dirOut).norm().scale(-1);
+  // Convert outward port dirs to travel tangent dirs:
+  // Port 0 outward opposes travel → negate. Port N outward = travel → keep.
+  const travelIn  = dirFrom ? new Vector3D(dirFrom).norm().scale(-1) : straightDir;
+  const travelOut = dirTo   ? new Vector3D(dirTo).norm()             : straightDir;
 
-  // Guard distance: 100u (2×PORT_TANGENT), clamped for short pipes
+  const isTrack = portFrom.portType === 'track';
+  const origin = new Vector3D(p0);
+
+  if (isTrack) {
+    // Track: 2 points, tangent magnitude proportional to length
+    const tScale = totalLen * TRACK_TANGENT_SCALE;
+    return wrapSplineData([
+      splinePoint(origin, travelIn.scale(tScale), travelIn.scale(tScale)),
+      splinePoint(origin.add(end), travelOut.scale(tScale), travelOut.scale(tScale)),
+    ]);
+  }
+
+  // Belt/pipe: 5 points with guard sections
   const GUARD_DIST = Math.min(2 * PORT_TANGENT, totalLen / 4);
-
-  // P1: GUARD_DIST from P0 in dirIn direction (straight guard segment)
-  const p1 = dirInNorm.scale(GUARD_DIST);
-  // P2: GUARD_DIST from P3 back along arrival direction (straight guard segment)
-  const p2 = end.sub(arriveNorm.scale(GUARD_DIST));
-
-  // Central segment direction (P1 -> P2)
-  const midVec = p2.sub(p1);
-  const midLen = midVec.length;
-
-  // Midpoint between P1 and P2
-  const pMid = p1.add(p2).scale(0.5);
-  // Midpoint tangents: arrive from P1, leave toward P2
-  const midFromP1 = pMid.sub(p1);
-  const midToP2 = p2.sub(pMid);
+  const g1 = origin.add(travelIn.scale(GUARD_DIST));
+  const g2 = origin.add(end).sub(travelOut.scale(GUARD_DIST));
+  const midLen = g2.sub(g1).length;
+  const pMid = g1.add(g2).scale(0.5);
 
   return wrapSplineData([
-    // P0: endpoint
-    splinePoint(new Vector3D(0, 0, 0), dirInNorm, dirInNorm.scale(PORT_TANGENT)),
-    // P1: guard
-    splinePoint(p1, dirInNorm.scale(PORT_TANGENT), dirInNorm.scale(midLen / 3)),
-    // Pmid: midpoint
-    splinePoint(pMid, midFromP1, midToP2),
-    // P2: guard
-    splinePoint(p2, arriveNorm.scale(midLen / 3), arriveNorm.scale(PORT_TANGENT)),
-    // P3: endpoint
-    splinePoint(end, arriveNorm.scale(PORT_TANGENT), arriveNorm),
+    splinePoint(origin, travelIn, travelIn.scale(PORT_TANGENT)),
+    splinePoint(g1, travelIn.scale(PORT_TANGENT), travelIn.scale(midLen / 3)),
+    splinePoint(pMid, pMid.sub(g1), g2.sub(pMid)),
+    splinePoint(g2, travelOut.scale(midLen / 3), travelOut.scale(PORT_TANGENT)),
+    splinePoint(origin.add(end), travelOut.scale(PORT_TANGENT), travelOut),
   ]);
 }
 

@@ -161,4 +161,149 @@ describe('Track', () => {
       'assertTrackLoop should reject stations facing same direction',
     );
   });
+
+  it('37. should create double-track railway with 3 stations, bypasses, and return loop', () => {
+    // Double-track racetrack: outbound (X=0, +Y) through 3 stations, return (X=8000, -Y)
+    // Bypasses at each station, crossovers between loops, arcs at top/bottom
+    // All stations rotation 90° (face +Y): TC0=NORTH (+800), TC1=SOUTH (-800)
+    // Outbound (south→north): enter via TC1 (south), exit via TC0 (north)
+    //
+    // planTrackPath validated arcs: apex top (4000,30200), apex bottom (4000,-6200)
+    const r = editEntities({
+      anchor: { x: 850000, y: 0, z: 0 },
+      entities: [
+        { id: 'stA', type: 'train-station', position: { x: 0, y: 0, z: 0 }, rotation: 90 },
+        { id: 'stB', type: 'train-station', position: { x: 0, y: 12000, z: 0 }, rotation: 90 },
+        { id: 'stC', type: 'train-station', position: { x: 0, y: 24000, z: 0 }, rotation: 90 },
+      ],
+      connections: [
+        // === STUBS (1200 UU each, auto-connect to station) ===
+        // Entry stubs connect to TC1 (south), exit stubs to TC0 (north)
+        { id: 'sA_in', from: 'stA:TrackConnection1', to: { x: 0, y: -2000, z: 0 }, track: true },
+        { id: 'sA_out', from: 'stA:TrackConnection0', to: { x: 0, y: 2000, z: 0 }, track: true },
+        { id: 'sB_in', from: 'stB:TrackConnection1', to: { x: 0, y: 10000, z: 0 }, track: true },
+        { id: 'sB_out', from: 'stB:TrackConnection0', to: { x: 0, y: 14000, z: 0 }, track: true },
+        { id: 'sC_in', from: 'stC:TrackConnection1', to: { x: 0, y: 22000, z: 0 }, track: true },
+        { id: 'sC_out', from: 'stC:TrackConnection0', to: { x: 0, y: 26000, z: 0 }, track: true },
+
+        // === BYPASSES (straight, 4000 UU) ===
+        { id: 'bypA', from: { x: 0, y: -2000, z: 0 }, to: { x: 0, y: 2000, z: 0 }, track: true },
+        { id: 'bypB', from: { x: 0, y: 10000, z: 0 }, to: { x: 0, y: 14000, z: 0 }, track: true },
+        { id: 'bypC', from: { x: 0, y: 22000, z: 0 }, to: { x: 0, y: 26000, z: 0 }, track: true },
+
+        // === OUTBOUND MAIN LINE (straight, 8000 UU) ===
+        { id: 'outAB', from: { x: 0, y: 2000, z: 0 }, to: { x: 0, y: 10000, z: 0 }, track: true },
+        { id: 'outBC', from: { x: 0, y: 14000, z: 0 }, to: { x: 0, y: 22000, z: 0 }, track: true },
+
+        // === CROSSOVERS (straight east-west, 8000 UU) ===
+        { id: 'xA_to', from: { x: 0, y: 2000, z: 0 }, to: { x: 8000, y: 2000, z: 0 }, track: true },
+        { id: 'xB_from', from: { x: 8000, y: 10000, z: 0 }, to: { x: 0, y: 10000, z: 0 }, track: true },
+        { id: 'xB_to', from: { x: 0, y: 14000, z: 0 }, to: { x: 8000, y: 14000, z: 0 }, track: true },
+        { id: 'xC_from', from: { x: 8000, y: 22000, z: 0 }, to: { x: 0, y: 22000, z: 0 }, track: true },
+
+        // === TOP ARCS (chained, from planTrackPath) ===
+        { id: 'topArc1', from: 'sC_out:TrackConnection1', to: { x: 4000, y: 30200, z: 0, rotation: 180 }, track: true },
+        { id: 'topArc2', from: 'topArc1:TrackConnection1', to: { x: 8000, y: 26000, z: 0, rotation: 90 }, track: true },
+
+        // === RETURN TRACKS (chained, X=8000) ===
+        { id: 'ret1', from: 'topArc2:TrackConnection1', to: { x: 8000, y: 22000, z: 0 }, track: true },
+        { id: 'ret2', from: 'ret1:TrackConnection1', to: { x: 8000, y: 14000, z: 0 }, track: true },
+        { id: 'ret3', from: 'ret2:TrackConnection1', to: { x: 8000, y: 10000, z: 0 }, track: true },
+        { id: 'ret4', from: 'ret3:TrackConnection1', to: { x: 8000, y: 2000, z: 0 }, track: true },
+        { id: 'ret5', from: 'ret4:TrackConnection1', to: { x: 8000, y: -2000, z: 0 }, track: true },
+
+        // === BOTTOM ARCS (chained, from planTrackPath) ===
+        { id: 'botArc1', from: 'ret5:TrackConnection1', to: { x: 4000, y: -6200, z: 0, rotation: 0 }, track: true },
+        { id: 'botArc2', from: 'botArc1:TrackConnection1', to: { x: 0, y: -2000, z: 0, rotation: 270 }, track: true },
+
+        // === SWITCH CONNECTIONS (19 explicit) ===
+        // nA_in (0,-2000): sA_in.TC1 hub
+        { from: 'bypA:TrackConnection0', to: 'sA_in:TrackConnection1' },
+        { from: 'botArc2:TrackConnection1', to: 'sA_in:TrackConnection1' },
+        // nA_out (0,2000): sA_out.TC1 hub — 3-way switch
+        { from: 'bypA:TrackConnection1', to: 'sA_out:TrackConnection1' },
+        { from: 'outAB:TrackConnection0', to: 'sA_out:TrackConnection1' },
+        { from: 'xA_to:TrackConnection0', to: 'sA_out:TrackConnection1' },
+        // nB_in (0,10000): sB_in.TC1 hub — 3-way switch
+        { from: 'bypB:TrackConnection0', to: 'sB_in:TrackConnection1' },
+        { from: 'outAB:TrackConnection1', to: 'sB_in:TrackConnection1' },
+        { from: 'xB_from:TrackConnection1', to: 'sB_in:TrackConnection1' },
+        // nB_out (0,14000): sB_out.TC1 hub — 3-way switch
+        { from: 'bypB:TrackConnection1', to: 'sB_out:TrackConnection1' },
+        { from: 'outBC:TrackConnection0', to: 'sB_out:TrackConnection1' },
+        { from: 'xB_to:TrackConnection0', to: 'sB_out:TrackConnection1' },
+        // nC_in (0,22000): sC_in.TC1 hub — 3-way switch
+        { from: 'bypC:TrackConnection0', to: 'sC_in:TrackConnection1' },
+        { from: 'outBC:TrackConnection1', to: 'sC_in:TrackConnection1' },
+        { from: 'xC_from:TrackConnection1', to: 'sC_in:TrackConnection1' },
+        // nC_out (0,26000): sC_out.TC1 hub (topArc1 auto-connected)
+        { from: 'bypC:TrackConnection1', to: 'sC_out:TrackConnection1' },
+        // Return junctions (retN+1 auto-connected via chaining)
+        { from: 'xC_from:TrackConnection0', to: 'ret1:TrackConnection1' },
+        { from: 'xB_to:TrackConnection1', to: 'ret2:TrackConnection1' },
+        { from: 'xB_from:TrackConnection0', to: 'ret3:TrackConnection1' },
+        { from: 'xA_to:TrackConnection1', to: 'ret4:TrackConnection1' },
+      ],
+    });
+
+    // --- Assertions ---
+
+    // 3 stations + 24 tracks = 27 entities minimum
+    assert(r.added.length >= 27, `Expected >= 27 entities, got ${r.added.length}`);
+
+    // All track IDs exist
+    const trackIds = [
+      'sA_in', 'sA_out', 'sB_in', 'sB_out', 'sC_in', 'sC_out',
+      'bypA', 'bypB', 'bypC', 'outAB', 'outBC',
+      'xA_to', 'xB_from', 'xB_to', 'xC_from',
+      'topArc1', 'topArc2', 'ret1', 'ret2', 'ret3', 'ret4', 'ret5',
+      'botArc1', 'botArc2',
+    ];
+    for (const id of trackIds) {
+      assert(r.added.find(a => a.id === id), `Track ${id} should exist`);
+    }
+
+    const stA = added(r, 'stA');
+    const stB = added(r, 'stB');
+    const stC = added(r, 'stC');
+
+    // Station positions
+    assertApprox(stA.entity.transform.translation.y, 0, 10, 'StA Y');
+    assertApprox(stB.entity.transform.translation.y, 12000, 10, 'StB Y');
+    assertApprox(stC.entity.transform.translation.y, 24000, 10, 'StC Y');
+
+    // Stub connections to stations
+    const sA_in = getBuilder(r.added.find(a => a.id === 'sA_in').index);
+    const sA_out = getBuilder(r.added.find(a => a.id === 'sA_out').index);
+    const sB_in = getBuilder(r.added.find(a => a.id === 'sB_in').index);
+    const sB_out = getBuilder(r.added.find(a => a.id === 'sB_out').index);
+    const sC_in = getBuilder(r.added.find(a => a.id === 'sC_in').index);
+    const sC_out = getBuilder(r.added.find(a => a.id === 'sC_out').index);
+
+    assertConnected(sA_in, 'TrackConnection0', stA, 'TrackConnection1', 'sA_in→stA:TC1');
+    assertConnected(sA_out, 'TrackConnection0', stA, 'TrackConnection0', 'sA_out→stA:TC0');
+    assertConnected(sB_in, 'TrackConnection0', stB, 'TrackConnection1', 'sB_in→stB:TC1');
+    assertConnected(sB_out, 'TrackConnection0', stB, 'TrackConnection0', 'sB_out→stB:TC0');
+    assertConnected(sC_in, 'TrackConnection0', stC, 'TrackConnection1', 'sC_in→stC:TC1');
+    assertConnected(sC_out, 'TrackConnection0', stC, 'TrackConnection0', 'sC_out→stC:TC0');
+
+    // Verify 3-way switches (nA_out, nB_in, nB_out, nC_in should have 3 connections)
+    const { getSaveState } = require('../../../viewer/lib/saveManager');
+    const allObjects = getSaveState().allObjects;
+    function connCount(builder, portName) {
+      const port = builder.port(portName);
+      const comp = allObjects.find(o => o.instanceName === port.pathName);
+      return comp?.properties?.mConnectedComponents?.values?.length || 0;
+    }
+    assert.strictEqual(connCount(sA_out, 'TrackConnection1'), 3, 'nA_out should be 3-way switch');
+    assert.strictEqual(connCount(sB_in, 'TrackConnection1'), 3, 'nB_in should be 3-way switch');
+    assert.strictEqual(connCount(sB_out, 'TrackConnection1'), 3, 'nB_out should be 3-way switch');
+    assert.strictEqual(connCount(sC_in, 'TrackConnection1'), 3, 'nC_in should be 3-way switch');
+
+    // Full loop: all 3 stations reachable with consistent integrated track direction
+    const stAIdx = r.added.find(a => a.id === 'stA').index;
+    const stBIdx = r.added.find(a => a.id === 'stB').index;
+    const stCIdx = r.added.find(a => a.id === 'stC').index;
+    assertTrackLoop([stAIdx, stBIdx, stCIdx], 'double-track railway');
+  });
 });

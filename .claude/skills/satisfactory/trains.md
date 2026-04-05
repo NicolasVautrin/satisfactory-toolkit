@@ -240,16 +240,16 @@ const {
 
 ### Orientation des stations
 
-Les stations ont un **rail intégré** de 1600 UU le long de l'axe **local -X**. L'origine du rail est à local `(800, 0, 0)`.
+Les stations ont un **rail intégré** de 1600 UU le long de l'axe **local -X**. L'origine du rail (= TC0) est à local `(800, 0, 0)`, l'extrémité (= TC1) à local `(-800, 0, 0)`.
 
 | Rotation (quaternion Z) | Direction face | local +X → world | TC0 | TC1 |
 |-------------------------|---------------|-------------------|-----|-----|
-| `z=0, w=1` (0°) | +X (est) | +X | ouest | est |
-| `z=0.7071, w=0.7071` (+90°) | +Y (nord) | +Y | sud | nord |
-| `z=-0.7071, w=0.7071` (-90°) | -Y (sud) | -Y | sud | nord |
-| `z=1, w=0` (180°) | -X (ouest) | -X | est | ouest |
+| `z=0, w=1` (0°) | +X (est) | +X | est (+800,0) | ouest (-800,0) |
+| `z=0.7071, w=0.7071` (+90°) | +Y (nord) | +Y | nord (0,+800) | sud (0,-800) |
+| `z=-0.7071, w=0.7071` (-90°) | -Y (sud) | -Y | sud (0,-800) | nord (0,+800) |
+| `z=1, w=0` (180°) | -X (ouest) | -X | ouest (-800,0) | est (+800,0) |
 
-**⚠ Piège courant** : avec rotation -90° (`z=-0.7071`), `TC0` est **au sud** (à `center + (0, -800, 0)`) et `TC1` est **au nord** (à `center + (0, +800, 0)`). La direction du rail intégré pointe vers **+Y** (nord).
+**⚠ TC0 est toujours côté local +X** (l'origine du rail intégré), **TC1 côté local -X** (l'extrémité). Avec rotation +90° : TC0 est au **nord** (Y+800), pas au sud.
 
 ### Docking — layout résultant
 
@@ -336,9 +336,13 @@ station.track.connect('TrackConnection1', mainTrack, 'TrackConnection0');
 **Conséquence** : les tracks externes se connectent aux stations via des **stubs de 1200 UU** :
 
 ```js
+// Les directions des ports sont toujours outward (vers l'extérieur du track).
+// TC0 outward = opposé du sens de parcours, TC1 outward = sens de parcours.
+const stubTC0Dir = stationTC1Dir;  // TC0 du stub pointe vers la station (outward = vers station)
+const stubTC1Dir = { x: -stationTC1Dir.x, y: -stationTC1Dir.y, z: -stationTC1Dir.z }; // TC1 outward = opposé
 const stub = RailroadTrack.create(
-  { pos: stationTC1Pos, dir: stationTC1Dir },
-  { pos: stubEndPos, dir: stationTC1Dir }, // 1200 UU dans la direction du port
+  { pos: stationTC1Pos, dir: stubTC0Dir },
+  { pos: stubEndPos, dir: stubTC1Dir },
 );
 station.track.connect('TrackConnection1', stub, 'TrackConnection0');
 mainTrack.connect('TrackConnection0', stub, 'TrackConnection1');
@@ -506,7 +510,7 @@ Utiliser `GET /api/game/nearby?x=&y=&z=&radius=` pour lister les objets ferrovia
 1. ☐ Rotation correcte (`z=-0.7071` pour face sud, pas `z=+0.7071`)
 2. ☐ Dock belt **après** positionnement de la station
 3. ☐ Main track entre les bons ports (vérifier nord/sud avec les positions)
-4. ☐ Bypasses avec tangentes correctes (U-turn : départ sud → arrivée nord)
+4. ☐ Bypasses avec directions outward correctes aux ports
 5. ☐ Vérifier les jonctions (distance < 1 entre ports connectés)
 6. ☐ Vérifier les aiguillages (≥2 `mConnectedComponents` sur les switch ports)
 7. ☐ **`RailroadSubsystem.registerStation()`** pour chaque station
