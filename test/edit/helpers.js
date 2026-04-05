@@ -84,4 +84,112 @@ function assertConnected(builder, portName, targetBuilder, targetPortName, label
     `${prefix}${portName} should be wired to ${targetPortName} (got ${port._wiredTo?.pathName})`);
 }
 
-module.exports = { assertApprox, getEntity, getBuilder, splineMidpoint, assertPortsAligned, assertLiftTopCardinal, assertConnected, added };
+/**
+ * Assert that a list of stations are connected in a loop via track connections.
+ * BFS through the track graph, enforcing that all integrated tracks (stations/docks)
+ * are traversed in the same direction (all TC0→TC1 or all TC1→TC0).
+ * @param {number[]} stationIndices - entity indices of the stations
+ * @param {string} [label]
+ */
+function assertTrackLoop(stationIndices, label = '') {
+  const prefix = label ? `${label}: ` : '';
+  const saveState = getSaveState();
+  const allObjects = saveState.allObjects;
+
+  // Index by instanceName for O(1) lookups
+  const byName = new Map();
+  for (const o of allObjects) if (o.instanceName) byName.set(o.instanceName, o);
+
+  // Get the integrated track instanceName for a station
+  function getIntegratedTrack(idx) {
+    return saveState.items[idx].entity.properties?.mRailroadTrack?.value?.pathName;
+  }
+
+  // Collect all integrated track instanceNames (stations + docks in the save)
+  const integratedTracks = new Set();
+  for (const o of allObjects) {
+    if (o.typePath?.includes('RailroadTrackIntegrated')) integratedTracks.add(o.instanceName);
+  }
+
+  function sibling(portPath) {
+    return portPath.endsWith('TrackConnection0')
+      ? portPath.replace(/TrackConnection0$/, 'TrackConnection1')
+      : portPath.replace(/TrackConnection1$/, 'TrackConnection0');
+  }
+
+  function parentEntity(portPath) {
+    return portPath.replace(/\.TrackConnection[01]$/, '');
+  }
+
+  function isIntegrated(portPath) {
+    return integratedTracks.has(parentEntity(portPath));
+  }
+
+  // direction: 0 = TC0→TC1, 1 = TC1→TC0
+  function traversalDir(enterPort) {
+    return enterPort.endsWith('TrackConnection0') ? 0 : 1;
+  }
+
+  // BFS from startPort, return set of reached integrated track instanceNames
+  // integratedDir: null (not yet fixed) or 0/1
+  // Returns { reached: Set<integratedTrackName>, success: boolean }
+  function bfs(startPort) {
+    const visited = new Set();
+    const reached = new Set(); // integrated track instanceNames reached
+    // queue items: portPath we ENTER the track from
+    const queue = [startPort];
+    let fixedDir = null;
+
+    while (queue.length > 0) {
+      const enterPort = queue.shift();
+      if (visited.has(enterPort)) continue;
+      visited.add(enterPort);
+
+      const entity = parentEntity(enterPort);
+
+      // If this is an integrated track, check direction constraint
+      if (isIntegrated(enterPort)) {
+        const dir = traversalDir(enterPort);
+        if (fixedDir === null) {
+          fixedDir = dir;
+        } else if (dir !== fixedDir) {
+          continue; // wrong direction — don't traverse this path
+        }
+        reached.add(entity);
+      }
+
+      // Exit via sibling port
+      const exitPort = sibling(enterPort);
+      visited.add(exitPort);
+
+      // Follow connections from the exit port
+      const exitComp = byName.get(exitPort);
+      if (!exitComp) continue;
+      const conns = exitComp.properties?.mConnectedComponents?.values || [];
+      for (const c of conns) {
+        if (!visited.has(c.pathName)) queue.push(c.pathName);
+      }
+    }
+
+    return reached;
+  }
+
+  // Get station integrated tracks
+  const stationTracks = stationIndices.map(idx => getIntegratedTrack(idx));
+
+  // Try BFS from both TC0 and TC1 of the first station
+  let allReached = false;
+  for (const startSuffix of ['TrackConnection0', 'TrackConnection1']) {
+    const startPort = `${stationTracks[0]}.${startSuffix}`;
+    const reached = bfs(startPort);
+    if (stationTracks.every(t => reached.has(t))) {
+      allReached = true;
+      break;
+    }
+  }
+
+  assert(allReached,
+    `${prefix}no valid loop found — not all stations reachable with consistent integrated track direction`);
+}
+
+module.exports = { assertApprox, getEntity, getBuilder, splineMidpoint, assertPortsAligned, assertLiftTopCardinal, assertConnected, added, assertTrackLoop };

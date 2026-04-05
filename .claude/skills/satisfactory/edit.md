@@ -66,6 +66,8 @@ Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe. Po
 
 Les endpoints positionnels (`{x,y,z}` au lieu de `"id:port"`) ne sont supportés que pour les tracks.
 
+**⚠ Les connexions track sont toujours explicites** — un endpoint positionnel crée un port libre (non connecté). Même si deux tracks ont des endpoints à la même position, ils ne sont **pas** connectés automatiquement. Pour les connecter, ajouter une connexion directe `{from: "r1:TrackConnection1", to: "r2:TrackConnection1"}` dans le batch.
+
 ### Endpoints positionnels track
 
 Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés) qui spécifie la direction du tangent de la spline :

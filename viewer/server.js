@@ -213,6 +213,7 @@ app.get('/api/game/entity/:index', (req, res) => {
     const props = {};
     for (const [k, v] of Object.entries(comp.properties || {})) {
       if (v?.value?.pathName) props[k] = v.value.pathName;
+      else if (v?.values) props[k] = v.values.map(e => e?.pathName || e);
       else if (v?.value !== undefined) props[k] = v.value;
     }
     return { name: ref.pathName.split('.').pop(), properties: props };
@@ -221,6 +222,7 @@ app.get('/api/game/entity/:index', (req, res) => {
   const props = {};
   for (const [k, v] of Object.entries(entity.properties || {})) {
     if (v?.value?.pathName) props[k] = v.value.pathName;
+    else if (v?.values) props[k] = v.values.map(e => e?.pathName || e);
     else if (v?.value !== undefined) props[k] = v.value;
   }
 

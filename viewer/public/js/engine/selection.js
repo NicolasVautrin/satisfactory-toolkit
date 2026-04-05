@@ -119,7 +119,7 @@ export function pickRect(x1, y1, x2, y2) {
 
   for (let i = 0; i < entities.length; i++) {
     const e = entities[i];
-    if (!catVisible[e.cat]) continue;
+    if (!e || !catVisible[e.cat]) continue;
     vec.copy(gameToViewer(e.tx, e.ty, e.tz));
     vec.project(camera);
     if (vec.z > -1 && vec.z < 1 && vec.x >= ndcL && vec.x <= ndcR && vec.y >= ndcB && vec.y <= ndcT) {

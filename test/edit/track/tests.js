@@ -1,6 +1,6 @@
 const assert = require('assert');
 const { editEntities } = require('../../../viewer/lib/editor');
-const { assertApprox, getBuilder, assertConnected, added } = require('../helpers');
+const { assertApprox, getBuilder, assertConnected, assertTrackLoop, added } = require('../helpers');
 
 describe('Track', () => {
   it('33. should create 2 tracks end-to-end by positions', () => {
@@ -86,6 +86,9 @@ describe('Track', () => {
         // Right arc (2 segments): sL3(+2000,8000) → mid(+6000,4000) → sR3(+2000,0)
         { id: 'R1', from: 'sL3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 90 }, track: true },
         { id: 'R2', from: 'sR3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 270 }, track: true },
+        // Connect arcs at their meeting points (explicit — track connections are never automatic)
+        { from: 'L1:TrackConnection1', to: 'L2:TrackConnection1' },
+        { from: 'R1:TrackConnection1', to: 'R2:TrackConnection1' },
       ],
     });
 
@@ -114,5 +117,48 @@ describe('Track', () => {
     assertConnected(sR3, 'TrackConnection0', stA, 'TrackConnection0', 'sR3→stA:TC0');
     assertConnected(sR1, 'TrackConnection0', stB, 'TrackConnection0', 'sR1→stB:TC0');
     assertConnected(sL3, 'TrackConnection0', stB, 'TrackConnection1', 'sL3→stB:TC1');
+
+    // Verify the full loop is connected (BFS with integrated track direction constraint)
+    const stAIdx = r.added.find(a => a.id === 'stA').index;
+    const stBIdx = r.added.find(a => a.id === 'stB').index;
+    assertTrackLoop([stAIdx, stBIdx], 'railway loop');
+  });
+
+  it('36. should reject loop when stations face same direction (inconsistent traversal)', () => {
+    // Both stations at rotation 0° → integrated tracks traversed in opposite directions
+    // StA at (0,0) rot 0°: TC0=(+800,0) TC1=(-800,0)
+    // StB at (0,8000) rot 0°: TC0=(+800,8000) TC1=(-800,8000)
+    const r = editEntities({
+      anchor: { x: 750000, y: 0, z: 0 },
+      entities: [
+        { id: 'stA', type: 'train-station', position: { x: 0, y: 0, z: 0 } },
+        { id: 'stB', type: 'train-station', position: { x: 0, y: 8000, z: 0 } },
+      ],
+      connections: [
+        // Stubs
+        { id: 'sL1', from: 'stA:TrackConnection1', to: { x: -2000, y: 0, z: 0 }, track: true },
+        { id: 'sR3', from: 'stA:TrackConnection0', to: { x: 2000, y: 0, z: 0 }, track: true },
+        { id: 'sR1', from: 'stB:TrackConnection1', to: { x: -2000, y: 8000, z: 0 }, track: true },
+        { id: 'sL3', from: 'stB:TrackConnection0', to: { x: 2000, y: 8000, z: 0 }, track: true },
+        // Left arc
+        { id: 'L1', from: 'sL1:TrackConnection1', to: { x: -6000, y: 4000, z: 0, rotation: 270 }, track: true },
+        { id: 'L2', from: 'sR1:TrackConnection1', to: { x: -6000, y: 4000, z: 0, rotation: 90 }, track: true },
+        // Right arc
+        { id: 'R1', from: 'sL3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 90 }, track: true },
+        { id: 'R2', from: 'sR3:TrackConnection1', to: { x: 6000, y: 4000, z: 0, rotation: 270 }, track: true },
+        // Connect arcs
+        { from: 'L1:TrackConnection1', to: 'L2:TrackConnection1' },
+        { from: 'R1:TrackConnection1', to: 'R2:TrackConnection1' },
+      ],
+    });
+
+    const stAIdx = r.added.find(a => a.id === 'stA').index;
+    const stBIdx = r.added.find(a => a.id === 'stB').index;
+
+    assert.throws(
+      () => assertTrackLoop([stAIdx, stBIdx], 'bad loop'),
+      /no valid loop/,
+      'assertTrackLoop should reject stations facing same direction',
+    );
   });
 });

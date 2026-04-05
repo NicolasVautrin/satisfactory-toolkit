@@ -304,6 +304,8 @@ const track = RailroadTrack.create(
 
 **Ports** : chaque track a `TrackConnection0` (début) et `TrackConnection1` (fin).
 
+**⚠ Les connexions track sont toujours explicites** — deux tracks dont les endpoints atterrissent à la même position ne sont **jamais** connectés automatiquement. Il faut appeler `connect()` ou déclarer une connexion directe dans l'éditeur. C'est par design : plusieurs tracks peuvent se croiser au même point sans être connectés (aiguillages, croisements à niveaux différents, etc.).
+
 ### Connecter des rails entre eux
 
 ```js
