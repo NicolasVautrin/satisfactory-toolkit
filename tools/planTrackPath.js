@@ -16,7 +16,7 @@ const { sampleHermiteSpline } = require('../lib/shared/hermite');
 const Vector3D = require('../lib/shared/Vector3D');
 
 const limits = splineLimits.track;
-const TANGENT_SCALE = 0.6;
+const TANGENT_SCALE = 1.17;
 
 // ── Direction helpers ──────────────────────────────────────────────
 function yawToDir(yawDeg) {
@@ -93,7 +93,8 @@ function validateSegment(from, to) {
     }
   }
 
-  const radiusOk = !limits.minRadiusXY || minR >= limits.minRadiusXY;
+  const RADIUS_MARGIN = 1.05; // 5% margin for snap adjustments
+  const radiusOk = !limits.minRadiusXY || minR >= limits.minRadiusXY * RADIUS_MARGIN;
   const slopeOk = !limits.maxSlopeDeg || maxSlope <= limits.maxSlopeDeg;
   const pass = radiusOk && slopeOk;
 
@@ -145,7 +146,7 @@ function planPath(start, end) {
   // Bezier planning: try increasing segment counts and arm ratios
   for (let nSeg = Math.max(2, minSegFromDist); nSeg <= 8; nSeg++) {
     // Arm ratio range: start small (tighter curve) and grow (wider curve)
-    for (let armRatio = 0.2; armRatio <= 3.0; armRatio += 0.05) {
+    for (let armRatio = 0.2; armRatio <= 10.0; armRatio += 0.05) {
       const arm = dist * armRatio;
       // Convert outward port dirs to travel dirs for Bezier: negate TC0, keep TC1
       const sd = { x: -start.dir.x, y: -start.dir.y, z: -(start.dir.z || 0) };
@@ -178,6 +179,179 @@ function planPath(start, end) {
     }
   }
 
+  return null;
+}
+
+// ── U-turn planning (intermediate waypoint optimization) ─────────
+// When start/end tangents oppose (dot < -0.5), insert a waypoint perpendicular
+// to the span and binary-search on its distance until both halves validate.
+
+function planUTurn(start, end) {
+  // Check if this is a U-turn: travel dirs roughly opposing
+  const travelStart = { x: -start.dir.x, y: -start.dir.y }; // -outward = travel
+  const travelEnd = { x: end.dir.x, y: end.dir.y };          // outward = travel (TC1)
+  const dot = travelStart.x * travelEnd.x + travelStart.y * travelEnd.y;
+  if (dot > -0.5) return null; // not a U-turn
+
+  const spanX = end.x - start.x, spanY = end.y - start.y;
+  const spanLen = Math.sqrt(spanX * spanX + spanY * spanY);
+  if (spanLen < 1) return null;
+
+  // Perpendicular to span (unit), pointing to the "outside" of the turn
+  // Use cross product of travel direction × span to determine side
+  const cross = travelStart.x * spanY - travelStart.y * spanX;
+  const side = cross >= 0 ? 1 : -1;
+  const perpX = -spanY / spanLen * side;
+  const perpY = spanX / spanLen * side;
+
+  // Midpoint of span
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  const midZ = ((start.z || 0) + (end.z || 0)) / 2;
+
+  // Direction at the apex: perpendicular to the perp = along the span
+  // Travel at apex goes from start-side to end-side (along span direction)
+  const apexTravelX = spanX / spanLen, apexTravelY = spanY / spanLen;
+  // Outward for TC1 of seg1 = travel at apex
+  const apexDirTC1 = { x: apexTravelX, y: apexTravelY, z: 0 };
+  // Outward for TC0 of seg2 = -travel at apex (opposing)
+  const apexDirTC0 = { x: -apexTravelX, y: -apexTravelY, z: 0 };
+
+  // Binary search on distance d
+  let lo = spanLen * 0.5, hi = spanLen * 20;
+  let bestResult = null;
+
+  for (let iter = 0; iter < 40; iter++) {
+    const d = (lo + hi) / 2;
+    const wx = midX + perpX * d;
+    const wy = midY + perpY * d;
+    const wz = midZ;
+
+    const seg1From = { x: start.x, y: start.y, z: start.z || 0, dir: start.dir };
+    const seg1To = { x: Math.round(wx), y: Math.round(wy), z: Math.round(wz), dir: apexDirTC1 };
+    const seg2From = { x: Math.round(wx), y: Math.round(wy), z: Math.round(wz), dir: apexDirTC0 };
+    const seg2To = { x: end.x, y: end.y, z: end.z || 0, dir: end.dir };
+
+    // Each half might itself need planPath (multi-segment)
+    const r1 = planPath(seg1From, seg1To);
+    const r2 = planPath(seg2From, seg2To);
+
+    if (r1 && r2) {
+      const segments = [...r1.segments, ...r2.segments];
+      if (!bestResult || segments.length < bestResult.segments.length || d < bestResult.d) {
+        bestResult = { segments, d, uTurn: true };
+      }
+      hi = d; // try tighter
+    } else {
+      lo = d; // need wider
+    }
+  }
+
+  return bestResult;
+}
+
+// ── Dubins path planning (Curve-Straight-Curve) ──────────────────
+// Finds shortest path between two oriented points using arcs + straight line.
+// Four path types: LSL, RSR (same-side tangent), LSR, RSL (cross tangent).
+
+function mod2pi(a) { return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); }
+
+function dubinsCSC(x0, y0, th0, x1, y1, th1, R, type) {
+  const lS = type[0] === 'L', lE = type[2] === 'L';
+  // Circle centers: left = heading + 90°, right = heading - 90°
+  const cx0 = x0 + R * Math.cos(th0 + (lS ? 1 : -1) * Math.PI / 2);
+  const cy0 = y0 + R * Math.sin(th0 + (lS ? 1 : -1) * Math.PI / 2);
+  const cx1 = x1 + R * Math.cos(th1 + (lE ? 1 : -1) * Math.PI / 2);
+  const cy1 = y1 + R * Math.sin(th1 + (lE ? 1 : -1) * Math.PI / 2);
+  const ddx = cx1 - cx0, ddy = cy1 - cy0;
+  const D = Math.sqrt(ddx * ddx + ddy * ddy);
+  const phi = Math.atan2(ddy, ddx);
+
+  function tryAlpha(al) {
+    const t0x = cx0 + R * Math.cos(al), t0y = cy0 + R * Math.sin(al);
+    const t1x = lS === lE ? cx1 + R * Math.cos(al) : cx1 - R * Math.cos(al);
+    const t1y = lS === lE ? cy1 + R * Math.sin(al) : cy1 - R * Math.sin(al);
+    const sLen = Math.sqrt((t1x - t0x) ** 2 + (t1y - t0y) ** 2);
+    const a0s = Math.atan2(y0 - cy0, x0 - cx0);
+    const a0e = Math.atan2(t0y - cy0, t0x - cx0);
+    const arc1 = lS ? mod2pi(a0e - a0s) : mod2pi(a0s - a0e);
+    const a1s = Math.atan2(t1y - cy1, t1x - cx1);
+    const a1e = Math.atan2(y1 - cy1, x1 - cx1);
+    const arc2 = lE ? mod2pi(a1e - a1s) : mod2pi(a1s - a1e);
+    return { length: R * arc1 + sLen + R * arc2, arc1, arc2, sLen, cx0, cy0, cx1, cy1, t0: { x: t0x, y: t0y }, t1: { x: t1x, y: t1y }, lS, lE, a0s, a1s };
+  }
+
+  if (lS === lE) {
+    // Same-side (outer) tangent: two solutions
+    const p1 = tryAlpha(phi + Math.PI / 2), p2 = tryAlpha(phi - Math.PI / 2);
+    return p1.length < p2.length ? p1 : p2;
+  }
+  // Cross (inner) tangent: requires D ≥ 2R
+  if (D < 2 * R - 1e-6) return null;
+  const a = Math.acos(Math.min(1, 2 * R / D));
+  const p1 = tryAlpha(phi - a), p2 = tryAlpha(phi + a);
+  return p1.length < p2.length ? p1 : p2;
+}
+
+function sampleDubinsWaypoints(path, R, nSeg, z0, z1) {
+  const { arc1, arc2, sLen, cx0, cy0, cx1, cy1, lS, lE, a0s, a1s } = path;
+  const arc1L = R * arc1, arc2L = R * arc2, total = arc1L + sLen + arc2L;
+  const wps = [];
+  for (let i = 0; i <= nSeg; i++) {
+    const d = total * i / nSeg;
+    let x, y, heading;
+    if (d <= arc1L + 1e-6) {
+      const f = arc1L > 1e-6 ? Math.min(d / arc1L, 1) : 0;
+      const ang = lS ? a0s + f * arc1 : a0s - f * arc1;
+      x = cx0 + R * Math.cos(ang); y = cy0 + R * Math.sin(ang);
+      heading = lS ? ang + Math.PI / 2 : ang - Math.PI / 2;
+    } else if (d <= arc1L + sLen + 1e-6) {
+      const f = sLen > 1e-6 ? (d - arc1L) / sLen : 0;
+      x = path.t0.x + f * (path.t1.x - path.t0.x);
+      y = path.t0.y + f * (path.t1.y - path.t0.y);
+      heading = Math.atan2(path.t1.y - path.t0.y, path.t1.x - path.t0.x);
+    } else {
+      const f = arc2L > 1e-6 ? Math.min((d - arc1L - sLen) / arc2L, 1) : 0;
+      const ang = lE ? a1s + f * arc2 : a1s - f * arc2;
+      x = cx1 + R * Math.cos(ang); y = cy1 + R * Math.sin(ang);
+      heading = lE ? ang + Math.PI / 2 : ang - Math.PI / 2;
+    }
+    wps.push({ x, y, z: z0 + (z1 - z0) * d / total, heading });
+  }
+  return wps;
+}
+
+function planDubins(start, end) {
+  const th0 = Math.atan2(-start.dir.y, -start.dir.x); // travel = -outward (TC0)
+  const th1 = Math.atan2(end.dir.y, end.dir.x);        // travel = +outward (TC1)
+  const z0 = start.z || 0, z1 = end.z || 0;
+
+  // Try increasing planning radii (above validation min 900 for Hermite margin)
+  for (const R of [1600, 2000, 2500, 3000, 4000, 5000, 6000, 8000]) {
+    const paths = ['LSL', 'RSR', 'LSR', 'RSL']
+      .map(type => { const p = dubinsCSC(start.x, start.y, th0, end.x, end.y, th1, R, type); return p ? { ...p, type } : null; })
+      .filter(Boolean)
+      .sort((a, b) => a.length - b.length);
+
+    for (const path of paths) {
+      for (let nSeg = Math.max(1, Math.ceil(path.length / (limits.max * 0.9))); nSeg <= 10; nSeg++) {
+        const wps = sampleDubinsWaypoints(path, R, nSeg, z0, z1);
+        let ok = true;
+        const segments = [];
+        for (let i = 0; i < nSeg; i++) {
+          const w0 = wps[i], w1 = wps[i + 1];
+          const fromDir = i === 0 ? start.dir : { x: -Math.cos(w0.heading), y: -Math.sin(w0.heading), z: 0 };
+          const toDir = i === nSeg - 1 ? end.dir : { x: Math.cos(w1.heading), y: Math.sin(w1.heading), z: 0 };
+          const fp = { x: Math.round(w0.x), y: Math.round(w0.y), z: Math.round(w0.z), dir: fromDir };
+          const tp = { x: Math.round(w1.x), y: Math.round(w1.y), z: Math.round(w1.z), dir: toDir };
+          const v = validateSegment(fp, tp);
+          if (!v.pass) { ok = false; break; }
+          segments.push({ from: fp, to: tp, ...v });
+        }
+        if (ok) return { segments, dubinsType: path.type, dubinsR: R };
+      }
+    }
+  }
   return null;
 }
 
@@ -222,7 +396,15 @@ if (!toDir) toDir = { x: 1, y: 0, z: 0 };
 const start = { x: from.x, y: from.y, z: from.z || 0, dir: fromDir };
 const end = { x: to.x, y: to.y, z: to.z || 0, dir: toDir };
 
-const result = planPath(start, end);
+let result = planPath(start, end);
+
+if (!result) {
+  result = planUTurn(start, end);
+}
+
+if (!result) {
+  result = planDubins(start, end);
+}
 
 if (!result) {
   console.error('\nFailed to find valid track path.\n');
@@ -231,7 +413,8 @@ if (!result) {
 
 // ── Output ─────────────────────────────────────────────────────────
 const totalLen = result.segments.reduce((s, seg) => s + seg.dist, 0);
-console.log(`\nTrack path: ${result.segments.length} segment${result.segments.length > 1 ? 's' : ''}, total ${totalLen} UU\n`);
+const planner = result.dubinsType ? ` [Dubins ${result.dubinsType} R=${result.dubinsR}]` : result.armRatio ? ` [Bézier arm=${result.armRatio.toFixed(2)}]` : '';
+console.log(`\nTrack path: ${result.segments.length} segment${result.segments.length > 1 ? 's' : ''}, total ${totalLen} UU${planner}\n`);
 
 console.log('  #  From                          To                            Length  Radius  Slope');
 console.log('  ─  ────────────────────────────  ────────────────────────────  ──────  ──────  ─────');

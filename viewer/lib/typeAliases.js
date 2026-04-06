@@ -70,6 +70,8 @@ const ALIASES = {
   'train-station':    'Build_TrainStation_C',
   'belt-station':     'Build_TrainDockingStation_C',
   'pipe-station':     'Build_TrainDockingStationLiquid_C',
+  'block-signal':     'Build_RailroadBlockSignal_C',
+  'path-signal':      'Build_RailroadPathSignal_C',
 
   // ── Power ────────────────────────────────────
   'power-line':   'Build_PowerLine_C',

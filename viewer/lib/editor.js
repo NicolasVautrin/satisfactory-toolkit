@@ -301,13 +301,13 @@ function createSplineBetween(type, srcEndpoint, tgtEndpoint, tier) {
   if (srcEndpoint.idx !== undefined) {
     const srcEntity = getEntity(srcEndpoint.idx);
     startPort.snapTo(srcEntity.port(srcEndpoint.port));
-  } else if (srcEndpoint.dir) {
+  } else if (srcEndpoint.dir || srcEndpoint.pos) {
     startPort.snapToPos(srcEndpoint.pos, srcEndpoint.dir);
   }
   if (tgtEndpoint.idx !== undefined) {
     const tgtEntity = getEntity(tgtEndpoint.idx);
     endPort.snapTo(tgtEntity.port(tgtEndpoint.port));
-  } else if (tgtEndpoint.dir) {
+  } else if (tgtEndpoint.dir || tgtEndpoint.pos) {
     endPort.snapToPos(tgtEndpoint.pos, tgtEndpoint.dir);
   }
 
@@ -495,74 +495,99 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
 }
 
 // ── Resolve endpoint: string "id:port" → {idx, port}, object {x,y,z} → {pos, dir?} ──
-function resolveEndpoint(ep, label, conn, idMap, anchor, cosB, sinB, bpYawDeg) {
+function resolveEndpoint(ep, label, conn, ctx) {
   if (typeof ep === 'object' && ep !== null && 'x' in ep) {
     if (!conn.track) throw new Error(`Positional endpoints only supported for track connections (${label})`);
-    const rx = ep.x * cosB - ep.y * sinB;
-    const ry = ep.x * sinB + ep.y * cosB;
-    const pos = { x: anchor.x + rx, y: anchor.y + ry, z: anchor.z + (ep.z || 0) };
+    const rx = ep.x * ctx.cosB - ep.y * ctx.sinB;
+    const ry = ep.x * ctx.sinB + ep.y * ctx.cosB;
+    const pos = { x: ctx.anchor.x + rx, y: ctx.anchor.y + ry, z: ctx.anchor.z + (ep.z || 0) };
     let dir = null;
     if (ep.rotation !== undefined) {
-      const totalYaw = (ep.rotation + (bpYawDeg || 0)) * Math.PI / 180;
-      // ep.rotation defines the port's outward direction; negate to get
-      // virtual anchor direction (snapToPos will negate again for opposition)
+      const totalYaw = (ep.rotation + (ctx.bpYawDeg || 0)) * Math.PI / 180;
       dir = { x: Math.cos(totalYaw), y: Math.sin(totalYaw), z: 0 };
     }
     return { pos, dir };
   }
   const [id, port] = ep.split(':');
-  const idx = idMap[id];
+  const idx = ctx.idMap[id];
   if (idx === undefined) throw new Error(`Unknown entity id "${id}" in connection ${label}`);
   return { idx, port };
 }
 
-// ── Process connections (direct, belt, pipe, insertion) ──────────────
-function processConnections(connections, idMap, added, anchor, bpYawDeg) {
-  const saveState = getSaveState();
-  const bpYawRad = (bpYawDeg || 0) * Math.PI / 180;
-  const cosB = Math.cos(bpYawRad), sinB = Math.sin(bpYawRad);
-  const results = [];
+// ── Connection sub-handlers ─────────────────────────────────────────
+
+function processSignalConnection(conn, ctx) {
+  const RailroadSignal = require('../../lib/railway/RailroadSignal');
+  const [id, portName] = conn.on.split(':');
+  const idx = ctx.idMap[id];
+  if (idx === undefined) throw new Error(`Unknown entity id "${id}" in signal connection`);
+
+  const trackBuilder = getEntity(idx);
+  const port = trackBuilder.port(portName);
+
+  const isPath = conn.type === 'path-signal';
+  const signal = RailroadSignal.create(0, 0, 0, undefined, { type: isPath ? 'path' : 'block' });
+  signal.attachToPort(port, conn.facing || 'outward');
+
+  const { index, item, classUpdate } = injectSplineEntity(signal);
+  if (conn.id) ctx.idMap[conn.id] = index;
+  ctx.added.push({ id: conn.id || null, index, instanceName: signal.entity.instanceName, item, classUpdate });
+  ctx.results.push({ type: conn.type, on: conn.on, signalIndex: index });
+}
+
+function processInsertionConnection(conn, ctx) {
+  const entityIdx = ctx.idMap[conn.from];
+  const splineIdx = ctx.idMap[conn.on];
+  if (entityIdx === undefined) throw new Error(`Unknown entity id "${conn.from}" in insertion`);
+  if (splineIdx === undefined) throw new Error(`Unknown entity id "${conn.on}" in insertion`);
+  if (!conn.id) throw new Error('"id" is required on insertion connections');
+  const pos = conn.position || ctx.saveState.items[entityIdx].entity.transform.translation;
+  const result = insertOnSpline(entityIdx, splineIdx, pos, conn.reverse);
+  ctx.idMap[conn.id] = result.newSplineIndex;
+  ctx.added.push({ id: conn.id, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+  ctx.results.push({ from: conn.from, on: conn.on, [conn.id]: result.newSplineIndex });
+}
+
+function processSplineConnection(conn, ctx) {
+  const splineType = conn.belt ? 'belt' : conn.pipe ? 'pipe' : 'track';
+  if (!conn.id) throw new Error(`"id" is required on ${splineType} auto-connections`);
+  const srcEndpoint = resolveEndpoint(conn.from, 'from', conn, ctx);
+  const tgtEndpoint = resolveEndpoint(conn.to, 'to', conn, ctx);
+  const tier = conn.belt || conn.pipe;
+  const result = createSplineBetween(splineType, srcEndpoint, tgtEndpoint, tier);
+  ctx.idMap[conn.id] = result.splineIndex;
+  ctx.added.push({ id: conn.id, index: result.splineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
+  ctx.results.push({ from: conn.from, to: conn.to, [splineType]: conn.id });
+}
+
+function processDirectConnection(conn, ctx) {
+  const srcEndpoint = resolveEndpoint(conn.from, 'from', conn, ctx);
+  const tgtEndpoint = resolveEndpoint(conn.to, 'to', conn, ctx);
+  const fromIdx = srcEndpoint.idx, fromPort = srcEndpoint.port;
+  const toIdx = tgtEndpoint.idx, toPort = tgtEndpoint.port;
+  const result = attachPorts(fromIdx, fromPort, toIdx, toPort);
+  for (const idx of [fromIdx, toIdx]) {
+    const item = ctx.saveState.items[idx];
+    if (!item || item.type !== 'entity') continue;
+    const topZ = item.entity.properties?.mTopTransform?.value?.properties?.Translation?.value?.z;
+    if (topZ != null) validateSplineLength('lift', Math.abs(topZ));
+  }
+  ctx.results.push({ from: conn.from, to: conn.to, ...result });
+}
+
+// ── Process connections (router) ────────────────────────────────────
+function processConnections(connections, ctx) {
   for (const conn of connections) {
-    if (conn.on !== undefined) {
-      const entityIdx = idMap[conn.from];
-      const splineIdx = idMap[conn.on];
-      if (entityIdx === undefined) throw new Error(`Unknown entity id "${conn.from}" in insertion`);
-      if (splineIdx === undefined) throw new Error(`Unknown entity id "${conn.on}" in insertion`);
-      if (!conn.id) throw new Error('"id" is required on insertion connections');
-      const pos = conn.position || saveState.items[entityIdx].entity.transform.translation;
-      const result = insertOnSpline(entityIdx, splineIdx, pos, conn.reverse);
-      idMap[conn.id] = result.newSplineIndex;
-      added.push({ id: conn.id, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
-      results.push({ from: conn.from, on: conn.on, [conn.id]: result.newSplineIndex });
-      continue;
-    }
-
-    const srcEndpoint = resolveEndpoint(conn.from, 'from', conn, idMap, anchor, cosB, sinB, bpYawDeg);
-    const tgtEndpoint = resolveEndpoint(conn.to, 'to', conn, idMap, anchor, cosB, sinB, bpYawDeg);
-
-    const splineType = conn.belt ? 'belt' : conn.pipe ? 'pipe' : conn.track ? 'track' : null;
-    if (splineType) {
-      if (!conn.id) throw new Error(`"id" is required on ${splineType} auto-connections`);
-      const tier = conn.belt || conn.pipe;
-      const result = createSplineBetween(splineType, srcEndpoint, tgtEndpoint, tier);
-      idMap[conn.id] = result.splineIndex;
-      added.push({ id: conn.id, index: result.splineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
-      results.push({ from: conn.from, to: conn.to, [splineType]: conn.id });
+    if (conn.type === 'block-signal' || conn.type === 'path-signal') {
+      processSignalConnection(conn, ctx);
+    } else if (conn.on !== undefined) {
+      processInsertionConnection(conn, ctx);
+    } else if (conn.belt || conn.pipe || conn.track) {
+      processSplineConnection(conn, ctx);
     } else {
-      const fromIdx = srcEndpoint.idx, fromPort = srcEndpoint.port;
-      const toIdx = tgtEndpoint.idx, toPort = tgtEndpoint.port;
-      const result = attachPorts(fromIdx, fromPort, toIdx, toPort);
-      // Validate lift height after snap
-      for (const idx of [fromIdx, toIdx]) {
-        const item = saveState.items[idx];
-        if (!item || item.type !== 'entity') continue;
-        const topZ = item.entity.properties?.mTopTransform?.value?.properties?.Translation?.value?.z;
-        if (topZ != null) validateSplineLength('lift', Math.abs(topZ));
-      }
-      results.push({ from: conn.from, to: conn.to, ...result });
+      processDirectConnection(conn, ctx);
     }
   }
-  return results;
 }
 
 // ── Rebuild viewer items for entities repositioned by connections ────
@@ -643,7 +668,18 @@ function editEntities(batch) {
     try {
       const anchor = batch.anchor || { x: 0, y: 0, z: 0 };
       const bpYawDeg = batch.rotation || 0;
-      connectionResults = processConnections(batch.connections, idMap, added, anchor, bpYawDeg);
+      const bpYawRad = bpYawDeg * Math.PI / 180;
+      const ctx = {
+        idMap,
+        added,
+        results: connectionResults,
+        anchor,
+        cosB: Math.cos(bpYawRad),
+        sinB: Math.sin(bpYawRad),
+        bpYawDeg,
+        saveState: getSaveState(),
+      };
+      processConnections(batch.connections, ctx);
     } catch (err) {
       const indicesToDelete = added.map(r => r.index);
       deleteEntities(indicesToDelete);

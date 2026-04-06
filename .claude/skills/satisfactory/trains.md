@@ -96,6 +96,31 @@ Pour les intersections complexes :
 - L'espacement entre signaux doit être **au moins égal à la longueur du plus long train**
 - Les trains freinent **250m** avant un signal rouge ; distance insuffisante = arrêt brutal
 
+### Signalisation aux switches (convention projet)
+
+Deux types de switches :
+- **Split switch** (1→2) : une voie se divise en deux branches
+- **Merge switch** (2→1) : deux branches se rejoignent en une voie
+
+**Split switch** :
+- **Entrée** (voie unique) : stub track 1600 UU + block signal, orienté dans le sens de parcours
+- **Sorties** (chaque branche) : un block signal dans le sens de parcours
+
+**Merge switch** :
+- **Entrées** (chaque branche) : un block signal dans le sens de parcours
+- **Sortie** (voie unique) : stub track 1600 UU + block signal, orienté dans le sens de parcours
+
+Les stubs de 1600 UU servent de support physique aux signaux d'entrée/sortie du switch.
+
+### Placement des signaux (convention projet)
+
+Les signaux se placent **exactement sur un TrackConnection port** :
+- **Position** = position exacte du port gardé (offset = 0)
+- **Rotation** = direction outward du port gardé (ou inversée selon le sens à bloquer)
+- **Port connecté obligatoire** — le port doit avoir au moins 1 `mConnectedComponents`
+- **`mGuardedConnections`** = `[ref(TrackConnection)]` — le port sur lequel le signal est posé
+- **`mObservedConnections`** = le port observé de l'autre côté du bloc (non câblé automatiquement pour l'instant)
+
 ## Design de stations
 
 ### Composition d'une station
@@ -331,9 +356,9 @@ station.track.connect('TrackConnection1', mainTrack, 'TrackConnection0');
 | Switch limit | Max 3 connexions par port (3 branches max par aiguillage) | `already has 3 connections` |
 | Integrated max 1 | Port d'un track intégré (station/dock) → max 1 connexion | `Integrated track port already connected` |
 | Connected-to-integrated | Port connecté à un track intégré → max 1 connexion | `connected to an integrated track` |
-| Stub length | Track non-intégré connecté à un integrated → exactement 1200 UU | `must be exactly 1200 UU` |
+| Stub length | Track non-intégré connecté à un integrated → exactement 1600 UU | `must be exactly 1600 UU` |
 
-**Conséquence** : les tracks externes se connectent aux stations via des **stubs de 1200 UU** :
+**Conséquence** : les tracks externes se connectent aux stations via des **stubs de 1600 UU** :
 
 ```js
 // Les directions des ports sont toujours outward (vers l'extérieur du track).
@@ -385,6 +410,22 @@ bypass1.connect('TrackConnection1', bypass2, 'TrackConnection0');
 station.track.connect('TrackConnection1', bypass1, 'TrackConnection0');
 belt.track.connect('TrackConnection0', bypass2, 'TrackConnection1');
 ```
+
+### Comportement du snap track (éditeur)
+
+Quand un track est connecté à un autre via `connect()` dans l'éditeur (`viewer/lib/editor.js`), le mécanisme `_trackSnap` :
+
+1. **Négate toujours** la direction du port ancre — les ports doivent être face-à-face (opposition). Ne jamais remettre en cause cette négation.
+2. **Repositionne** le port snappé à la position exacte du port ancre.
+3. **Reconstruit la spline** Hermite du track snappé (recalcule tangentes + validation courbure/pente).
+
+**`_snappedPorts`** : Set interne qui suit quels ports ont été snappés. La reconstruction ne se déclenche que quand `size ≥ 2` (les deux endpoints positionnés). Cela évite de reconstruire une spline cassée après le snap du premier port seulement.
+
+**`fromSave`** : Les tracks lus depuis la save initialisent `_snappedPorts = {TC0, TC1}` pour que toute nouvelle connexion switch déclenche immédiatement la reconstruction (le track existant a déjà ses deux endpoints).
+
+**Impact sur les aiguillages** : quand un track B se connecte en switch sur le TC1 d'un track A, le TC0 de B est repositionné au TC1 de A avec la direction opposée. Si B est court, la spline reconstruite peut avoir une courbure serrée. Solutions :
+- Utiliser des tracks suffisamment longs (≥ 2000 UU) aux points d'aiguillage
+- Ou contrôler l'ordre des connexions pour que les tracks courts soient connectés en premier
 
 ### Placer des signaux
 

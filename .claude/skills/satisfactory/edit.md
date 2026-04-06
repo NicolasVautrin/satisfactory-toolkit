@@ -61,6 +61,7 @@ L'endpoint accept des alias courts au lieu du typePath complet :
 | `{id:"p1", from:"id:port", to:"id:port", pipe:tier}` | **Pipe auto** — crée un pipe (tier 1-2) entre les deux ports pipe. `id` obligatoire. |
 | `{id:"r1", from:..., to:..., track:true}` | **Track auto** — crée un rail entre deux endpoints. `from`/`to` = `"id:port"` ou `{x,y,z,rotation?}` (position libre). `id` obligatoire. |
 | `{id:"b2", from:"id", on:"id", position:{x,y,z}}` | **Insertion** — insère l'entité `from` sur le belt/pipe `on`, coupe la spline en deux. `id` = la 2e spline créée. `id` obligatoire. |
+| `{id:"s1", type:"block-signal", on:"id:TC", facing:"outward"}` | **Signal auto** — crée un block/path signal sur un TrackConnection. Position et rotation automatiques. `facing` = `"outward"` (défaut) ou `"inward"`. |
 
 Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe. Pour les splines auto (belt/pipe/track), `from` = port START, `to` = port END.
 
@@ -91,11 +92,20 @@ Pour planifier un chemin railway entre deux transforms, utiliser `tools/planTrac
 node tools/planTrackPath.js --from "0,26000,0" --fromRot 270 --to "8000,26000,0" --toRot 90
 ```
 
-L'outil prend deux transforms (position + rotation/direction) et retourne la liste minimale de segments track valides (longueur, courbure, pente). Utilise une courbe de Bézier cubique pour trouver les waypoints intermédiaires.
+L'outil prend deux transforms (position + rotation/direction) et retourne la liste minimale de segments track valides (longueur, courbure, pente).
+
+**Chaîne de planification** (fallback automatique) :
+1. **Bézier** — courbe cubique avec arm ratio croissant (0.2→10.0), 1→8 segments. Gère les virages simples et les S-curves modérées.
+2. **U-turn** — pour les demi-tours (travel dirs opposés, dot < -0.5). Recherche binaire d'un waypoint perpendiculaire au span, chaque moitié planifiée par Bézier. Gère les U-turns serrés (D=600 UU → 10 segments) comme larges (D=1900 UU → 2 segments).
+3. **Dubins CSC** — Circle-Straight-Circle (LSL/RSR/LSR/RSL) avec rayon planifié parmi [1600, 2000, 2500, 3000, 4000, 5000, 6000, 8000]. Gère les S-curves entre voies parallèles.
+
+**Paramètres critiques** :
+- `TANGENT_SCALE = 1.17` — correspond au facteur Hermite réel de `makeSpline`. Les segments validés par planTrackPath sont garantis de passer la validation de l'éditeur.
+- `RADIUS_MARGIN = 1.05` — marge de 5% sur le rayon min pour absorber les ajustements de snap.
 
 Options : `--from "x,y,z"`, `--to "x,y,z"`, `--fromRot N` / `--toRot N` (yaw degrés, direction outward du port) ou `--fromDir "x,y,z"` / `--toDir "x,y,z"` (vecteur outward).
 
-Sortie : tableau récapitulatif + JSON directement utilisable dans les connections `editEntities`.
+Sortie : tableau récapitulatif + JSON directement utilisable dans les connections `editEntities`. Le planner utilisé est indiqué : `[Bézier arm=0.60]`, `[Dubins RSR R=3000]`.
 
 **Utiliser systématiquement avant d'écrire un test track** pour valider chaque segment courbe et déterminer les positions d'apex.
 
@@ -202,12 +212,12 @@ Validées automatiquement lors de la création de belts, pipes et lifts. Défini
 |------|----------|----------|
 | belt | 200 | 5600 |
 | pipe | 200 | 5600 |
-| track | 1200 | 9900 |
+| track | 1600 | 9900 |
 | lift | 400 | 4800 |
 
 Un belt/pipe trop court ou trop long, ou un lift hors limites, provoque une erreur avec rollback.
 
-**Tracks aux stations** : un track connecté à un port de station (integrated track) doit faire **exactement 1200 UU**. Utiliser des stubs courts aux stations, puis connecter les tracks du réseau aux stubs. Voir guards de connexion dans `trains.md`.
+**Tracks aux stations** : un track connecté à un port de station (integrated track) doit faire **exactement 1600 UU**. Utiliser des stubs courts aux stations, puis connecter les tracks du réseau aux stubs. Voir guards de connexion dans `trains.md`.
 
 ## Validation de forme des splines (courbure / pente / U-turn)
 

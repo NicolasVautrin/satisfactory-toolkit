@@ -5,6 +5,10 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 ## Règles
 
 - **Ne jamais modifier les fichiers dans un submodule Git** (`tools/pak-tool/lib/CUE4Parse/`). Placer le code additionnel dans le projet principal (ex: `tools/pak-tool/Helpers/`, `tools/pak-tool/Commands/`).
+- **Injections d'edit dans le viewer** — toujours utiliser `"anchor": {"fromCamera": 5000}` (ou une distance adaptée) pour placer les entités devant la caméra, pas à une position absolue arbitraire.
+- **Ne jamais injecter un edit deux fois** — toujours vérifier le champ `added` (pas `results`) dans la réponse JSON de `/api/game/edit`. Si `added` contient des entités, l'injection a réussi. Ne pas réessayer sous prétexte qu'un filtre jq était mal écrit.
+- **Screenshots du viewer** — ne pas manipuler la caméra via devtools. Demander à l'utilisateur de zoomer/cadrer lui-même, puis prendre le screenshot.
+- **Après le démarrage du serveur**, toujours charger la save TEST : `curl -s -X POST http://localhost:3000/api/game/load-file -H "Content-Type: application/json" -d '{"filePath":"C:/Users/nicolasv/AppData/Local/FactoryGame/Saved/SaveGames/76561198036887614/TEST.sav"}'`
 - **Contexte du projet** — les fichiers de référence sont importés automatiquement ci-dessous :
 
 @.claude/skills/satisfactory/trains.md
@@ -75,7 +79,12 @@ Le serveur démarre sans save — charger les fichiers `.sav` et `.cbp` via le b
 - Pour **arrêter** le serveur : `curl -s -X POST http://localhost:3000/api/shutdown`
 - Si le shutdown ne répond pas (ancienne instance) : `powershell -Command 'Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }'`
 - Pour **redémarrer** après des modifications : d'abord shutdown/kill, attendre 1s, puis relancer
-- **Important** : quand un serveur est lancé via `run_in_background`, la notification `status: completed` signifie que le monitoring s'est terminé, **pas** que le serveur s'est arrêté — le serveur continue de tourner
+- **Détection du démarrage serveur** après `run_in_background` :
+  1. `sleep 2` puis `curl -s http://localhost:3000/ -o /dev/null -w "%{http_code}"`
+  2. Si **200** → serveur UP, ne plus rien faire
+  3. Si erreur → lire le fichier output du background task pour diagnostiquer
+  4. **Ignorer les notifications `completed`/`failed`** du background task — elles signalent la fin du monitoring, pas l'état du serveur
+  5. **Ne JAMAIS relancer** si le curl a déjà répondu 200
 - Après modification de `viewer/server.js` ou de fichiers sous `viewer/lib/`, il faut **redémarrer le serveur** ET **hard reload** (Ctrl+Shift+R) dans le navigateur
 - Après modification de `viewer/public/`, un simple **hard reload** suffit (pas besoin de redémarrer le serveur)
 - **Relancer le serveur automatiquement** après modification de fichiers serveur — l'utilisateur a une confirmation via le tool approval
