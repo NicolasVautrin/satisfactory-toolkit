@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { renderer, scene, gameToViewer, requestRender, getDisplay } from './scene.js';
+import { renderer, scene, gameToViewer, gameToViewerQuat, requestRender, getDisplay } from './scene.js';
 import { getLandscapeMap, getViewerLandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
@@ -121,45 +121,15 @@ export async function buildScenery() {
 
   for (const [resource, nodes] of Object.entries(nodesByResource)) {
     const meshName = RESOURCE_MESH[resource];
-    const cached = meshCache.get(meshName);
-    const geom = cached?.geometry || fallbackGeom;
+    const geom = meshCache.get(meshName)?.geometry || fallbackGeom;
     const color = RESOURCE_COLORS[resource] || 0x888888;
-    const mat = new THREE.MeshLambertMaterial({ color });
-    const instanced = new THREE.InstancedMesh(geom, mat, nodes.length);
-    instanced.name = `nodes_${resource}`;
-    const dummy = new THREE.Object3D();
-
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      dummy.position.copy(gameToViewer(n.x, n.y, n.z));
-      dummy.quaternion.set(n.qx || 0, -(n.qy || 0), -(n.qz || 0), n.qw || 1);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      instanced.setMatrixAt(i, dummy.matrix);
-    }
-
-    instanced.instanceMatrix.needsUpdate = true;
-    instanced.visible = sceneryVisible;
-    sceneryGroup.add(instanced);
+    createInstancedScenery(`nodes_${resource}`, geom, new THREE.MeshLambertMaterial({ color }), nodes);
   }
 
   // ── Geysers ────────────────────────────────────────────
   const geysers = bpActors.filter(a => a.type === 'BP_ResourceNodeGeyser_C');
   if (geysers.length > 0) {
-    const geyserMat = new THREE.MeshLambertMaterial({ color: 0x4488cc });
-    const geyserMesh = new THREE.InstancedMesh(fallbackGeom, geyserMat, geysers.length);
-    geyserMesh.name = 'geysers';
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < geysers.length; i++) {
-      const g = geysers[i];
-      dummy.position.copy(gameToViewer(g.x, g.y, g.z));
-      dummy.quaternion.set(g.qx || 0, -(g.qy || 0), -(g.qz || 0), g.qw || 1);
-      dummy.scale.set(g.sx || 1, g.sy || 1, g.sz || 1);
-      dummy.updateMatrix();
-      geyserMesh.setMatrixAt(i, dummy.matrix);
-    }
-    geyserMesh.instanceMatrix.needsUpdate = true;
-    sceneryGroup.add(geyserMesh);
+    createInstancedScenery('geysers', fallbackGeom, new THREE.MeshLambertMaterial({ color: 0x4488cc }), geysers);
   }
 
   // ── Streaming actors (rocks, cliffs) — batch loaded ────
@@ -206,22 +176,7 @@ export async function buildScenery() {
         mat = result.material || new THREE.MeshLambertMaterial({ color: 0x887766 });
       }
 
-      const instanced = new THREE.InstancedMesh(result.geometry, mat, instances.length);
-      instanced.name = `scenery_${meshName}`;
-
-      const dummy = new THREE.Object3D();
-      for (let j = 0; j < instances.length; j++) {
-        const inst = instances[j];
-        dummy.position.copy(gameToViewer(inst.x, inst.y, inst.z));
-        dummy.quaternion.set(inst.qx, -(inst.qy), -(inst.qz), inst.qw);
-        dummy.scale.set(inst.sx || 1, inst.sy || 1, inst.sz || 1);
-        dummy.updateMatrix();
-        instanced.setMatrixAt(j, dummy.matrix);
-      }
-
-      instanced.instanceMatrix.needsUpdate = true;
-      instanced.visible = sceneryVisible;
-      sceneryGroup.add(instanced);
+      createInstancedScenery(`scenery_${meshName}`, result.geometry, mat, instances);
       loadedMeshCount++;
     }
 
@@ -250,43 +205,12 @@ export async function buildScenery() {
 
   for (const [resource, sats] of Object.entries(satByRes)) {
     const color = FRACKING_COLORS[resource] || 0x888888;
-    const mat = new THREE.MeshLambertMaterial({ color });
-    const instanced = new THREE.InstancedMesh(frackGeom, mat, sats.length);
-    instanced.name = `fracking_${resource}`;
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < sats.length; i++) {
-      const s = sats[i];
-      dummy.position.copy(gameToViewer(s.x, s.y, s.z));
-      dummy.quaternion.set(s.qx || 0, -(s.qy || 0), -(s.qz || 0), s.qw || 1);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      instanced.setMatrixAt(i, dummy.matrix);
-    }
-    instanced.instanceMatrix.needsUpdate = true;
-    instanced.visible = sceneryVisible;
-    sceneryGroup.add(instanced);
+    createInstancedScenery(`fracking_${resource}`, frackGeom, new THREE.MeshLambertMaterial({ color }), sats);
   }
 
   // Fracking cores
   if (frackingCores.length > 0) {
-    const coreInstanced = new THREE.InstancedMesh(
-      frackCoreGeom,
-      new THREE.MeshLambertMaterial({ color: 0xaa6600 }),
-      frackingCores.length
-    );
-    coreInstanced.name = 'fracking_cores';
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < frackingCores.length; i++) {
-      const c = frackingCores[i];
-      dummy.position.copy(gameToViewer(c.x, c.y, c.z));
-      dummy.quaternion.set(c.qx || 0, -(c.qy || 0), -(c.qz || 0), c.qw || 1);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      coreInstanced.setMatrixAt(i, dummy.matrix);
-    }
-    coreInstanced.instanceMatrix.needsUpdate = true;
-    coreInstanced.visible = sceneryVisible;
-    sceneryGroup.add(coreInstanced);
+    createInstancedScenery('fracking_cores', frackCoreGeom, new THREE.MeshLambertMaterial({ color: 0xaa6600 }), frackingCores);
   }
 
   loaded = true;
@@ -299,6 +223,25 @@ export async function buildScenery() {
   }
   console.log(`[Scenery] Loaded: ${nodeCount} nodes, ${geysers.length} geysers, ${frackingSatellites.length} fracking, ${loadedMeshCount} mesh types (${streamCount} instances), ${textured} textured, ${flat} flat`);
   requestRender();
+}
+
+// ── Helper: create InstancedMesh from placement array ───────
+function createInstancedScenery(name, geometry, material, placements) {
+  const instanced = new THREE.InstancedMesh(geometry, material, placements.length);
+  instanced.name = name;
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i];
+    dummy.position.copy(gameToViewer(p.x, p.y, p.z));
+    dummy.quaternion.copy(gameToViewerQuat(p.qx || 0, p.qy || 0, p.qz || 0, p.qw || 1));
+    dummy.scale.set(p.sx || 1, p.sy || 1, p.sz || 1);
+    dummy.updateMatrix();
+    instanced.setMatrixAt(i, dummy.matrix);
+  }
+  instanced.instanceMatrix.needsUpdate = true;
+  instanced.visible = sceneryVisible;
+  sceneryGroup.add(instanced);
+  return instanced;
 }
 
 // ── Parse a GLB buffer into { geometry, material } ─────────

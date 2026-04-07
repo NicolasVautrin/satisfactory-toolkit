@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { scene, gameToViewer, requestRender } from './scene.js';
+import { scene, gameToViewer, gameToViewerQuat, requestRender } from './scene.js';
 import { getUELandscapeBounds } from './landscape.js';
 import { fetchBatchGlb } from './batchGlb.js';
 
@@ -109,7 +109,7 @@ export async function buildWater() {
     for (let i = 0; i < actors.length; i++) {
       const a = actors[i];
       dummy.position.copy(gameToViewer(a.x, a.y, a.z));
-      dummy.quaternion.set(a.qx || 0, -(a.qy || 0), -(a.qz || 0), a.qw || 1);
+      dummy.quaternion.copy(gameToViewerQuat(a.qx || 0, a.qy || 0, a.qz || 0, a.qw || 1));
       dummy.scale.set(a.sx || 1, a.sy || 1, a.sz || 1);
       dummy.updateMatrix();
       instanced.setMatrixAt(i, dummy.matrix);

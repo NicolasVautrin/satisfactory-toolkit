@@ -11,6 +11,7 @@ export function gameToViewer(x, y, z) {
   return new THREE.Vector3(-x, y, z);
 }
 
+
 export function gameToViewer2D(x, y) {
   return { x: -x, y: y };
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { scene, gameToViewer, requestRender } from './scene.js';
+import { scene, gameToViewer, gameToViewerQuat, requestRender } from './scene.js';
 
 const GRID_COLOR = 0x888888;
 const EDGE_COLOR = 0xffaa00;
@@ -146,7 +146,7 @@ function addGrid(entityIndex, viewerEntityRepository) {
 
   if (gridBoxAlign === 'entity') {
     // GridBox aligned with entity axes
-    group.quaternion.set(e.rx, -e.ry, -e.rz, e.rw);
+    group.quaternion.copy(gameToViewerQuat(e.rx, e.ry, e.rz, e.rw));
   }
   // else: world aligned — no rotation (default)
 
