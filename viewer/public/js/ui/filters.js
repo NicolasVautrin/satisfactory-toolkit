@@ -15,7 +15,7 @@ function saveState(state) {
 
 // ── Layers dropdown menu ────────────────────────────────────
 
-export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onLandscapeToggle, onSceneryToggle, onWaterToggle, onGridToggle, onPortsToggle }) {
+export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onLandscapeToggle, onSceneryToggle, onWaterToggle, onGridToggle, onPortsToggle, onCssLabelsToggle, onLabelFontSize }) {
   const saved = loadState() || {};
   const state = {
     cats: saved.cats || [true, true, true, true, true, true, true, true],
@@ -25,6 +25,7 @@ export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onL
     grid: saved.grid !== undefined ? saved.grid : true,
     ports: saved.ports || false,
     cbp: saved.cbp !== undefined ? saved.cbp : true,
+    cssLabels: saved.cssLabels !== undefined ? saved.cssLabels : true,
   };
 
   function persist() { saveState(state); }
@@ -149,4 +150,38 @@ export function createFilters(menuDropdown, { onCategoryToggle, onCbpToggle, onL
   });
   menuDropdown.appendChild(cbpLabel);
   if (!state.cbp) onCbpToggle(false);
+
+  // ── Labels section ──────────────────────────────────────
+  menuDropdown.appendChild(Object.assign(document.createElement('div'), { className: 'menu-separator' }));
+
+  const cssLabelsLabel = document.createElement('label');
+  cssLabelsLabel.className = 'menu-toggle';
+  cssLabelsLabel.innerHTML = `
+    <input type="checkbox" ${state.cssLabels ? 'checked' : ''}>
+    <span class="menu-dot" style="background:#ffcc00"></span>
+    Labels
+  `;
+  cssLabelsLabel.querySelector('input').addEventListener('change', (e) => {
+    state.cssLabels = e.target.checked;
+    persist();
+    onCssLabelsToggle(e.target.checked);
+  });
+  menuDropdown.appendChild(cssLabelsLabel);
+  if (!state.cssLabels) onCssLabelsToggle(false);
+
+  // Label font size control
+  const sizeRow = document.createElement('div');
+  sizeRow.className = 'ctrl-row';
+  const sizeVal = document.createElement('span');
+  sizeVal.className = 'ctrl-val';
+  sizeVal.textContent = onLabelFontSize(0) + 'px';
+  sizeRow.innerHTML = `<span class="ctrl-label">Size</span>`;
+  const btnDown = Object.assign(document.createElement('button'), { className: 'ctrl-down', innerHTML: '−' });
+  const btnUp = Object.assign(document.createElement('button'), { className: 'ctrl-up', innerHTML: '+' });
+  btnDown.addEventListener('click', () => { sizeVal.textContent = onLabelFontSize(-1) + 'px'; });
+  btnUp.addEventListener('click', () => { sizeVal.textContent = onLabelFontSize(1) + 'px'; });
+  sizeRow.appendChild(btnDown);
+  sizeRow.appendChild(sizeVal);
+  sizeRow.appendChild(btnUp);
+  menuDropdown.appendChild(sizeRow);
 }

@@ -8,7 +8,8 @@ import { buildLandscape, setLandscapeVisible, layoutLoaded, updateStreaming } fr
 import { buildScenery, setSceneryVisible, setSceneryLod } from './engine/scenery.js';
 import { buildWater, setWaterVisible } from './engine/water.js';
 import { buildGrid, setGridVisible, adjustGridSpacing, getGridSpacing } from './engine/grid.js';
-import { buildStationLabels, clearStationLabels, setLabelsVisible } from './engine/labels.js';
+import { buildStationLabels, clearStationLabels, setLabelsVisible } from './engine/labels3d.js';
+import { initCssRenderer, resizeCssRenderer, buildCssLabels, clearCssLabels, setCssLabelsVisible, renderCssLabels, getLabelFontSize, setLabelFontSize } from './engine/cssLabels.js';
 import { gameToViewer } from './engine/scene.js';
 
 import { createToolbar } from './ui/toolbar.js';
@@ -147,6 +148,11 @@ createFilters(toolbar.layersMenu, {
   onWaterToggle: setWaterVisible,
   onGridToggle: setGridVisible,
   onPortsToggle: setPortsVisible,
+  onCssLabelsToggle: setCssLabelsVisible,
+  onLabelFontSize: (delta) => {
+    if (delta !== 0) setLabelFontSize(getLabelFontSize() + delta);
+    return getLabelFontSize();
+  },
 });
 
 // ── UI: Controls (Camera menu) ──────────────────────────────
@@ -233,6 +239,7 @@ async function onSaveLoaded(data, filename) {
   }
   buildSaveScene(data);
   buildStationLabels(data);
+  buildCssLabels(data);
   clearSelection();
   if (!restoreCameraState(camKey())) fitCamera(data.entities, gameToViewer);
   setLoading(null);
@@ -318,6 +325,7 @@ window.addEventListener('keydown', (e) => {
 
 // ── Init ────────────────────────────────────────────────────
 initRenderer(canvasEl);
+initCssRenderer(canvasEl);
 initCameraControls();
 // Restore camera position immediately (before save loads)
 restoreCameraState('save');
@@ -355,7 +363,7 @@ async function refreshFromServer(name) {
 }
 
 initWebSocket({
-  onEditResult: () => updateStatus(),
+  onEditResult: () => { buildCssLabels(getSaveData()); updateStatus(); },
   onSaveLoaded: (name) => refreshFromServer(name),
   onRefreshNeeded: () => refreshFromServer(),
 });
@@ -370,7 +378,11 @@ buildLandscape()
 function animate() {
   requestAnimationFrame(animate);
   updateStreaming();
-  if (consumeRender()) renderer.render(scene, camera);
+  if (consumeRender()) {
+    renderer.render(scene, camera);
+    renderCssLabels(camera);
+  }
 }
 resize();
+window.addEventListener('resize', () => resizeCssRenderer(canvasEl.clientWidth, canvasEl.clientHeight));
 animate();

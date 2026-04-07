@@ -71,17 +71,17 @@ Les endpoints positionnels (`{x,y,z}` au lieu de `"id:port"`) ne sont supportés
 
 ### Endpoints positionnels track
 
-Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés) qui spécifie la **direction outward du port** (vers l'extérieur du track, à l'opposé du track) :
-- `rotation: 0` → direction (-1, 0, 0) = -X
-- `rotation: 90` → direction (0, -1, 0) = -Y
-- `rotation: 180` → direction (+1, 0, 0) = +X
-- `rotation: 270` → direction (0, +1, 0) = +Y
+Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degrés, convention trigonométrique standard) qui spécifie la **direction outward du port** :
+- `rotation: 0` → direction (+1, 0, 0) = +X
+- `rotation: 90` → direction (0, +1, 0) = +Y
+- `rotation: 180` → direction (-1, 0, 0) = -X
+- `rotation: 270` → direction (0, -1, 0) = -Y
 
-**Convention outward** : tous les ports (belt, pipe, track) pointent vers l'extérieur. Pour un track :
-- `from` (= TC0) : la rotation donne la direction **opposée** au sens de parcours. Ex: track allant vers le nord → `from` rotation 90 (-Y = outward sud).
-- `to` (= TC1) : la rotation donne la direction **dans** le sens de parcours. Ex: track arrivant par le nord → `to` rotation 270 (+Y = outward nord).
+**Convention port virtuel anchor** : un endpoint positionnel est un **port virtuel** auquel le track snappe en face-à-face (même mécanisme que le snap port-à-port). La rotation indique la direction outward de ce port virtuel. Le snap négate cette direction pour le port du track créé :
+- `from` (= TC0) : TC0 outward = `-rotation_dir`. Ex: rotation 270 (-Y) → TC0 outward +Y → travel -Y (sud).
+- `to` (= TC1) : TC1 outward = `-rotation_dir`. Ex: rotation 90 (+Y) → TC1 outward -Y → travel -Y (sud).
 
-Sans `rotation`, la direction est calculée depuis le span (droite).
+**Sans `rotation`** : le track est créé avec une direction calculée depuis le span (droite), puis le snap repositionne le port à la position demandée **en gardant cette direction initiale**. Le dir n'est jamais null — `_trackSnap` fait un fallback sur la direction courante du port (`snappedPort._dir`).
 
 Les positions sont relatives à l'anchor et transformées par la rotation du batch (comme les positions d'entités).
 
@@ -103,11 +103,18 @@ L'outil prend deux transforms (position + rotation/direction) et retourne la lis
 - `TANGENT_SCALE = 1.17` — correspond au facteur Hermite réel de `makeSpline`. Les segments validés par planTrackPath sont garantis de passer la validation de l'éditeur.
 - `RADIUS_MARGIN = 1.05` — marge de 5% sur le rayon min pour absorber les ajustements de snap.
 
-Options : `--from "x,y,z"`, `--to "x,y,z"`, `--fromRot N` / `--toRot N` (yaw degrés, direction outward du port) ou `--fromDir "x,y,z"` / `--toDir "x,y,z"` (vecteur outward).
+Options : `--from "x,y,z"`, `--to "x,y,z"`, `--fromRot N` / `--toRot N` (yaw degrés, port outward du segment) ou `--fromDir "x,y,z"` / `--toDir "x,y,z"` (vecteur port outward).
 
-Sortie : tableau récapitulatif + JSON directement utilisable dans les connections `editEntities`. Le planner utilisé est indiqué : `[Bézier arm=0.60]`, `[Dubins RSR R=3000]`.
+Sortie : tableau récapitulatif + JSON avec rotations **anchor** (= -port outward, prêtes pour `editEntities`). Le planner utilisé est indiqué : `[Bézier arm=0.60]`, `[Dubins RSR R=3000]`.
 
 **Utiliser systématiquement avant d'écrire un test track** pour valider chaque segment courbe et déterminer les positions d'apex.
+
+**Cohérence rotations / ports réels** : quand un segment planifié se connectera à un port réel (ex: switch sur `ext_e:TrackConnection1`), le `--fromRot` doit correspondre au port outward **après snap** :
+1. Déterminer l'outward du port réel d'ancrage (ex: `ext_e:TC1 outward = -Y`)
+2. Le snap négate (face-à-face) → le TC du nouveau track aura outward = `+Y`
+3. Utiliser CE port outward comme `--fromRot` (ici 90° = +Y)
+
+Si le `--fromRot` ne correspond pas au port réel, le segment validé par planTrackPath sera invalide une fois connecté dans l'éditeur (le snap imposera une direction différente → spline dégénérée).
 
 ### Docking station (gares)
 

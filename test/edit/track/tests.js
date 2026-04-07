@@ -589,3 +589,12 @@ describe('Track snap', () => {
     assertCurved(u2, 'u2 spline');
   });
 });
+
+// ── Layout JSON tests ──────────────────────────────────────────────
+describe('Layouts', () => {
+  it('47. station-bypass-compact layout from JSON', () => {
+    const layout = require('../../../data/layouts/station-bypass-compact.json');
+    // Validation only — editEntities throws on invalid splines (radius, slope)
+    editEntities({ ...layout, anchor: { x: 950000, y: 0, z: 0 } });
+  });
+});

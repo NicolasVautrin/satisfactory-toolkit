@@ -1,6 +1,6 @@
 {
   "belt":  { "min": 200, "max": 5600, "minRadiusXY": 180, "maxSlopeDeg": 40 },
   "pipe":  { "min": 200, "max": 5600 },
-  "track": { "min": 1600, "max": 9900, "minRadiusXY": 900, "maxSlopeDeg": 25 },
+  "track": { "min": 1200, "max": 9900, "minRadiusXY": 900, "maxSlopeDeg": 25 },
   "lift":  { "min": 400, "max": 4800 }
 }

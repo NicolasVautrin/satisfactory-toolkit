@@ -21,11 +21,11 @@ const TANGENT_SCALE = 1.17;
 // ── Direction helpers ──────────────────────────────────────────────
 function yawToDir(yawDeg) {
   const rad = yawDeg * Math.PI / 180;
-  return { x: -Math.cos(rad), y: -Math.sin(rad), z: 0 };
+  return { x: Math.cos(rad), y: Math.sin(rad), z: 0 };
 }
 
 function dirToYaw(dir) {
-  const yaw = Math.atan2(-dir.y, -dir.x) * 180 / Math.PI;
+  const yaw = Math.atan2(dir.y, dir.x) * 180 / Math.PI;
   return Math.round(((yaw % 360) + 360) % 360);
 }
 
@@ -373,8 +373,16 @@ const to = parseVec(arg('to'));
 let fromDir = parseVec(arg('fromDir'));
 let toDir = parseVec(arg('toDir'));
 
-if (!fromDir && arg('fromRot') !== null) fromDir = yawToDir(parseFloat(arg('fromRot')));
-if (!toDir && arg('toRot') !== null) toDir = yawToDir(parseFloat(arg('toRot')));
+// --fromRot / --toRot = anchor outward (virtual port outward, same as editor convention).
+// Negate to get the track port outward used internally for planning.
+if (!fromDir && arg('fromRot') !== null) {
+  const a = yawToDir(parseFloat(arg('fromRot')));
+  fromDir = { x: -a.x, y: -a.y, z: -a.z };
+}
+if (!toDir && arg('toRot') !== null) {
+  const a = yawToDir(parseFloat(arg('toRot')));
+  toDir = { x: -a.x, y: -a.y, z: -a.z };
+}
 
 if (!from || !to) {
   console.error('Usage: node tools/planTrackPath.js --from "x,y,z" --to "x,y,z" [--fromRot N | --fromDir "x,y,z"] [--toRot N | --toDir "x,y,z"]');
@@ -412,6 +420,13 @@ if (!result) {
 }
 
 // ── Output ─────────────────────────────────────────────────────────
+
+// Port outward → anchor rotation (negate then convert to yaw).
+// Output rotations are editor-compatible: they represent the virtual anchor port outward.
+function toAnchorRot(portDir) {
+  return dirToYaw({ x: -portDir.x, y: -portDir.y, z: -(portDir.z || 0) });
+}
+
 const totalLen = result.segments.reduce((s, seg) => s + seg.dist, 0);
 const planner = result.dubinsType ? ` [Dubins ${result.dubinsType} R=${result.dubinsR}]` : result.armRatio ? ` [Bézier arm=${result.armRatio.toFixed(2)}]` : '';
 console.log(`\nTrack path: ${result.segments.length} segment${result.segments.length > 1 ? 's' : ''}, total ${totalLen} UU${planner}\n`);
@@ -420,8 +435,8 @@ console.log('  #  From                          To                            Le
 console.log('  ─  ────────────────────────────  ────────────────────────────  ──────  ──────  ─────');
 for (let i = 0; i < result.segments.length; i++) {
   const seg = result.segments[i];
-  const fRot = dirToYaw(seg.from.dir);
-  const tRot = dirToYaw(seg.to.dir);
+  const fRot = toAnchorRot(seg.from.dir);
+  const tRot = toAnchorRot(seg.to.dir);
   const fromStr = `(${seg.from.x}, ${seg.from.y}, ${seg.from.z}) r${fRot}`;
   const toStr = `(${seg.to.x}, ${seg.to.y}, ${seg.to.z}) r${tRot}`;
   const radiusStr = seg.minRadius === Infinity ? '  Inf' : String(seg.minRadius).padStart(5);
@@ -431,8 +446,8 @@ for (let i = 0; i < result.segments.length; i++) {
 // JSON output for editEntities
 console.log('\nJSON (for editEntities connections):');
 const json = result.segments.map((seg, i) => ({
-  from: { x: seg.from.x, y: seg.from.y, z: seg.from.z, rotation: dirToYaw(seg.from.dir) },
-  to: { x: seg.to.x, y: seg.to.y, z: seg.to.z, rotation: dirToYaw(seg.to.dir) },
+  from: { x: seg.from.x, y: seg.from.y, z: seg.from.z, rotation: toAnchorRot(seg.from.dir) },
+  to: { x: seg.to.x, y: seg.to.y, z: seg.to.z, rotation: toAnchorRot(seg.to.dir) },
 }));
 console.log(JSON.stringify(json, null, 2));
 console.log();

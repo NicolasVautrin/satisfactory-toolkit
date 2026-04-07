@@ -77,6 +77,7 @@ export function createControls(menuDropdown, { camState, onGridSpacingChange }) 
     () => onGridSpacingChange(1),
   );
 
+
   // Adaptive sensitivity toggle
   menuDropdown.appendChild(Object.assign(document.createElement('div'), { className: 'menu-separator' }));
   const adaptiveLabel = document.createElement('label');

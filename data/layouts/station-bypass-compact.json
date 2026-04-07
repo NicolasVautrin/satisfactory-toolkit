@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "name": "station-bypass-compact",
+    "description": "Gare 1 station + 4 docks belt avec bypass souterrain + crossover. Geometrie extraite de la save (gare 15484). Save indices as track IDs.",
+    "saveAnchor": { "x": -72028, "y": 237542, "z": 10 },
+    "stationRotation": 100
+  },
+  "anchor": { "x": 0, "y": 0, "z": 0 },
+  "rotation": 0,
+  "entities": [
+    { "id": "stA", "type": "train-station", "position": { "x": 0, "y": 0, "z": 0 }, "rotation": 100, "label": true },
+    { "id": "dk1", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk2", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk3", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk4", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } }
+  ],
+  "connections": [
+    { "from": "dk1:TrackConnection1", "to": "stA:TrackConnection0" },
+    { "from": "dk2:TrackConnection1", "to": "dk1:TrackConnection0" },
+    { "from": "dk3:TrackConnection1", "to": "dk2:TrackConnection0" },
+    { "from": "dk4:TrackConnection1", "to": "dk3:TrackConnection0" },
+
+    { "id": "stub_out", "from": "stA:TrackConnection1", "to": { "x": 347, "y": -1970, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "stub_in", "from": "dk4:TrackConnection0", "to": { "x": -1459, "y": 8272, "z": 0, "rotation": 280 }, "track": true, "label": true },
+
+    { "id": "t34338", "from": "stub_out:TrackConnection1", "to": { "x": -673, "y": -5399, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34337", "from": "t34338:TrackConnection1", "to": { "x": -465, "y": -6581, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34339", "from": "t34337:TrackConnection1", "to": { "x": -257, "y": -7763, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34343", "from": "t34339:TrackConnection1", "to": { "x": -48, "y": -8944, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34359", "from": "t34343:TrackConnection1", "to": { "x": 160, "y": -10127, "z": 0, "rotation": 100 }, "track": true },
+
+    { "id": "t34356", "from": "stub_in:TrackConnection1", "to": { "x": -3660, "y": 11540, "z": 0, "rotation": 280 }, "track": true },
+    { "id": "t34334", "from": "t34356:TrackConnection1", "to": { "x": -3869, "y": 12721, "z": 0, "rotation": 280 }, "track": true },
+    { "id": "t34335", "from": "t34334:TrackConnection1", "to": { "x": -4077, "y": 13903, "z": 0, "rotation": 280 }, "track": true },
+    { "id": "cont_n", "from": "t34335:TrackConnection1", "to": { "x": -4285, "y": 15085, "z": 0, "rotation": 280 }, "track": true, "label": true },
+
+    { "id": "t34319", "from": { "x": -3371, "y": 5295, "z": 0, "rotation": 280 }, "to": { "x": -2781, "y": 1947, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34321", "from": "t34319:TrackConnection1", "to": { "x": -1513, "y": -5243, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34323", "from": "t34321:TrackConnection1", "to": { "x": -558, "y": -10659, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34324", "from": "t34319:TrackConnection0", "to": { "x": -4448, "y": 11401, "z": 0, "rotation": 280 }, "track": true },
+
+    { "id": "t34318", "from": "stub_out:TrackConnection1", "to": { "x": -1206, "y": -4681, "z": -901, "rotation": 10 }, "track": true },
+    { "id": "t34347", "from": "t34318:TrackConnection1", "to": { "x": -2892, "y": -4198, "z": -901, "rotation": 318 }, "track": true },
+    { "id": "t34348", "from": "t34347:TrackConnection1", "to": { "x": -3523, "y": -3058, "z": -901, "rotation": 280 }, "track": true },
+    { "id": "t34320", "from": "t34348:TrackConnection1", "to": "t34319:TrackConnection1", "track": true },
+
+    { "id": "t34316", "from": { "x": -602, "y": 8017, "z": -901, "rotation": 280 }, "to": { "x": -394, "y": 6835, "z": -901, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34336", "from": "t34316:TrackConnection0", "to": "cont_n:TrackConnection0", "track": true },
+    { "id": "t34317", "from": "t34316:TrackConnection1", "to": { "x": 926, "y": -649, "z": -901, "rotation": 100 }, "track": true },
+    { "id": "t34340", "from": "t34317:TrackConnection1", "to": "t34343:TrackConnection0", "track": true }
+  ]
+}

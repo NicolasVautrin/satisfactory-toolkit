@@ -216,13 +216,13 @@ public static class ExportCommand
                     var center = bounds.Origin;
                     var meshLen = bounds.BoxExtent.X * 2;
                     var scaleX = meshLen > 0 ? 1f / meshLen : 1f;
-                    // Normalize length (X) to 1 UU; section (Y/Z) in cm (glTF convention)
-                    // UnrealToGltfTransform already converts cm→m (×0.01) for translation
-                    // but scale is applied raw, so use 0.01 for Y/Z to get real cm in glTF
+                    // Normalize length (X) to 1 UU; keep Y/Z cross-section as-is
+                    // Gltf.ExportStaticMeshSections already converts vertices to meters (×0.01)
+                    // so scale Y/Z = 1 (no additional conversion needed)
                     transform = MathHelpers.UnrealToGltfTransform(
-                        new FVector(-center.X * scaleX, -center.Y * 0.01f, -center.Z * 0.01f),
+                        new FVector(-center.X * scaleX, -center.Y, -center.Z),
                         new FRotator(0, 0, 0),
-                        new FVector(scaleX, 0.01f, 0.01f));
+                        new FVector(scaleX, 1f, 1f));
                 }
 
                 var glbData = BuildCompositeGlb(fileName,
@@ -250,7 +250,7 @@ public static class ExportCommand
     /// </summary>
     private static List<(UStaticMesh mesh, Matrix4x4 transform)> ResolveMeshesFromBlueprint(UObject[] allExports)
     {
-        var result = new List<(UStaticMesh, Matrix4x4)>();
+        var result = new List<(UStaticMesh mesh, Matrix4x4 transform)>();
         var seen = new HashSet<string>();
 
         void TryAdd(UStaticMesh? mesh, UObject comp)
@@ -277,6 +277,15 @@ public static class ExportCommand
                 var loc = smc.GetRelativeLocation();
                 var rot = smc.GetRelativeRotation();
                 var scl = smc.GetRelativeScale3D();
+
+                transform = MathHelpers.UnrealToGltfTransform(loc, rot, scl);
+            }
+            else
+            {
+                // Fallback for FGColoredInstanceMeshProxy and other non-mapped subclasses
+                var loc = comp.GetOrDefault("RelativeLocation", new FVector(0, 0, 0));
+                var rot = comp.GetOrDefault("RelativeRotation", new FRotator(0, 0, 0));
+                var scl = comp.GetOrDefault("RelativeScale3D", new FVector(1, 1, 1));
                 transform = MathHelpers.UnrealToGltfTransform(loc, rot, scl);
             }
             result.Add((mesh, transform));
@@ -309,7 +318,41 @@ public static class ExportCommand
             }
         }
 
+        if (result.Any(r => r.mesh.Name == "SpaceElevator"))
+            RebaseSpaceElevator(result);
+
         return result;
+    }
+
+    /// <summary>
+    /// SpaceElevator: shift root mesh up so global min Z of all parts = 0.
+    /// The mesh geometry extends far below the entity origin; in-game the base is at Z=0.
+    /// </summary>
+    private static void RebaseSpaceElevator(List<(UStaticMesh mesh, Matrix4x4 transform)> parts)
+    {
+        // Compute global min Z (UE) across all parts.
+        // In glTF matrix: M42 = translation Y (= UE Z after Y/Z swap), column 1 length = scale on that axis.
+        // Mesh bounds are in UE space (cm), ×0.01 for glTF meters.
+        float globalMinZ = float.MaxValue;
+        foreach (var (mesh, tr) in parts)
+        {
+            if (mesh.RenderData?.Bounds == null) continue;
+            var b = mesh.RenderData.Bounds;
+            var gltfScaleZ = MathF.Sqrt(tr.M21 * tr.M21 + tr.M22 * tr.M22 + tr.M23 * tr.M23);
+            var gltfTransZ = tr.M42;
+            var bottomZ = (b.Origin.Z - b.BoxExtent.Z) * 0.01f * gltfScaleZ + gltfTransZ;
+            if (bottomZ < globalMinZ) globalMinZ = bottomZ;
+        }
+
+        if (globalMinZ >= -0.1f || globalMinZ == float.MaxValue) return;
+
+        // Shift ALL parts up (GLB nodes are flat, no parent-child hierarchy)
+        for (int i = 0; i < parts.Count; i++)
+        {
+            var (m, tr) = parts[i];
+            tr.M42 -= globalMinZ;
+            parts[i] = (m, tr);
+        }
     }
 
     // ── export scenery ───────────────────────────────────────

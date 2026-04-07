@@ -75,6 +75,14 @@ export function createPropsPanel(container) {
         html += `</div>`;
       }
 
+      // Label (from mLabel / edit id)
+      if (e.lb) {
+        html += `<div class="props-section">`;
+        html += `<div class="props-section-title">Label</div>`;
+        html += `<div class="props-row"><span class="props-value" style="color:#ffcc00;font-weight:bold">${e.lb}</span></div>`;
+        html += `</div>`;
+      }
+
       // Class name
       html += `<div class="props-section">`;
       html += `<div class="props-section-title">Entity</div>`;
@@ -115,7 +123,7 @@ export function createPropsPanel(container) {
           const flowClass = p.flow === -1 ? 'bidir' : p.flow === 0 ? 'input' : 'output';
           const typeClass = p.type === 0 ? 'belt' : 'pipe';
           const statusClass = connected ? 'connected' : 'disconnected';
-          const statusText = connected ? 'connected' : 'disconnected';
+          const statusText = typeof connected === 'string' ? connected : (connected ? 'connected' : 'disconnected');
           const flowLabel = p.flow === -1 ? 'any' : p.flow === 0 ? 'in' : 'out';
           html += `<div class="props-port-row">`;
           html += `<span class="props-port-dot ${typeClass} ${flowClass}"></span>`;
@@ -142,21 +150,26 @@ export function createPropsPanel(container) {
       // Build serialized props for clipboard
       const props = {
         save: filename || undefined,
+        label: e.lb || undefined,
         class: cls,
         category: catName,
         index: entityIndex,
-        position: { x: e.tx, y: e.ty, z: e.tz },
-        rotation: { x: e.rx, y: e.ry, z: e.rz, w: e.rw },
+        position: `{${Math.round(e.tx)}, ${Math.round(e.ty)}, ${Math.round(e.tz)}}`,
+        rotation: `{${Math.round(e.rx)}, ${Math.round(e.ry)}, ${Math.round(e.rz)}, ${Math.round(e.rw)}}`,
       };
       if (portLayout && portLayout.length > 0) {
-        props.ports = portLayout.map((p, pi) => ({
-          name: p.n,
-          type: p.type === 0 ? 'belt' : 'pipe',
-          flow: p.flow === -1 ? 'any' : p.flow === 0 ? 'input' : 'output',
-          connected: !!(e.cn && e.cn[pi]),
-          offset: { x: p.ox, y: p.oy, z: p.oz },
-          dir: { x: p.dx, y: p.dy, z: p.dz },
-        }));
+        props.ports = portLayout.map((p, pi) => {
+          const cn = e.cn && e.cn[pi];
+          const port = {
+            name: p.n,
+            type: p.type === 0 ? 'belt' : p.type === 1 ? 'pipe' : 'track',
+            flow: p.flow === -1 ? 'any' : p.flow === 0 ? 'input' : 'output',
+            connected: typeof cn === 'string' ? cn : !!cn,
+          };
+          if (p.ox !== undefined) port.offset = { x: p.ox, y: p.oy, z: p.oz };
+          if (p.dx !== undefined) port.dir = { x: p.dx, y: p.dy, z: p.dz };
+          return port;
+        });
       }
       currentSerializedProps = JSON.stringify(props, null, 2);
     },

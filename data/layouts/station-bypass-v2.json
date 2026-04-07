@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "name": "station-bypass-v2",
+    "description": "Gare 1 station + 4 docks belt avec bypass souterrain + crossover vers voie parallele. stub_out a la sortie, rampe max slope, U-turn Dubins RSL R=1600.",
+    "saveAnchor": {
+      "x": -72028,
+      "y": 237542,
+      "z": 10
+    },
+    "stationRotation": 100
+  },
+  "anchor": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "rotation": 0,
+  "entities": [
+    {
+      "id": "stA",
+      "type": "train-station",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "rotation": 100,
+      "label": true
+    },
+    {
+      "id": "dk1",
+      "type": "belt-station",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "id": "dk2",
+      "type": "belt-station",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "id": "dk3",
+      "type": "belt-station",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    {
+      "id": "dk4",
+      "type": "belt-station",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  ],
+  "connections": [
+    { "from": "dk1:TrackConnection1", "to": "stA:TrackConnection0" },
+    { "from": "dk2:TrackConnection1", "to": "dk1:TrackConnection0" },
+    { "from": "dk3:TrackConnection1", "to": "dk2:TrackConnection0" },
+    { "from": "dk4:TrackConnection1", "to": "dk3:TrackConnection0" },
+
+    { "id": "stub_out", "from": "stA:TrackConnection1", "to": { "x": 347, "y": -1970, "z": 0, "rotation": 100 }, "track": true, "label": true },
+
+    { "id": "t34338", "from": "stub_out:TrackConnection1", "to": { "x": -839, "y": -4453, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34339", "from": "t34338:TrackConnection1", "to": { "x": -630, "y": -5634, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34343", "from": "t34339:TrackConnection1", "to": { "x": -422, "y": -6817, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34359", "from": "t34343:TrackConnection1", "to": { "x": -214, "y": -7999, "z": 0, "rotation": 100 }, "track": true },
+
+    { "id": "t34356", "from": "dk4:TrackConnection0", "to": { "x": -3245, "y": 9175, "z": 0, "rotation": 280 }, "track": true, "label": true },
+    { "id": "t34335", "from": "t34356:TrackConnection1", "to": { "x": -3453, "y": 10357, "z": 0, "rotation": 280 }, "track": true, "label": true },
+    { "id": "cont_n", "from": "t34335:TrackConnection1", "to": { "x": -3661, "y": 11539, "z": 0, "rotation": 280 }, "track": true, "label": true },
+
+    { "id": "t34336", "from": "cont_n:TrackConnection0", "to": { "x": -1250, "y": 7091, "z": -901, "rotation": 100 }, "track": true, "label": true },
+    { "id": "t34317", "from": "t34336:TrackConnection1", "to": { "x": 139, "y": -788, "z": -901, "rotation": 100 }, "track": true },
+    { "id": "cont_s", "from": "t34343:TrackConnection0", "to": { "x": 139, "y": -788, "z": -901, "rotation": 280 }, "track": true, "label": true },
+    { "from": "cont_s:TrackConnection1", "to": "t34317:TrackConnection1" },
+
+    { "id": "cross_ramp", "from": "stub_out:TrackConnection1", "to": { "x": 955, "y": -5417, "z": -901, "rotation": 100 }, "track": true, "label": true },
+
+    { "id": "cross_ut1", "from": "cross_ramp:TrackConnection1", "to": { "x": -1064, "y": -7232, "z": -676, "rotation": 344 }, "track": true },
+    { "id": "cross_ut2", "from": "cross_ut1:TrackConnection1", "to": { "x": -2309, "y": -4520, "z": -450, "rotation": 274 }, "track": true },
+    { "id": "cross_ut3", "from": "cross_ut2:TrackConnection1", "to": { "x": -2541, "y": -1286, "z": -225, "rotation": 274 }, "track": true },
+    { "id": "t34319", "from": { "x": -3371, "y": 5295, "z": 0, "rotation": 280 }, "to": { "x": -2781, "y": 1947, "z": 0, "rotation": 100 }, "track": true, "label": true },
+    { "id": "cross_ut4", "from": "cross_ut3:TrackConnection1", "to": "t34319:TrackConnection1", "track": true },
+    { "id": "t34321", "from": "t34319:TrackConnection1", "to": { "x": -1513, "y": -5243, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34323", "from": "t34321:TrackConnection1", "to": { "x": -558, "y": -10659, "z": 0, "rotation": 100 }, "track": true },
+    { "id": "t34324", "from": "t34319:TrackConnection0", "to": { "x": -4448, "y": 11401, "z": 0, "rotation": 280 }, "track": true },
+
+    { "id": "sig_cont_n", "type": "block-signal", "on": "cont_n:TrackConnection0", "facing": "inward" },
+    { "id": "sig_t34335", "type": "block-signal", "on": "t34335:TrackConnection1", "facing": "outward" },
+    { "id": "sig_t34317", "type": "block-signal", "on": "t34317:TrackConnection0", "facing": "outward" },
+    { "id": "sig_stub",   "type": "block-signal", "on": "stub_out:TrackConnection1", "facing": "inward" },
+    { "id": "sig_cross",  "type": "block-signal", "on": "cross_ramp:TrackConnection1", "facing": "inward" },
+    { "id": "sig_t34338", "type": "block-signal", "on": "t34338:TrackConnection1", "facing": "inward" },
+    { "id": "sig_t34319", "type": "block-signal", "on": "t34319:TrackConnection1", "facing": "outward" },
+    { "id": "sig_t34321", "type": "block-signal", "on": "t34321:TrackConnection1", "facing": "outward" }
+  ]
+}

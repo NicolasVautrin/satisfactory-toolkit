@@ -46,10 +46,27 @@ function registerClass(cls, reg) {
   }
 }
 
+// Known port definitions for spline builders (no PORT_LAYOUT)
+const SPLINE_PORTS = {
+  Build_RailroadTrack_C: [
+    { n: 'TrackConnection0', flow: -1, type: 2 },
+    { n: 'TrackConnection1', flow: -1, type: 2 },
+  ],
+  Build_RailroadTrackIntegrated_C: [
+    { n: 'TrackConnection0', flow: -1, type: 2 },
+    { n: 'TrackConnection1', flow: -1, type: 2 },
+  ],
+};
+
 function collectPortLayouts(classNames) {
   const layouts = {};
   for (let i = 0; i < classNames.length; i++) {
     const cls = classNames[i];
+    // Spline builders with known ports
+    if (SPLINE_PORTS[cls]) {
+      layouts[i] = SPLINE_PORTS[cls];
+      continue;
+    }
     const Builder = registry.get(cls);
     if (!Builder?.PORT_LAYOUT) continue;
     const ports = Object.entries(Builder.PORT_LAYOUT)
@@ -91,7 +108,7 @@ function buildViewerEntity(entity, reg, compByName) {
       item.ports = ports;
       item.cn = ports.map(p => {
         const comp = compByName.get(entity.instanceName + '.' + p.n);
-        return isPortConnected(comp) ? 1 : 0;
+        return getPortConnRef(comp);
       });
       // Infer flow from connected component names
       for (let pi = 0; pi < ports.length; pi++) {
@@ -119,7 +136,7 @@ function buildViewerEntity(entity, reg, compByName) {
   const splineSegs = extractSplineSegments(entity);
   if (splineSegs) item.sp = segmentsToPoints(splineSegs);
 
-  // Port connection state (class-based)
+  // Port connection state (class-based PORT_LAYOUT)
   const Builder = registry.get(cls);
   if (!item.cn && Builder?.PORT_LAYOUT && entity.components) {
     const portEntries = Object.entries(Builder.PORT_LAYOUT)
@@ -127,10 +144,28 @@ function buildViewerEntity(entity, reg, compByName) {
     if (portEntries.length > 0) {
       item.cn = portEntries.map(([portName]) => {
         const comp = compByName.get(entity.instanceName + '.' + portName);
-        return isPortConnected(comp) ? 1 : 0;
+        return getPortConnRef(comp);
       });
     }
   }
+
+  // Port connection state for spline builders (belt, pipe, track) without PORT_LAYOUT
+  if (!item.cn && entity.components) {
+    const portNames = ['TrackConnection0', 'TrackConnection1',
+      'ConveyorAny0', 'ConveyorAny1',
+      'PipelineConnection0', 'PipelineConnection1'];
+    const found = portNames.filter(n => compByName.has(entity.instanceName + '.' + n));
+    if (found.length > 0) {
+      item.cn = found.map(portName => {
+        const comp = compByName.get(entity.instanceName + '.' + portName);
+        return getPortConnRef(comp);
+      });
+    }
+  }
+
+  // Entity label (mLabel StrProperty from editor)
+  const mLabel = entity.properties?.mLabel?.value;
+  if (mLabel) item.lb = mLabel;
 
   return item;
 }
@@ -213,14 +248,21 @@ function buildViewerEntityFromEditor(entity, existingEntityData, compByName) {
 }
 
 /**
- * Check if a connection component has any active connection.
- * Handles both mConnectedComponent (belt/pipe) and mConnectedComponents (track).
+ * Return connected port pathName(s), or 0 if not connected.
+ * Handles mConnectedComponent (belt/pipe) and mConnectedComponents (track).
+ * Returns: 0 | "pathName" | "pathName1,pathName2" (for switches)
  */
-function isPortConnected(comp) {
-  if (!comp) return false;
-  if (comp.properties?.mConnectedComponent?.value?.pathName) return true;
+function getPortConnRef(comp) {
+  if (!comp) return 0;
+  const single = comp.properties?.mConnectedComponent?.value?.pathName;
+  if (single) return single;
   const arr = comp.properties?.mConnectedComponents?.values;
-  return !!(arr && arr.length > 0);
+  if (arr && arr.length > 0) return arr.map(v => v.pathName).join(',');
+  return 0;
+}
+
+function isPortConnected(comp) {
+  return !!getPortConnRef(comp);
 }
 
 module.exports = { classify, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp, buildViewerEntityFromEditor, isPortConnected };

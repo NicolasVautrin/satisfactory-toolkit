@@ -21,6 +21,18 @@ function composeYawQuats(q1, q2) {
   };
 }
 
+// ── Label helper ───────────────────────────────────────────────────
+function applyLabel(entity, id, label, item) {
+  if (!id) return;
+  entity.properties.mLabel = {
+    type: 'StrProperty', ueType: 'StrProperty', name: 'mLabel', value: id,
+  };
+  if (item) {
+    item.lb = id;
+    if (label) item.cssLb = true;
+  }
+}
+
 // ── Add a single entity to save in memory ───────────────────────────
 function addEntity(typePath, position, rotation, properties) {
   const saveState = getSaveState();
@@ -298,17 +310,16 @@ function createSplineBetween(type, srcEndpoint, tgtEndpoint, tier) {
   const startPort = builder.port(startPortName);
   const endPort = builder.port(endPortName);
 
+  const FlowPort = require('../../lib/shared/FlowPort');
   if (srcEndpoint.idx !== undefined) {
-    const srcEntity = getEntity(srcEndpoint.idx);
-    startPort.snapTo(srcEntity.port(srcEndpoint.port));
+    startPort.snapTo(getEntity(srcEndpoint.idx).port(srcEndpoint.port));
   } else if (srcEndpoint.dir || srcEndpoint.pos) {
-    startPort.snapToPos(srcEndpoint.pos, srcEndpoint.dir);
+    startPort.snapToPos(FlowPort.virtual(srcEndpoint.pos, srcEndpoint.dir));
   }
   if (tgtEndpoint.idx !== undefined) {
-    const tgtEntity = getEntity(tgtEndpoint.idx);
-    endPort.snapTo(tgtEntity.port(tgtEndpoint.port));
+    endPort.snapTo(getEntity(tgtEndpoint.idx).port(tgtEndpoint.port));
   } else if (tgtEndpoint.dir || tgtEndpoint.pos) {
-    endPort.snapToPos(tgtEndpoint.pos, tgtEndpoint.dir);
+    endPort.snapToPos(FlowPort.virtual(tgtEndpoint.pos, tgtEndpoint.dir));
   }
 
   // 3. Inject into save AFTER snaps (spline is final)
@@ -489,6 +500,7 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
 
     const result = addEntity(typePath, position, rotation, def.properties);
     if (def.id) idMap[def.id] = result.entityIndex;
+    applyLabel(result.entity, def.id, def.label, result.item);
     added.push({ id: def.id || null, index: result.entityIndex, instanceName: result.entity.instanceName, item: result.item, classUpdate: result.classUpdate });
 
   }
@@ -531,6 +543,7 @@ function processSignalConnection(conn, ctx) {
 
   const { index, item, classUpdate } = injectSplineEntity(signal);
   if (conn.id) ctx.idMap[conn.id] = index;
+  applyLabel(signal.entity, conn.id, conn.label, item);
   ctx.added.push({ id: conn.id || null, index, instanceName: signal.entity.instanceName, item, classUpdate });
   ctx.results.push({ type: conn.type, on: conn.on, signalIndex: index });
 }
@@ -544,6 +557,7 @@ function processInsertionConnection(conn, ctx) {
   const pos = conn.position || ctx.saveState.items[entityIdx].entity.transform.translation;
   const result = insertOnSpline(entityIdx, splineIdx, pos, conn.reverse);
   ctx.idMap[conn.id] = result.newSplineIndex;
+  applyLabel(ctx.saveState.items[result.newSplineIndex].entity, conn.id, conn.label, result.item);
   ctx.added.push({ id: conn.id, index: result.newSplineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
   ctx.results.push({ from: conn.from, on: conn.on, [conn.id]: result.newSplineIndex });
 }
@@ -556,6 +570,7 @@ function processSplineConnection(conn, ctx) {
   const tier = conn.belt || conn.pipe;
   const result = createSplineBetween(splineType, srcEndpoint, tgtEndpoint, tier);
   ctx.idMap[conn.id] = result.splineIndex;
+  applyLabel(ctx.saveState.items[result.splineIndex].entity, conn.id, conn.label, result.item);
   ctx.added.push({ id: conn.id, index: result.splineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
   ctx.results.push({ from: conn.from, to: conn.to, [splineType]: conn.id });
 }
@@ -598,6 +613,7 @@ function rebuildTouchedItems(connectionResults, added, updated) {
     if (r.source) touchedIndices.add(r.source.index);
     if (r.target) touchedIndices.add(r.target.index);
   }
+  for (const a of added) touchedIndices.add(a.index);
   for (const idx of touchedIndices) {
     const itm = saveState.items[idx];
     if (!itm || itm.type !== 'entity') continue;
@@ -618,6 +634,30 @@ function rebuildTouchedItems(connectionResults, added, updated) {
     if (addedEntry) { addedEntry.item = newItem; addedEntry.classUpdate = isNewClass ? classUpdate : addedEntry.classUpdate; }
     const updatedEntry = updated.find(u => u.index === idx);
     if (updatedEntry) { updatedEntry.item = newItem; updatedEntry.classUpdate = isNewClass ? classUpdate : updatedEntry.classUpdate; }
+  }
+
+  // Resolve cn refs: raw pathNames → "label.Port" or "#index.Port"
+  const entityByInst = new Map();
+  for (let i = 0; i < saveState.items.length; i++) {
+    const it = saveState.items[i];
+    if (it?.entity) entityByInst.set(it.entity.instanceName, i);
+  }
+  const shortPort = (p) => p.replace('TrackConnection', 'TC').replace('PipelineConnection', 'PC').replace('ConveyorAny', 'CA');
+  const resolveRef = (raw) => {
+    if (!raw || raw === 0) return 0;
+    return raw.split(',').map(pathName => {
+      const parts = pathName.trim().split('.');
+      const port = shortPort(parts.pop());
+      const entityInst = parts.join('.');
+      const idx = entityByInst.get(entityInst);
+      if (idx === undefined) return `?.${port}`;
+      const label = saveState.items[idx]?.entity?.properties?.mLabel?.value;
+      return label ? `${label}.${port}` : `#${idx}.${port}`;
+    }).join(', ');
+  };
+  for (const idx of touchedIndices) {
+    const item = saveState.viewerEntityRepository.entities[idx];
+    if (item?.cn) item.cn = item.cn.map(v => resolveRef(v));
   }
 }
 

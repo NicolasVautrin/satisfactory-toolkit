@@ -7,6 +7,20 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 - **Ne jamais modifier les fichiers dans un submodule Git** (`tools/pak-tool/lib/CUE4Parse/`). Placer le code additionnel dans le projet principal (ex: `tools/pak-tool/Helpers/`, `tools/pak-tool/Commands/`).
 - **Injections d'edit dans le viewer** — toujours utiliser `"anchor": {"fromCamera": 5000}` (ou une distance adaptée) pour placer les entités devant la caméra, pas à une position absolue arbitraire.
 - **Ne jamais injecter un edit deux fois** — toujours vérifier le champ `added` (pas `results`) dans la réponse JSON de `/api/game/edit`. Si `added` contient des entités, l'injection a réussi. Ne pas réessayer sous prétexte qu'un filtre jq était mal écrit.
+- **Valider tout edit avant injection** — avant d'injecter un edit dans le viewer (via `/api/game/edit`), le valider en inline avec `editEntities` :
+  ```bash
+  node -e "
+  const { editEntities } = require('./viewer/lib/editor');
+  const batch = require('./data/layouts/mon-layout.json');  // ou un objet inline
+  try {
+    const r = editEntities({ ...batch, anchor: { x: 1000000, y: 0, z: 0 } });
+    console.log('OK — added:', r.added.length);
+  } catch (e) {
+    console.error('FAIL:', e.message);
+  }
+  "
+  ```
+  Cette validation exécute le même code que le serveur (spline curvature, slope, connexions, clearance) sans nécessiter le serveur ni la save. Ne jamais injecter un edit qui n'a pas passé cette validation.
 - **Screenshots du viewer** — ne pas manipuler la caméra via devtools. Demander à l'utilisateur de zoomer/cadrer lui-même, puis prendre le screenshot.
 - **Après le démarrage du serveur**, toujours charger la save TEST : `curl -s -X POST http://localhost:3000/api/game/load-file -H "Content-Type: application/json" -d '{"filePath":"C:/Users/nicolasv/AppData/Local/FactoryGame/Saved/SaveGames/76561198036887614/TEST.sav"}'`
 - **Contexte du projet** — les fichiers de référence sont importés automatiquement ci-dessous :
@@ -14,11 +28,8 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 @.claude/skills/satisfactory/trains.md
 @.claude/skills/satisfactory/satisfactory-lib.md
 @.claude/skills/satisfactory/edit.md
-@.claude/skills/satisfactory/map.md
-@.claude/skills/satisfactory/optimization.md
 @.claude/skills/satisfactory/server.md
-@.claude/skills/satisfactory/viewer.md
-@.claude/skills/satisfactory/pak-tool.md
+@.claude/skills/satisfactory/viewer.md/
 
 ## Setup
 

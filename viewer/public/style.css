@@ -135,6 +135,19 @@ body {
   min-width: 0;
 }
 
+/* ── CSS Labels overlay ─────────────────────────────────── */
+#css-labels { pointer-events: none; }
+.css-label {
+  background: rgba(0, 0, 0, 0.7);
+  color: #ffcc00;
+  font: bold 11px monospace;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 204, 0, 0.5);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* ── Properties Panel (left) ────────────────────────────── */
 #props-panel {
   grid-area: props;

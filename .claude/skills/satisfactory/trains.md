@@ -121,6 +121,25 @@ Les signaux se placent **exactement sur un TrackConnection port** :
 - **`mGuardedConnections`** = `[ref(TrackConnection)]` — le port sur lequel le signal est posé
 - **`mObservedConnections`** = le port observé de l'autre côté du bloc (non câblé automatiquement pour l'instant)
 
+## Terminologie réseau et sens de circulation
+
+### Sens de circulation dans une gare
+
+Le train **entre** par le côté docks (dernier dock TC0 = `stub_in`) : il traverse les docks pour chargement/déchargement (dk4 → dk3 → dk2 → dk1), puis arrive à la **station** en dernier. Il **repart** par le côté station (stA:TC1 = `stub_out`).
+
+### Vocabulaire réseau
+
+- **Main line** (voie principale) : la voie continue du réseau sur laquelle la gare est branchée. La gare fait partie de la main line (ce n'est pas un cul-de-sac). La main line traverse la gare de bout en bout (stub_in → docks → station → stub_out).
+- **Bypass** : voie souterraine ou détournée qui permet aux trains de **contourner** la gare sans s'arrêter. Relie les deux extrémités de la main line en passant sous ou autour de la gare.
+- **Crossover** : voie qui relie la main line à une **autre ligne parallèle**, permettant aux trains de changer de voie. Typiquement, relie la sortie de la gare à une voie parallèle. Un crossover est essentiellement un **U-turn** : le train sort de la gare dans un sens et rejoint la voie parallèle qui circule en sens opposé.
+- **Voie parallèle** : voie qui longe la main line en sens **opposé**. Les trains circulent dans un sens sur la main line et dans l'autre sur la voie parallèle. Le crossover permet de passer de l'une à l'autre.
+
+### Nommage des stubs
+
+Les stubs sont les tracks de liaison entre les docks/station et le réseau :
+- `stub_in` : stub d'entrée train (côté dernier dock, dk4:TC0)
+- `stub_out` : stub de sortie train (côté station, stA:TC1)
+
 ## Design de stations
 
 ### Composition d'une station

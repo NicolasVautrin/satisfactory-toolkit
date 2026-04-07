@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { scene, camera, gameToViewer, gameToViewerQuat, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
-import { setLabelsVisible } from './labels.js';
+import { setLabelsVisible } from './labels3d.js';
 import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes, getSplineGeometry } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
@@ -480,13 +480,7 @@ export function applyEditResult(msg, { refreshFn } = {}) {
   for (const ent of msg.updated) saveEntityData.entities[ent.index] = ent.item;
   for (const ent of msg.added) saveEntityData.entities.push(ent.item);
 
-  // 3. Apply connection states
-  for (const conn of msg.connections) {
-    const e = saveEntityData.entities[conn.index];
-    if (e) e.cn = conn.connections;
-  }
-
-  // 4. Full rebuild from authoritative data
+  // 3. Full rebuild from authoritative data (cn already correct in ent.item)
   rebuildSaveScene();
 
   // 5. Load missing meshes for new classes (async — triggers second rebuild when ready)
