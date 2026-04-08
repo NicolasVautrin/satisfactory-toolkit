@@ -38,9 +38,11 @@ public static class MathHelpers
         var translation = new Vector3(loc.X * 0.01f, loc.Z * 0.01f, loc.Y * 0.01f);
         var scaling = new Vector3(scale.X, scale.Z, scale.Y);
 
-        // Convert FRotator to quaternion, then swap Y/Z components
+        // Convert FRotator to quaternion, then swap Y/Z components.
+        // Negate qz (UE Z → glTF Y) to account for left-handed (UE) → right-handed (glTF)
+        // handedness change — a naive swap inverts rotation direction.
         var (qx, qy, qz, qw) = EulerToQuat(rot.Pitch, rot.Yaw, rot.Roll);
-        var rotation = new Quaternion((float)qx, (float)qz, (float)qy, (float)qw);
+        var rotation = new Quaternion((float)qx, (float)-qz, (float)qy, (float)qw);
 
         return Matrix4x4.CreateScale(scaling)
              * Matrix4x4.CreateFromQuaternion(rotation)

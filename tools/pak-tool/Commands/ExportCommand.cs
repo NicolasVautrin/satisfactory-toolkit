@@ -286,14 +286,6 @@ public static class ExportCommand
                 var loc = comp.GetOrDefault("RelativeLocation", new FVector(0, 0, 0));
                 var rot = comp.GetOrDefault("RelativeRotation", new FRotator(0, 0, 0));
                 var scl = comp.GetOrDefault("RelativeScale3D", new FVector(1, 1, 1));
-                // WORKAROUND: negate Yaw before baking into GLB geometry.
-                // The viewer's _glbToViewer matrix includes an X-axis reflection (det = -1)
-                // which inverts any rotation baked in the geometry. Entity rotations are
-                // handled separately via gameToViewerQuat (which compensates the reflection),
-                // but component-local rotations baked here have no such compensation.
-                // Negating Yaw is the only way for Three.js to render the correct orientation
-                // since the reflection cannot be fixed client-side without breaking all meshes.
-                rot = new FRotator(rot.Pitch, -rot.Yaw, rot.Roll);
                 transform = MathHelpers.UnrealToGltfTransform(loc, rot, scl);
             }
             result.Add((mesh, transform));

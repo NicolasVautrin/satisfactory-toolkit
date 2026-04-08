@@ -16,7 +16,10 @@ const _glbToViewer = new THREE.Matrix4().set(
      0,   0,    0,   1,
 );
 
-// Cache: lod → Map<className, { geometry, material }>
+const _identityQuat = new THREE.Quaternion();
+const _identityMatrix = new THREE.Matrix4();
+
+// Cache: lod → Map<className, { geometry, material, localQuat }>
 const cache = new Map();
 let currentLod = (() => {
   const d = getDisplay();
@@ -61,6 +64,11 @@ export function getMeshGeometry(className) {
 export function getMeshMaterial(className) {
   const lodCache = cache.get(currentLod);
   return lodCache?.get(className)?.material || null;
+}
+
+export function getMeshLocalQuat(className) {
+  const lodCache = cache.get(currentLod);
+  return lodCache?.get(className)?.localQuat || null;
 }
 
 export function updateClassNames(classNames) {
@@ -146,23 +154,59 @@ async function parseGlb(className, glbBuffer) {
     const gltf = await loader.loadAsync(url);
     URL.revokeObjectURL(url);
 
-    const geometries = [];
+    // Collect mesh nodes in one traversal
+    const meshNodes = [];
     let material = null;
-
     gltf.scene.updateMatrixWorld(true);
     gltf.scene.traverse((child) => {
       if (!child.isMesh) return;
-      const geom = child.geometry.clone();
-      if (!child.matrixWorld.equals(new THREE.Matrix4())) {
-        geom.applyMatrix4(child.matrixWorld);
-      }
-      geometries.push(geom);
-      if (!material) {
-        material = child.material.clone();
-      }
+      meshNodes.push(child);
+      if (!material) material = child.material.clone();
     });
 
-    if (geometries.length === 0) return null;
+    if (meshNodes.length === 0) return null;
+
+    // Check if all mesh nodes share the same rotation (quaternion dot > 0.9999)
+    const firstQuat = meshNodes[0].quaternion;
+    let allSameRot = true;
+    for (let i = 1; i < meshNodes.length; i++) {
+      if (Math.abs(firstQuat.dot(meshNodes[i].quaternion)) < 0.9999) {
+        allSameRot = false;
+        break;
+      }
+    }
+    const hasRotation = allSameRot &&
+      (Math.abs(firstQuat.x) > 0.0001 || Math.abs(firstQuat.y) > 0.0001 ||
+       Math.abs(firstQuat.z) > 0.0001 || Math.abs(firstQuat.w - 1) > 0.0001);
+
+    let localQuat = null;
+    const geometries = [];
+    const _pos = new THREE.Vector3();
+    const _rot = new THREE.Quaternion();
+    const _scl = new THREE.Vector3();
+
+    if (allSameRot && hasRotation) {
+      // Extract common rotation R; bake position+scale with R⁻¹ applied to position
+      // so that: R * (S * v + R⁻¹ * t) = R * S * v + t  (correct result)
+      const invQuat = firstQuat.clone().invert();
+      for (const node of meshNodes) {
+        const geom = node.geometry.clone();
+        node.matrixWorld.decompose(_pos, _rot, _scl);
+        _pos.applyQuaternion(invQuat);
+        geom.applyMatrix4(new THREE.Matrix4().compose(_pos, _identityQuat, _scl));
+        geometries.push(geom);
+      }
+      localQuat = firstQuat.clone();
+    } else {
+      // Bake full matrixWorld (identity rotation or mixed rotations)
+      for (const node of meshNodes) {
+        const geom = node.geometry.clone();
+        if (!node.matrixWorld.equals(_identityMatrix)) {
+          geom.applyMatrix4(node.matrixWorld);
+        }
+        geometries.push(geom);
+      }
+    }
 
     const merged = geometries.length === 1
       ? geometries[0]
@@ -172,22 +216,15 @@ async function parseGlb(className, glbBuffer) {
 
     merged.applyMatrix4(_glbToViewer);
 
-    // Fix face winding after X flip
-    const index = merged.getIndex();
-    if (index) {
-      const arr = index.array;
-      for (let i = 0; i < arr.length; i += 3) {
-        const tmp = arr[i];
-        arr[i] = arr[i + 2];
-        arr[i + 2] = tmp;
-      }
-      index.needsUpdate = true;
-    }
+    // BackSide: _glbToViewer has det=-1 (X-reflection) which reverses winding.
+    // Instead of swapping triangle indices, render back faces — Three.js shader
+    // auto-flips normals via gl_FrontFacing for correct lighting.
+    material.side = THREE.BackSide;
 
     merged.computeVertexNormals();
     merged.computeBoundingBox();
 
-    return { geometry: merged, material };
+    return { geometry: merged, material, localQuat };
   } catch (err) {
     console.warn(`[Catalog] Failed to parse ${className}.glb:`, err.message);
     return null;

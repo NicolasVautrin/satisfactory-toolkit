@@ -22,6 +22,14 @@ export function gameToViewerQuat(rx, ry, rz, rw) {
   return _gtvq.set(rx, -ry, -rz, rw);
 }
 
+// glTF quaternion → viewer quaternion
+// Coordinate change: glTF(x,y,z) → viewer(-x, z, y)
+// X reflection negates qx; Y↔Z swap exchanges qy↔qz
+const _gltfq = new THREE.Quaternion();
+export function glTfToViewerQuat(qx, qy, qz, qw) {
+  return _gltfq.set(-qx, qz, qy, qw);
+}
+
 // Box offset in entity-local UE space → viewer space
 const _boxOffset = new THREE.Vector3();
 export function boxLocalOffset(box, quat) {

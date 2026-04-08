@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { scene, camera, gameToViewer, gameToViewerQuat, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
+import { scene, camera, gameToViewer, gameToViewerQuat, glTfToViewerQuat, boxLocalOffset, CAT_COLORS, CBP_COLOR, DEFAULT_BOX_SIZE, requestRender } from './scene.js';
 import { setLabelsVisible } from './labels3d.js';
-import { getMeshGeometry, getMeshMaterial, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes, getSplineGeometry } from './catalog.js';
+import { getMeshGeometry, getMeshMaterial, getMeshLocalQuat, hasMeshesAvailable, initMeshCatalog, updateClassNames, loadMissingMeshes, getSplineGeometry } from './catalog.js';
 
 // ── State ───────────────────────────────────────────────────
 let saveEntityData = null;
@@ -67,6 +67,7 @@ const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _scale = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _localQuat = new THREE.Quaternion();
 const _color = new THREE.Color();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 
@@ -114,9 +115,13 @@ function boxMatrix(e, box) {
   _m.compose(_pos, _quat, _scale);
 }
 
-function meshMatrix(e) {
+function meshMatrix(e, localQuat) {
   _pos.copy(gameToViewer(e.tx, e.ty, e.tz));
   _quat.copy(gameToViewerQuat(e.rx, e.ry, e.rz, e.rw));
+  if (localQuat) {
+    _localQuat.copy(glTfToViewerQuat(localQuat.x, localQuat.y, localQuat.z, localQuat.w));
+    _quat.multiply(_localQuat);
+  }
   _scale.set(1, 1, 1);
   _m.compose(_pos, _quat, _scale);
 }
@@ -368,6 +373,7 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
   for (const [className, bucket] of Object.entries(meshBuckets)) {
     const geom = getMeshGeometry(className);
     if (!geom) continue;
+    const localQuat = getMeshLocalQuat(className);
     const catColor = isCbp ? CBP_COLOR : new THREE.Color(CAT_COLORS[bucket.cat]);
 
     // Use textured material if available, convert PBR to Lambert for visibility
@@ -377,16 +383,17 @@ function buildEntityMeshes(entities, classNames, clearance, portLayouts, display
         map: srcMat.map,
         transparent: true,
         opacity,
+        side: srcMat.side,
       });
       flushBucket(bucket.items, geom, mat,
-        (inst) => meshMatrix(inst.e),
+        (inst) => meshMatrix(inst.e, localQuat),
         displayArray, bucket.cat);
       continue;
     }
     // Fallback: flat color
     flushBucket(bucket.items, geom,
-      { color: 0xffffff, transparent: true, opacity, _bucketColor: catColor },
-      (inst) => meshMatrix(inst.e),
+      { color: 0xffffff, transparent: true, opacity, side: THREE.BackSide, _bucketColor: catColor },
+      (inst) => meshMatrix(inst.e, localQuat),
       displayArray, bucket.cat);
   }
 
