@@ -1,0 +1,49 @@
+{
+  "anchor": { "x": -72028, "y": 237542, "z": 10 },
+  "rotation": 0,
+  "entities": [
+    { "id": "stA", "type": "train-station", "position": { "x": 0, "y": 0, "z": 0 }, "rotation": 100 },
+    { "id": "dk1", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk2", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk3", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } },
+    { "id": "dk4", "type": "belt-station", "position": { "x": 0, "y": 0, "z": 0 } }
+  ],
+  "connections": [
+    { "from": "dk1:TrackConnection1", "to": "stA:TrackConnection0" },
+    { "from": "dk2:TrackConnection1", "to": "dk1:TrackConnection0" },
+    { "from": "dk3:TrackConnection1", "to": "dk2:TrackConnection0" },
+    { "from": "dk4:TrackConnection1", "to": "dk3:TrackConnection0" },
+
+    { "id": "stub_in",  "from": "dk4:TrackConnection0", "to": { "x": -1458, "y": 8273, "z": 0, "rotation": 280 }, "track": true, "travel": "TC1-TC0", "label": true },
+    { "id": "stub_out", "from": "stA:TrackConnection1", "to": { "x": 417, "y": -2364, "z": 0, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+
+    { "id": "track_n", "from": { "x": -1458, "y": 8273, "z": 0, "rotation": 100 }, "to": { "x": -1667, "y": 9455, "z": 0, "rotation": 280 }, "track": true, "travel": "TC1-TC0", "label": true },
+    { "from": "track_n:TrackConnection0", "to": "stub_in:TrackConnection1" },
+    { "id": "track_s", "from": { "x": 417, "y": -2364, "z": 0, "rotation": 280 }, "to": { "x": 625, "y": -3545, "z": 0, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "track_s:TrackConnection0", "to": "stub_out:TrackConnection1" },
+
+    { "id": "ext_n", "from": { "x": -1667, "y": 9455, "z": 0, "rotation": 100 }, "to": { "x": -2084, "y": 11818, "z": 0, "rotation": 280 }, "track": true, "travel": "TC1-TC0", "label": true },
+    { "from": "ext_n:TrackConnection0", "to": "track_n:TrackConnection1" },
+    { "id": "ext_s", "from": { "x": 625, "y": -3545, "z": 0, "rotation": 280 }, "to": { "x": 1042, "y": -5909, "z": 0, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "ext_s:TrackConnection0", "to": "track_s:TrackConnection1" },
+    { "id": "main_s", "from": { "x": 1042, "y": -5909, "z": 0, "rotation": 280 }, "to": { "x": 1459, "y": -8273, "z": 0, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "main_s:TrackConnection0", "to": "ext_s:TrackConnection1" },
+
+    { "id": "ramp_down", "from": "ext_n:TrackConnection0", "to": { "x": -1298, "y": 7364, "z": -901, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "id": "bypass1", "from": { "x": -1298, "y": 7364, "z": -901, "rotation": 280 }, "to": { "x": -521, "y": 2955, "z": -901, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "bypass1:TrackConnection0", "to": "ramp_down:TrackConnection1" },
+    { "id": "bypass2", "from": { "x": -521, "y": 2955, "z": -901, "rotation": 280 }, "to": { "x": 257, "y": -1455, "z": -901, "rotation": 100 }, "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "bypass2:TrackConnection0", "to": "bypass1:TrackConnection1" },
+    { "id": "ramp_up", "from": { "x": 257, "y": -1455, "z": -901, "rotation": 280 }, "to": "ext_s:TrackConnection0", "track": true, "travel": "TC0-TC1", "label": true },
+    { "from": "ramp_up:TrackConnection0", "to": "bypass2:TrackConnection1" },
+
+    { "id": "crossover", "from": "main_s:TrackConnection0", "to": { "x": -4867, "y": -6951, "z": 0, "rotation": 100 }, "track": true, "label": true },
+
+    { "id": "sig_n_n", "type": "block-signal", "on": "track_n:TrackConnection1", "facing": "outward" },
+    { "id": "sig_n_s", "type": "block-signal", "on": "ext_n:TrackConnection0",  "facing": "outward" },
+    { "id": "sig_s2_n","type": "block-signal", "on": "ext_s:TrackConnection0",  "facing": "outward" },
+    { "id": "sig_s2_s","type": "block-signal", "on": "track_s:TrackConnection1", "facing": "outward" },
+    { "id": "sig_s1_n","type": "block-signal", "on": "main_s:TrackConnection0",  "facing": "outward" },
+    { "id": "sig_s1_s","type": "block-signal", "on": "ext_s:TrackConnection1",   "facing": "outward" }
+  ]
+}

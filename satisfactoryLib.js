@@ -386,11 +386,22 @@ function makeSpline(portFrom, portTo) {
   const origin = new Vector3D(p0);
 
   if (isTrack) {
-    // Track: 2 points, tangent magnitude proportional to length
+    // Track: 2 points, tangent magnitude proportional to length.
+    // Set tangent Z to match the segment slope — prevents XY oscillation
+    // artifacts from horizontal tangents with Z delta (S-curve in Z).
+    const dz = (pN.z || 0) - (p0.z || 0);
+    const distXY = Math.sqrt(end.x * end.x + end.y * end.y);
+    const slope = distXY > 1e-6 ? dz / distXY : (dz > 0 ? 1 : dz < 0 ? -1 : 0);
     const tScale = totalLen * TRACK_TANGENT_SCALE;
+    const tIn  = travelIn.scale(tScale);
+    const tOut = travelOut.scale(tScale);
+    const txyIn  = Math.sqrt(tIn.x * tIn.x + tIn.y * tIn.y);
+    const txyOut = Math.sqrt(tOut.x * tOut.x + tOut.y * tOut.y);
+    const tanIn  = new Vector3D(tIn.x, tIn.y, slope * txyIn);
+    const tanOut = new Vector3D(tOut.x, tOut.y, slope * txyOut);
     return wrapSplineData([
-      splinePoint(origin, travelIn.scale(tScale), travelIn.scale(tScale)),
-      splinePoint(origin.add(end), travelOut.scale(tScale), travelOut.scale(tScale)),
+      splinePoint(origin, tanIn, tanIn),
+      splinePoint(origin.add(end), tanOut, tanOut),
     ]);
   }
 

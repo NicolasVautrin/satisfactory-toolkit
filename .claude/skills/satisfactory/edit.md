@@ -59,9 +59,9 @@ L'endpoint accept des alias courts au lieu du typePath complet :
 | `{from:"id:port", to:"id:port"}` | **Directe** — `from` snappe sur `to`. `from` doit être mobile (belt/pipe/lift ou splitter/merger/junction/pump vierge). |
 | `{id:"b1", from:"id:port", to:"id:port", belt:tier}` | **Belt auto** — crée un belt (tier 1-6) entre les deux ports. `id` obligatoire. |
 | `{id:"p1", from:"id:port", to:"id:port", pipe:tier}` | **Pipe auto** — crée un pipe (tier 1-2) entre les deux ports pipe. `id` obligatoire. |
-| `{id:"r1", from:..., to:..., track:true}` | **Track auto** — crée un rail entre deux endpoints. `from`/`to` = `"id:port"` ou `{x,y,z,rotation?}` (position libre). `id` obligatoire. |
+| `{id:"r1", from:..., to:..., track:true, travel:"TC0-TC1"}` | **Track auto** — crée un rail entre deux endpoints. `from`/`to` = `"id:port"` ou `{x,y,z,rotation?}` (position libre). `id` obligatoire. `travel` optionnel : sens de circulation (in-out). |
 | `{id:"b2", from:"id", on:"id", position:{x,y,z}}` | **Insertion** — insère l'entité `from` sur le belt/pipe `on`, coupe la spline en deux. `id` = la 2e spline créée. `id` obligatoire. |
-| `{id:"s1", type:"block-signal", on:"id:TC", facing:"outward"}` | **Signal auto** — crée un block/path signal sur un TrackConnection. Position et rotation automatiques. `facing` = `"outward"` (défaut) ou `"inward"`. |
+| `{id:"s1", type:"block-signal", on:"id:TC"}` | **Signal auto** — crée un block/path signal sur un TrackConnection. Position et rotation automatiques. Le `facing` est **déduit du `travel`** du track référencé. Fallback : `facing: "outward"/"inward"` explicite si pas de travel. Guard : 2 signaux max par switch (yaw opposés), pas de doublon pos+yaw. Voir `trains.md` §Blocks et signaux. |
 
 Sémantique : `from` = entité mobile qui se repositionne, `to` = ancre fixe. Pour les splines auto (belt/pipe/track), `from` = port START, `to` = port END.
 
@@ -81,7 +81,11 @@ Un endpoint positionnel track accepte un champ `rotation` optionnel (yaw en degr
 - `from` (= TC0) : TC0 outward = `-rotation_dir`. Ex: rotation 270 (-Y) → TC0 outward +Y → travel -Y (sud).
 - `to` (= TC1) : TC1 outward = `-rotation_dir`. Ex: rotation 90 (+Y) → TC1 outward -Y → travel -Y (sud).
 
-**Sans `rotation`** : le track est créé avec une direction calculée depuis le span (droite), puis le snap repositionne le port à la position demandée **en gardant cette direction initiale**. Le dir n'est jamais null — `_trackSnap` fait un fallback sur la direction courante du port (`snappedPort._dir`).
+**Span** : vecteur orienté de `from.position` vers `to.position` (la droite entre les deux endpoints). La spline peut courber loin du span, mais si les tangentes aux extrémités pointent à l'opposé du span, la spline doit faire demi-tour (U-turn → rejeté).
+
+**Rotation quaternion** : `rotation` peut être un objet `{x, y, z, w}` pour spécifier une direction 3D avec pitch/roll (ex: rampe avec pente).
+
+**Sans `rotation`** : la direction est calculée depuis le span. Le dir n'est jamais null — `_applySnap` fait un fallback sur la direction courante du port.
 
 Les positions sont relatives à l'anchor et transformées par la rotation du batch (comme les positions d'entités).
 
@@ -115,6 +119,27 @@ Sortie : tableau récapitulatif + JSON avec rotations **anchor** (= -port outwar
 3. Utiliser CE port outward comme `--fromRot` (ici 90° = +Y)
 
 Si le `--fromRot` ne correspond pas au port réel, le segment validé par planTrackPath sera invalide une fois connecté dans l'éditeur (le snap imposera une direction différente → spline dégénérée).
+
+### Sens de circulation des tracks (`travel`)
+
+Le champ `travel` sur une connexion track annote le sens de circulation des trains. Convention **in-out** : le premier port est l'entrée, le second la sortie.
+
+```json
+{ "id": "t1", "from": "stA:TC1", "to": { ... }, "track": true, "travel": "TC0-TC1" }
+```
+
+- `"TC0-TC1"` : trains entrent par TC0, sortent par TC1
+- `"TC1-TC0"` : trains entrent par TC1, sortent par TC0
+
+Le `travel` est stocké comme `mTravel` (StrProperty) sur l'entité track et propagé au viewer item (`item.travel`).
+
+**Déduction automatique du facing des signaux** : quand un signal est placé sur un port (`on: "trackId:TCx"`), le `facing` est déduit du `travel` du track :
+- Signal sur le port **in** (entrée) → `"inward"`
+- Signal sur le port **out** (sortie) → `"outward"`
+
+Si le track n'a pas de `travel`, le `facing` explicite sur la connexion signal est obligatoire.
+
+Pour déduire le travel des tracks existants dans la save, voir `tools/railNetworkTravel.js` documenté dans `trains.md`.
 
 ### Docking station (gares)
 

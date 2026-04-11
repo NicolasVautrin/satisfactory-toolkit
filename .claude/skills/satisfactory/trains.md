@@ -96,30 +96,45 @@ Pour les intersections complexes :
 - L'espacement entre signaux doit être **au moins égal à la longueur du plus long train**
 - Les trains freinent **250m** avant un signal rouge ; distance insuffisante = arrêt brutal
 
-### Signalisation aux switches (convention projet)
+### Blocks et frontières signal
 
-Deux types de switches :
-- **Split switch** (1→2) : une voie se divise en deux branches
-- **Merge switch** (2→1) : deux branches se rejoignent en une voie
+Un **block** = ensemble de ports connectés non séparés par une frontière signal. Le jeu décompose le réseau en blocks par flood-fill sur les ports (traversées internes TC0↔TC1 d'un même track + traversées externes via connections).
 
-**Split switch** :
-- **Entrée** (voie unique) : stub track 1600 UU + block signal, orienté dans le sens de parcours
-- **Sorties** (chaque branche) : un block signal dans le sens de parcours
+**Frontière signal** : un signal posé à un point crée des paires guarded↔observed entre ports co-localisés. Le BFS s'arrête quand il traverse une telle frontière.
 
-**Merge switch** :
-- **Entrées** (chaque branche) : un block signal dans le sens de parcours
-- **Sortie** (voie unique) : stub track 1600 UU + block signal, orienté dans le sens de parcours
+**Règle** : un block valide contient au maximum **1 point critique** (switch ou station). 2+ points critiques dans un block = signaux manquants.
 
-Les stubs de 1600 UU servent de support physique aux signaux d'entrée/sortie du switch.
+### Modèle guarded/observed (dot product)
+
+Un signal est posé sur un TrackConnection port, avec une direction (yaw). Il classifie **tous les ports co-localisés** par dot product entre la direction du signal et l'outward du port :
+- `dot > 0` → port **guarded** (même côté que le signal)
+- `dot ≤ 0` → port **observed** (côté opposé)
+
+Deux guarded ports d'un même signal font partie du **même block** (même si les trains ne peuvent pas passer de l'un à l'autre). Les frontières sont entre guarded et observed.
+
+### Signalisation aux switches
+
+**Contrainte** : deux signaux au même point avec le même yaw sont interdits.
+
+**Placement préféré** : un signal par branche du switch, chacun sur son propre track à une position distincte. Si le layout le permet (sans contradiction avec les autres contraintes spatiales), créer un **stub sur chaque branche** du switch pour que les signaux restent proches du switch. Si une branche ne permet pas l'insertion d'un stub, le signal sera placé directement au point du switch.
 
 ### Placement des signaux (convention projet)
 
 Les signaux se placent **exactement sur un TrackConnection port** :
-- **Position** = position exacte du port gardé (offset = 0)
-- **Rotation** = direction outward du port gardé (ou inversée selon le sens à bloquer)
+- **Position** = position exacte du port (offset = 0)
+- **Rotation** = outward du port si `facing: 'outward'`, inversée si `facing: 'inward'`
 - **Port connecté obligatoire** — le port doit avoir au moins 1 `mConnectedComponents`
 - **`mGuardedConnections`** = `[ref(TrackConnection)]` — le port sur lequel le signal est posé
-- **`mObservedConnections`** = le port observé de l'autre côté du bloc (non câblé automatiquement pour l'instant)
+- **`mObservedConnections`** = les ports observés de l'autre côté du bloc
+
+### Outil de vérification
+
+`tools/railSignalCheck.js` décompose le réseau en blocks et signale ceux avec 2+ points critiques :
+```bash
+node tools/railSignalCheck.js --near "-72000,237000,0" --radius 15000
+node tools/railSignalCheck.js --all [--verbose]
+```
+Utilise `tools/lib/railNetwork.js` (graph, portInfo, deduceSignalConnections).
 
 ## Terminologie réseau et sens de circulation
 
@@ -164,6 +179,14 @@ Les stubs sont les tracks de liaison entre les docks/station et le réseau :
 - Un train arrêté en station ne doit jamais bloquer la ligne principale
 
 ## Layout du réseau
+
+**Règle projet** : les rails sont **unidirectionnels** dans la majorité des cas. Ne créer des voies bidirectionnelles que sur demande explicite de l'utilisateur. Toujours annoter le `travel` sur les connexions track dans les edits.
+
+**Déduction du travel pour les tracks existants** : `tools/railNetworkTravel.js` déduit le sens de circulation par BFS depuis les stations. Retourne `undefined` pour les tracks bidirectionnels ou non connectés à une station.
+```bash
+node tools/railNetworkTravel.js --index 15490
+node tools/railNetworkTravel.js --near "-72000,237000,0" --radius 5000
+```
 
 ### Double voie (recommandé)
 - **Toujours utiliser des voies à sens unique** dès qu'il y a plus d'un train

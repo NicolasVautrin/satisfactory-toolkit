@@ -49,35 +49,16 @@ if (!from || !to) {
 const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
 const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-let splineData;
-if (type === 'track') {
-  // Rail spline: 2-point hermite (same logic as makeSpline track branch in satisfactoryLib.js)
-  const TANGENT_SCALE = 1.17;
-  const end = new Vector3D(dx, dy, dz);
-  const len = end.length;
-  const straight = len > 1 ? end.norm() : new Vector3D(1, 0, 0);
-  // Dirs are outward port directions. Negate dirIn for LeaveTangent (needs inward).
-  const dirInN = fromDir ? new Vector3D(fromDir).norm().scale(-1) : straight;
-  const dirOutN = toDir ? new Vector3D(toDir).norm() : straight;
-  const tScale = len * TANGENT_SCALE;
-  splineData = [
-    { x: 0, y: 0, z: 0, ax: dirInN.x * tScale, ay: dirInN.y * tScale, az: dirInN.z * tScale, lx: dirInN.x * tScale, ly: dirInN.y * tScale, lz: dirInN.z * tScale },
-    { x: dx, y: dy, z: dz, ax: dirOutN.x * tScale, ay: dirOutN.y * tScale, az: dirOutN.z * tScale, lx: dirOutN.x * tScale, ly: dirOutN.y * tScale, lz: dirOutN.z * tScale },
-  ];
-} else {
-  // Belt / pipe: 5-point spline with guard sections
-  const { makeSpline } = require('../satisfactoryLib');
-  // Create minimal port-like objects for makeSpline
-  const fakeFrom = { localPos() { return { x: 0, y: 0, z: 0 }; }, localDir() { return fromDir; }, portType: type };
-  const fakeTo = { localPos() { return { x: dx, y: dy, z: dz }; }, localDir() { return toDir; }, portType: type };
-  const wrapped = makeSpline(fakeFrom, fakeTo);
-  const SplineBuilder = require('../lib/shared/SplineBuilder');
-  const fakeEntity = {
-    properties: { mSplineData: wrapped },
-    transform: { translation: from, rotation: { x: 0, y: 0, z: 0, w: 1 } },
-  };
-  splineData = SplineBuilder._parseSplinePoints(fakeEntity);
-}
+const { makeSpline } = require('../satisfactoryLib');
+const SplineBuilder = require('../lib/shared/SplineBuilder');
+const fakeFrom = { localPos() { return { x: 0, y: 0, z: 0 }; }, localDir() { return fromDir; }, portType: type };
+const fakeTo = { localPos() { return { x: dx, y: dy, z: dz }; }, localDir() { return toDir; }, portType: type };
+const wrapped = makeSpline(fakeFrom, fakeTo);
+const fakeEntity = {
+  properties: { mSplineData: wrapped },
+  transform: { translation: from, rotation: { x: 0, y: 0, z: 0, w: 1 } },
+};
+const splineData = SplineBuilder._parseSplinePoints(fakeEntity);
 
 if (!splineData || splineData.length < 2) {
   console.error('Failed to build spline');
@@ -112,24 +93,20 @@ for (let i = world.length - 1; i > 0; i--) {
   if (cumLen >= GUARD_DIST) { guardEnd = i; break; }
 }
 
-// U-turn check (skip for tracks — they can make 90° turns, min radius suffices)
-let uTurnResult = type === 'track' ? 'SKIP (track)' : 'SKIP (no dirs)';
-if (type !== 'track' && fromDir && toDir) {
-  const span = new Vector3D(dx, dy, 0);
-  const spanXY = span.length;
-  if (spanXY > 1e-6) {
-    const sn = { x: span.x / spanXY, y: span.y / spanXY };
-    const cosSrc = fromDir.x * sn.x + fromDir.y * sn.y;
-    const cosDst = toDir.x * sn.x + toDir.y * sn.y;
-    // Track: TC0 outward opposes span (cosSrc ≈ -1), TC1 outward aligns (cosDst ≈ +1)
-    const uTurnFail = type === 'track'
-      ? (cosSrc > 0.5 || cosDst < -0.5)
-      : (cosSrc < -0.5 || cosDst > 0.5);
-    if (uTurnFail) {
-      uTurnResult = `FAIL (cosSrc=${cosSrc.toFixed(3)}, cosDst=${cosDst.toFixed(3)})`;
-    } else {
-      uTurnResult = `OK (cosSrc=${cosSrc.toFixed(3)}, cosDst=${cosDst.toFixed(3)})`;
-    }
+// U-turn check via validateSplineShape (uses uTurnThreshold from splineLimits.json)
+let uTurnResult = 'OK';
+try {
+  const { validateSplineShape } = require('../lib/shared/validateSpline');
+  validateSplineShape(fakeEntity, fakeFrom, fakeTo);
+} catch (e) {
+  if (e.message.includes('U-turn')) {
+    uTurnResult = `FAIL (${e.message})`;
+  } else if (e.message.includes('curvature')) {
+    uTurnResult = 'OK'; // curvature handled separately below
+  } else if (e.message.includes('slope')) {
+    uTurnResult = 'OK'; // slope handled separately below
+  } else {
+    uTurnResult = `FAIL (${e.message})`;
   }
 }
 

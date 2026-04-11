@@ -495,8 +495,9 @@ function processEntityDefs(batch, idMap, added, updated, deleted) {
     const rx = rel.x * cosB - rel.y * sinB;
     const ry = rel.x * sinB + rel.y * cosB;
     const position = { x: anchor.x + rx, y: anchor.y + ry, z: anchor.z + (rel.z || 0) };
-    const entYawDeg = def.rotation || 0;
-    const rotation = entYawDeg ? composeYawQuats(bpQuat, yawToQuat(entYawDeg)) : bpQuat;
+    const entRot = def.rotation || 0;
+    const entQuat = typeof entRot === 'object' ? entRot : (entRot ? yawToQuat(entRot) : null);
+    const rotation = entQuat ? composeYawQuats(bpQuat, entQuat) : bpQuat;
 
     const result = addEntity(typePath, position, rotation, def.properties);
     if (def.id) idMap[def.id] = result.entityIndex;
@@ -515,8 +516,21 @@ function resolveEndpoint(ep, label, conn, ctx) {
     const pos = { x: ctx.anchor.x + rx, y: ctx.anchor.y + ry, z: ctx.anchor.z + (ep.z || 0) };
     let dir = null;
     if (ep.rotation !== undefined) {
-      const totalYaw = (ep.rotation + (ctx.bpYawDeg || 0)) * Math.PI / 180;
-      dir = { x: Math.cos(totalYaw), y: Math.sin(totalYaw), z: 0 };
+      if (typeof ep.rotation === 'object') {
+        // Quaternion rotation → full 3D direction (rotate +X by quaternion)
+        const q = ep.rotation;
+        const bpQ = yawToQuat(ctx.bpYawDeg || 0);
+        const rq = composeYawQuats(bpQ, q);
+        // Rotate unit +X by quaternion: v' = q * (1,0,0) * q⁻¹
+        dir = {
+          x: 1 - 2 * (rq.y * rq.y + rq.z * rq.z),
+          y: 2 * (rq.x * rq.y + rq.z * rq.w),
+          z: 2 * (rq.x * rq.z - rq.y * rq.w),
+        };
+      } else {
+        const totalYaw = (ep.rotation + (ctx.bpYawDeg || 0)) * Math.PI / 180;
+        dir = { x: Math.cos(totalYaw), y: Math.sin(totalYaw), z: 0 };
+      }
     }
     return { pos, dir };
   }
@@ -537,9 +551,32 @@ function processSignalConnection(conn, ctx) {
   const trackBuilder = getEntity(idx);
   const port = trackBuilder.port(portName);
 
+  // Deduce facing from track's travel direction if available
+  let facing = conn.facing;
+  if (!facing) {
+    const trackEntity = ctx.saveState.items[idx]?.entity;
+    const travel = trackEntity?.properties?.mTravel?.value;
+    if (travel) {
+      const [inPort, outPort] = travel.split('-');
+      const shortPort = portName.replace('TrackConnection', 'TC');
+      facing = shortPort === outPort ? 'outward' : 'inward';
+    }
+  }
+  if (!facing) throw new Error(`Cannot determine signal facing: no "facing" on signal and no "travel" on track "${id}"`);
+
   const isPath = conn.type === 'path-signal';
   const signal = RailroadSignal.create(0, 0, 0, undefined, { type: isPath ? 'path' : 'block' });
-  signal.attachToPort(port, conn.facing || 'outward');
+  signal.attachToPort(port, facing);
+
+  // Guard: no two signals at the same position+direction
+  const t = signal.entity.transform;
+  const r = t.rotation;
+  const yaw = Math.round(Math.atan2(r.z, r.w) * 2 * 180 / Math.PI);
+  const slotKey = `${Math.round(t.translation.x)},${Math.round(t.translation.y)},${Math.round(t.translation.z)},${yaw}`;
+  if (ctx.signalSlots.has(slotKey)) {
+    throw new Error(`Duplicate signal at same position and direction: ${conn.id || conn.on} (${slotKey})`);
+  }
+  ctx.signalSlots.add(slotKey);
 
   const { index, item, classUpdate } = injectSplineEntity(signal);
   if (conn.id) ctx.idMap[conn.id] = index;
@@ -570,7 +607,14 @@ function processSplineConnection(conn, ctx) {
   const tier = conn.belt || conn.pipe;
   const result = createSplineBetween(splineType, srcEndpoint, tgtEndpoint, tier);
   ctx.idMap[conn.id] = result.splineIndex;
-  applyLabel(ctx.saveState.items[result.splineIndex].entity, conn.id, conn.label, result.item);
+  const splineEntity = ctx.saveState.items[result.splineIndex].entity;
+  applyLabel(splineEntity, conn.id, conn.label, result.item);
+  if (conn.travel) {
+    splineEntity.properties.mTravel = {
+      type: 'StrProperty', ueType: 'StrProperty', name: 'mTravel', value: conn.travel,
+    };
+    if (result.item) result.item.travel = conn.travel;
+  }
   ctx.added.push({ id: conn.id, index: result.splineIndex, instanceName: result.instanceName, item: result.item, classUpdate: result.classUpdate });
   ctx.results.push({ from: conn.from, to: conn.to, [splineType]: conn.id });
 }
@@ -718,6 +762,7 @@ function editEntities(batch) {
         sinB: Math.sin(bpYawRad),
         bpYawDeg,
         saveState: getSaveState(),
+        signalSlots: new Set(),
       };
       processConnections(batch.connections, ctx);
     } catch (err) {

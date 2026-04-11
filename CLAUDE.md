@@ -7,6 +7,7 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 - **Ne jamais modifier les fichiers dans un submodule Git** (`tools/pak-tool/lib/CUE4Parse/`). Placer le code additionnel dans le projet principal (ex: `tools/pak-tool/Helpers/`, `tools/pak-tool/Commands/`).
 - **Injections d'edit dans le viewer** — toujours utiliser `"anchor": {"fromCamera": 5000}` (ou une distance adaptée) pour placer les entités devant la caméra, pas à une position absolue arbitraire.
 - **Ne jamais injecter un edit deux fois** — toujours vérifier le champ `added` (pas `results`) dans la réponse JSON de `/api/game/edit`. Si `added` contient des entités, l'injection a réussi. Ne pas réessayer sous prétexte qu'un filtre jq était mal écrit.
+- **Vérifier le résultat de l'injection** — après un `curl` d'injection, toujours vérifier avec `npx -y node-jq '.added | length'`. Si le filtre jq retourne 0 alors que la réponse brute contient des données, c'est le filtre qui est faux — **ne pas réinjecter**. En cas de doute, afficher la réponse brute (`head -c 200`) avant de conclure à un échec.
 - **Valider tout edit avant injection** — avant d'injecter un edit dans le viewer (via `/api/game/edit`), le valider en inline avec `editEntities` :
   ```bash
   node -e "

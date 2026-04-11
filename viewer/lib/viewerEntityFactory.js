@@ -47,16 +47,19 @@ function registerClass(cls, reg) {
 }
 
 // Known port definitions for spline builders (no PORT_LAYOUT)
+const TRACK_PORTS = [
+  { n: 'TrackConnection0', flow: -1, type: 2 },
+  { n: 'TrackConnection1', flow: -1, type: 2 },
+];
 const SPLINE_PORTS = {
-  Build_RailroadTrack_C: [
-    { n: 'TrackConnection0', flow: -1, type: 2 },
-    { n: 'TrackConnection1', flow: -1, type: 2 },
-  ],
-  Build_RailroadTrackIntegrated_C: [
-    { n: 'TrackConnection0', flow: -1, type: 2 },
-    { n: 'TrackConnection1', flow: -1, type: 2 },
-  ],
+  Build_RailroadTrack_C: TRACK_PORTS,
+  Build_RailroadTrackIntegrated_C: TRACK_PORTS,
 };
+// Classes whose TC ports come from mRailroadTrack (appended after PORT_LAYOUT ports)
+const RAILROAD_TRACK_CLASSES = new Set([
+  'Build_TrainStation_C', 'Build_TrainDockingStation_C',
+  'Build_TrainDockingStationLiquid_C', 'Build_TrainPlatformEmpty_C',
+]);
 
 function collectPortLayouts(classNames) {
   const layouts = {};
@@ -79,6 +82,10 @@ function collectPortLayouts(classNames) {
         type: p.type === 'belt' ? 0 : 1,
       }));
     if (ports.length > 0) layouts[i] = ports;
+    // Append TC ports for station/dock classes
+    if (RAILROAD_TRACK_CLASSES.has(cls)) {
+      layouts[i] = [...(layouts[i] || []), ...TRACK_PORTS];
+    }
   }
   return layouts;
 }
@@ -163,9 +170,30 @@ function buildViewerEntity(entity, reg, compByName) {
     }
   }
 
+  // Station/dock TC ports — delegate to integrated track via mRailroadTrack
+  const trackRef = entity.properties?.mRailroadTrack?.value?.pathName;
+  if (trackRef) {
+    const tc0 = compByName.get(trackRef + '.TrackConnection0');
+    const tc1 = compByName.get(trackRef + '.TrackConnection1');
+    if (tc0 || tc1) {
+      if (!item.cn) item.cn = [];
+      item.cn.push(getPortConnRef(tc0), getPortConnRef(tc1));
+    }
+  }
+
   // Entity label (mLabel StrProperty from editor)
   const mLabel = entity.properties?.mLabel?.value;
   if (mLabel) item.lb = mLabel;
+
+  // Travel direction (mTravel StrProperty from editor)
+  const mTravel = entity.properties?.mTravel?.value;
+  if (mTravel) item.travel = mTravel;
+
+  // Signal guarded connection (mGuardedConnections → cn)
+  const guarded = entity.properties?.mGuardedConnections?.values;
+  if (guarded && guarded.length > 0) {
+    item.cn = guarded.map(ref => ref?.pathName || 0);
+  }
 
   return item;
 }
@@ -195,6 +223,9 @@ function buildViewerEntitiesFromSave(entities, lwInstances, compByName, stationN
     }
     items.push(item);
   }
+
+  // Post-process: resolve cn pathNames to label.port format
+  resolveConnRefs(items, entities);
 
   return { classNames: reg.classNames, clearance: reg.clearance, entities: items, portLayouts: collectPortLayouts(reg.classNames), stationLabels };
 }
@@ -263,6 +294,32 @@ function getPortConnRef(comp) {
 
 function isPortConnected(comp) {
   return !!getPortConnRef(comp);
+}
+
+const shortPort = (p) => p.replace('TrackConnection', 'TC').replace('PipelineConnection', 'PC').replace('ConveyorAny', 'CA');
+
+/**
+ * Resolve cn pathNames to "label.Port" or "#index.Port" format.
+ * Same format as editor.js resolveRef for consistency.
+ */
+function resolveConnRefs(items, entities) {
+  const instToLabel = new Map();
+  for (let i = 0; i < entities.length; i++) {
+    instToLabel.set(entities[i].instanceName, items[i].lb || `#${i}`);
+  }
+  for (const item of items) {
+    if (!item.cn) continue;
+    item.cn = item.cn.map(ref => {
+      if (!ref || ref === 0) return 0;
+      return ref.split(',').map(path => {
+        const parts = path.trim().split('.');
+        const port = shortPort(parts.pop());
+        const entityInst = parts.join('.');
+        const label = instToLabel.get(entityInst) || entityInst.split('.').pop();
+        return `${label}.${port}`;
+      }).join(', ');
+    });
+  }
 }
 
 module.exports = { classify, buildViewerEntitiesFromSave, buildViewerEntitiesFromCbp, buildViewerEntityFromEditor, isPortConnected };

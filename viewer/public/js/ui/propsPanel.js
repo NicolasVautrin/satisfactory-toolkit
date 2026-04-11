@@ -67,78 +67,61 @@ export function createPropsPanel(container) {
 
       let html = '';
 
-      // Save name
-      if (filename) {
+      // ── Header: condensed entity info ──
+      html += `<div class="props-header">`;
+      html += `<div class="props-header-row"><span class="props-cls" title="${cls}">${cls}</span><span class="props-idx">#${entityIndex}</span></div>`;
+      html += `<div class="props-header-row"><span class="props-cat"><span class="props-cat-dot" style="background:${catColor}"></span>${catName}</span>`;
+      if (filename) html += `<span class="props-dim">${filename}</span>`;
+      html += `</div>`;
+      html += `<div class="props-header-row"><span class="props-dim">pos</span><span class="props-val">{${fmt(e.tx)}, ${fmt(e.ty)}, ${fmt(e.tz)}}</span></div>`;
+      html += `<div class="props-header-row"><span class="props-dim">rot</span><span class="props-val">{${fmt(e.rx, 4)}, ${fmt(e.ry, 4)}, ${fmt(e.rz, 4)}, ${fmt(e.rw, 4)}}</span></div>`;
+      html += `</div>`;
+
+      // ── Properties: custom key/value pairs ──
+      const props = [];
+      if (e.lb) props.push(['label', e.lb]);
+      if (e.travel) props.push(['travel', e.travel]);
+
+      if (props.length > 0) {
         html += `<div class="props-section">`;
-        html += `<div class="props-section-title">Save</div>`;
-        html += `<div class="props-row"><span class="props-value">${filename}</span></div>`;
-        html += `</div>`;
-      }
-
-      // Label (from mLabel / edit id)
-      if (e.lb) {
-        html += `<div class="props-section">`;
-        html += `<div class="props-section-title">Label</div>`;
-        html += `<div class="props-row"><span class="props-value" style="color:#ffcc00;font-weight:bold">${e.lb}</span></div>`;
-        html += `</div>`;
-      }
-
-      // Class name
-      html += `<div class="props-section">`;
-      html += `<div class="props-section-title">Entity</div>`;
-      html += `<div class="props-row"><span class="props-value" title="${cls}">${cls}</span></div>`;
-      html += `</div>`;
-
-      // Category
-      html += `<div class="props-section">`;
-      html += `<div class="props-section-title">Category</div>`;
-      html += `<div class="props-row"><span class="props-port-dot" style="background:${catColor}; border-radius:50%"></span><span class="props-value">${catName}</span></div>`;
-      html += `</div>`;
-
-      // Position (Unreal coordinates)
-      html += `<div class="props-section">`;
-      html += `<div class="props-section-title">Position</div>`;
-      html += `<div class="props-row"><span class="props-label">X</span><span class="props-value">${fmt(e.tx)}</span></div>`;
-      html += `<div class="props-row"><span class="props-label">Y</span><span class="props-value">${fmt(e.ty)}</span></div>`;
-      html += `<div class="props-row"><span class="props-label">Z</span><span class="props-value">${fmt(e.tz)}</span></div>`;
-      html += `</div>`;
-
-      // Rotation (quaternion)
-      html += `<div class="props-section">`;
-      html += `<div class="props-section-title">Rotation</div>`;
-      html += `<div class="props-row"><span class="props-label">X</span><span class="props-value">${fmt(e.rx, 6)}</span></div>`;
-      html += `<div class="props-row"><span class="props-label">Y</span><span class="props-value">${fmt(e.ry, 6)}</span></div>`;
-      html += `<div class="props-row"><span class="props-label">Z</span><span class="props-value">${fmt(e.rz, 6)}</span></div>`;
-      html += `<div class="props-row"><span class="props-label">W</span><span class="props-value">${fmt(e.rw, 6)}</span></div>`;
-      html += `</div>`;
-
-      // Ports
-      const portLayout = getPortLayout(e, viewerEntityRepository.portLayouts);
-      if (portLayout && portLayout.length > 0) {
-        html += `<div class="props-section">`;
-        html += `<div class="props-section-title">Ports</div>`;
-        for (let pi = 0; pi < portLayout.length; pi++) {
-          const p = portLayout[pi];
-          const connected = e.cn ? e.cn[pi] : 0;
-          const flowClass = p.flow === -1 ? 'bidir' : p.flow === 0 ? 'input' : 'output';
-          const typeClass = p.type === 0 ? 'belt' : 'pipe';
-          const statusClass = connected ? 'connected' : 'disconnected';
-          const statusText = typeof connected === 'string' ? connected : (connected ? 'connected' : 'disconnected');
-          const flowLabel = p.flow === -1 ? 'any' : p.flow === 0 ? 'in' : 'out';
-          html += `<div class="props-port-row">`;
-          html += `<span class="props-port-dot ${typeClass} ${flowClass}"></span>`;
-          html += `<span class="props-port-name">${p.n}</span>`;
-          html += `<span class="props-port-status ${statusClass}">${flowLabel} \u2022 ${statusText}</span>`;
-          html += `</div>`;
+        html += `<div class="props-section-title">Properties</div>`;
+        for (const [key, val] of props) {
+          html += `<div class="props-kv"><span class="props-key">${key}</span><span class="props-val">${val}</span></div>`;
         }
         html += `</div>`;
       }
 
-      // Index
-      html += `<div class="props-section">`;
-      html += `<div class="props-section-title">Index</div>`;
-      html += `<div class="props-row"><span class="props-label">#</span><span class="props-value">${entityIndex}</span></div>`;
-      html += `</div>`;
+      // ── Connections: label.port <-> label.port ──
+      const portLayout = getPortLayout(e, viewerEntityRepository.portLayouts);
+      if (portLayout && portLayout.length > 0 && e.cn) {
+        const selfLabel = e.lb || `#${entityIndex}`;
+        const connLines = [];
+        for (let pi = 0; pi < portLayout.length; pi++) {
+          const p = portLayout[pi];
+          const ref = e.cn[pi];
+          const portShort = shortPortName(p.n);
+          if (!ref || ref === 0) {
+            connLines.push({ self: `${selfLabel}.${portShort}`, other: null });
+          } else {
+            // ref can be "label.Port, label.Port" for switches
+            for (const otherRef of String(ref).split(', ')) {
+              connLines.push({ self: `${selfLabel}.${portShort}`, other: otherRef });
+            }
+          }
+        }
+        if (connLines.length > 0) {
+          html += `<div class="props-section">`;
+          html += `<div class="props-section-title">Connections</div>`;
+          for (const c of connLines) {
+            if (c.other) {
+              html += `<div class="props-conn"><span class="props-conn-self">${c.self}</span><span class="props-conn-arrow">\u2194</span><span class="props-conn-other">${c.other}</span></div>`;
+            } else {
+              html += `<div class="props-conn disconnected"><span class="props-conn-self">${c.self}</span></div>`;
+            }
+          }
+          html += `</div>`;
+        }
+      }
 
       contentDiv.innerHTML = html;
       container.classList.add('visible');
@@ -148,17 +131,18 @@ export function createPropsPanel(container) {
       gridBtn.classList.toggle('active', hasGrid(entityIndex));
 
       // Build serialized props for clipboard
-      const props = {
+      const clipProps = {
         save: filename || undefined,
         label: e.lb || undefined,
         class: cls,
         category: catName,
         index: entityIndex,
         position: `{${Math.round(e.tx)}, ${Math.round(e.ty)}, ${Math.round(e.tz)}}`,
-        rotation: `{${Math.round(e.rx)}, ${Math.round(e.ry)}, ${Math.round(e.rz)}, ${Math.round(e.rw)}}`,
+        rotation: `{${e.rx.toFixed(4)}, ${e.ry.toFixed(4)}, ${e.rz.toFixed(4)}, ${e.rw.toFixed(4)}}`,
       };
+      if (e.travel) clipProps.travel = e.travel;
       if (portLayout && portLayout.length > 0) {
-        props.ports = portLayout.map((p, pi) => {
+        clipProps.ports = portLayout.map((p, pi) => {
           const cn = e.cn && e.cn[pi];
           const port = {
             name: p.n,
@@ -171,7 +155,7 @@ export function createPropsPanel(container) {
           return port;
         });
       }
-      currentSerializedProps = JSON.stringify(props, null, 2);
+      currentSerializedProps = JSON.stringify(clipProps, null, 2);
     },
 
     hide() {
@@ -182,4 +166,8 @@ export function createPropsPanel(container) {
 
 function fmt(val, decimals = 1) {
   return typeof val === 'number' ? val.toFixed(decimals) : String(val);
+}
+
+function shortPortName(name) {
+  return name.replace('TrackConnection', 'TC').replace('PipelineConnection', 'PC').replace('ConveyorAny', 'CA');
 }
