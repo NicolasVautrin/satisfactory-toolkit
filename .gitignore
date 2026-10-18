@@ -31,3 +31,5 @@ tools/pak-tool/exports-index.json
 # Local config
 .claude/settings.local.json
 .mcp.json
+# Etat des constructions en jeu (chemins d acteurs propres a une partie)
+tools/re/frida/plans/*-state.json

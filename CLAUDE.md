@@ -31,6 +31,7 @@ Toolkit Node.js pour l'édition de saves, la manipulation de blueprints et l'opt
 @.claude/skills/satisfactory/edit.md
 @.claude/skills/satisfactory/server.md
 @.claude/skills/satisfactory/viewer.md/
+@.claude/skills/satisfactory/live.md
 
 ## Setup
 
