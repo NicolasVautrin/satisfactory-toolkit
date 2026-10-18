@@ -56,6 +56,23 @@ const toolbar = createToolbar(document.getElementById('topbar'), {
   onOpen(file) {
     uploadFile(file, { onSaveLoaded, onCbpLoaded, setLoading });
   },
+  async onOpenPath(file) {
+    setLoading(`Loading ${file.name}.${file.ext}...`);
+    try {
+      const res = await fetch('/api/game/load-file?entities=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: file.path }),
+      });
+      const result = await res.json();
+      if (!res.ok) { setLoading('Error: ' + result.error); return; }
+
+      if (result.type === 'cbp') onCbpLoaded(result.cbp, file.name);
+      else onSaveLoaded(result.save, file.name);
+    } catch (err) {
+      setLoading('Error: ' + err.message);
+    }
+  },
   async onRefresh() {
     setLoading('Refreshing...');
     try {

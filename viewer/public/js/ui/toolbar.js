@@ -1,4 +1,5 @@
 import { refreshIcons } from './icons.js';
+import { openSavePicker } from './savePicker.js';
 import { getDisplay, setDisplay } from '../engine/scene.js';
 
 // ── Top bar with dropdown menus ──────────────────────────────
@@ -47,7 +48,7 @@ function createMenu(container, label) {
   return dropdown;
 }
 
-export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloadSave, onDisplayChange }) {
+export function createToolbar(container, { onOpen, onOpenPath, onRefresh, onMerge, onDownloadSave, onDisplayChange }) {
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = '.sav,.cbp,.sbp';
@@ -62,6 +63,15 @@ export function createToolbar(container, { onOpen, onRefresh, onMerge, onDownloa
 
   // ── File menu ─────────────────────────────────────────────
   const fileMenu = createMenu(container, 'File');
+
+  const gameSavesItem = document.createElement('div');
+  gameSavesItem.className = 'menu-item';
+  gameSavesItem.innerHTML = '<i data-lucide="gamepad-2" class="icon"></i> Game saves...';
+  gameSavesItem.addEventListener('click', () => {
+    closeAll();
+    openSavePicker((file) => onOpenPath(file));
+  });
+  fileMenu.appendChild(gameSavesItem);
 
   const openItem = document.createElement('div');
   openItem.className = 'menu-item';

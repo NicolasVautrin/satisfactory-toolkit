@@ -300,3 +300,63 @@ body {
   font-size: 18px; z-index: 20;
   font-family: monospace; color: #ddd;
 }
+
+/* ── Game save picker ─────────────────────────────────────── */
+.picker-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+}
+
+.picker-panel {
+  background: #2a2a2a; border: 1px solid #444;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  width: 520px; max-width: 90vw; max-height: 70vh;
+  display: flex; flex-direction: column;
+}
+
+.picker-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-bottom: 1px solid #444;
+  color: #fff; font-size: 12px;
+}
+
+.picker-root {
+  padding: 6px 14px 0; color: #777; font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.picker-search {
+  margin: 8px 14px; padding: 5px 8px;
+  background: #1e1e1e; border: 1px solid #444; color: #ddd;
+  font-family: monospace; font-size: 12px;
+}
+.picker-search:focus { outline: none; border-color: #6cf; }
+
+.picker-list { overflow-y: auto; padding-bottom: 6px; }
+
+.picker-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 14px; cursor: pointer;
+}
+.picker-row:hover { background: #3a3a3a; }
+
+.picker-ext {
+  font-size: 10px; text-transform: uppercase;
+  width: 26px; flex-shrink: 0;
+}
+
+.picker-name {
+  flex: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+.picker-meta { font-size: 10px; color: #777; flex-shrink: 0; }
+
+.picker-empty { padding: 12px 14px; color: #777; }
+
+.picker-group {
+  font-size: 10px; color: #666; flex-shrink: 0;
+  max-width: 160px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}

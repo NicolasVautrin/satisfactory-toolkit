@@ -48,6 +48,52 @@ wss.on('connection', (ws) => {
   ws.on('close', () => console.log('WebSocket client disconnected'));
 });
 
+// ── List game save files ──────────────────────────────────
+// Root can be overridden with SATISFACTORY_SAVES; defaults to the game folder.
+const SAVES_ROOT = process.env.SATISFACTORY_SAVES
+  || path.join(process.env.LOCALAPPDATA || '', 'FactoryGame', 'Saved', 'SaveGames');
+
+const SAVE_EXTS = new Set(['.sav', '.sbp', '.cbp']);
+
+function scanSaveDir(dir, group, out) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    return;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      scanSaveDir(full, group ? `${group}/${e.name}` : e.name, out);
+      continue;
+    }
+    const ext = path.extname(e.name).toLowerCase();
+    if (!SAVE_EXTS.has(ext)) continue;
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch (err) {
+      continue;
+    }
+    out.push({
+      name: path.basename(e.name, ext),
+      ext: ext.slice(1),
+      group: group || '.',
+      path: full,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+    });
+  }
+}
+
+app.get('/api/game/saves', (req, res) => {
+  const files = [];
+  scanSaveDir(SAVES_ROOT, '', files);
+  files.sort((a, b) => b.mtime - a.mtime);
+  res.json({ root: SAVES_ROOT, files });
+});
+
 // ── Load save from disk ──────────────────────────────────────────────
 app.post('/api/game/load-file', (req, res) => {
   const { filePath } = req.body;
@@ -57,13 +103,18 @@ app.post('/api/game/load-file', (req, res) => {
     const ext = path.extname(filePath).toLowerCase();
     const name = path.basename(filePath, ext);
     const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    const withEntities = req.query.entities === '1';
     if (ext === '.cbp' || ext === '.sbp') {
       ext === '.cbp' ? loadCbp(name, arrayBuf) : loadBlueprint(name, arrayBuf);
-      res.json({ success: true, type: 'cbp', name });
+      const body = { success: true, type: 'cbp', name };
+      if (withEntities) body.cbp = getCbpState().viewerEntityRepository;
+      res.json(body);
     } else {
       loadSave(name, arrayBuf);
       broadcast({ type: 'saveLoaded', name });
-      res.json({ success: true, type: 'save', name });
+      const body = { success: true, type: 'save', name };
+      if (withEntities) body.save = getSaveState().viewerEntityRepository;
+      res.json(body);
     }
   } catch (err) {
     console.error('Load file error:', err);
