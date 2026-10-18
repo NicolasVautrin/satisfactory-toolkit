@@ -5,7 +5,7 @@ const SOLVER_URL = 'https://api.satisfactorytools.com/v2/solver';
 const RESOURCE_MAX = {
 	Desc_OreIron_C: 92100,
 	Desc_OreCopper_C: 36900,
-	Desc_Stone_C: 69900,
+	Desc_Stone_C: 69300,
 	Desc_Coal_C: 42300,
 	Desc_OreGold_C: 15000,
 	Desc_LiquidOil_C: 12600,
@@ -170,28 +170,66 @@ const MACHINE_POWER = {
 
 // Resource node data: number of miners needed and their power cost
 // Loaded from data/resourceConfig.json
-const resourceNodes = require('../data/resourceConfig.json');
+const resourceNodes = require('../../data/resourceConfig.json');
 
-// Compute total miners and total MW per resource at 250% overclock
-// Miner Mk3 at 250%: impure=300/min, normal=600/min, pure=600/min (belt-capped at 780 but we use 600 for pure to match wiki totals)
-// Actually: rate = baseRate * purityMult * (overclock/100), belt cap 780
-// At 250%: impure=240*0.5*2.5=300, normal=240*1*2.5=600, pure=min(240*2*2.5, 780)=780
-// But total extraction rates from wiki already account for this, so:
-// miners per resource = sum of nodes (each node = 1 miner)
+// Compute total extractors and total MW per resource, every extractor overclocked to 250%.
+// Rates (maxRate): Miner Mk3 impure=300/min, normal=600/min, pure=1200/min (Mk6 belt cap);
+// resource well satellites impure=75, normal=150, pure=300 m³/min (pressurizer at 250%).
+// Power at 250% = base power x 2.5^powerExponent (exponent read in game: mPowerConsumptionExponent).
+// Well satellites draw no power: each well's pressurizer does. Water extractors stay at 100% (see below).
+const CLOCK_POWER_FACTOR = Math.pow(resourceNodes.overclock, resourceNodes.powerExponent);
 const MINING_POWER_TOTAL = {};
 for (const resClass in resourceNodes.nodes) {
 	const node = resourceNodes.nodes[resClass];
 	const minerInfo = resourceNodes.miners[node.miner];
 	if (!minerInfo) continue;
-	const totalMiners = node.total > 0 ? node.total : 0;
-	const totalPowerMW = totalMiners * minerInfo.power;
+	const wellSatellites = (node.wellImpure || 0) + (node.wellNormal || 0) + (node.wellPure || 0);
+	const totalMiners = node.total > 0 ? node.total - wellSatellites : 0;
+	const pressurizers = node.wellCores || 0;
+	const totalPowerMW = (totalMiners * minerInfo.power + pressurizers * resourceNodes.pressurizerPower) * CLOCK_POWER_FACTOR;
 	// PowerUnit cost per unit/min extracted
 	if (node.maxRate > 0 && node.maxRate < 9999999) {
-		MINING_POWER_TOTAL[resClass] = { miners: totalMiners, power: totalPowerMW, perUnit: totalPowerMW / node.maxRate };
+		MINING_POWER_TOTAL[resClass] = { miners: totalMiners, pressurizers, power: totalPowerMW, perUnit: totalPowerMW / node.maxRate };
 	}
 }
 // Water: unlimited nodes, cost = 20MW per 120 m³/min = 0.1667 MW per m³/min
 MINING_POWER_TOTAL['Desc_Water_C'] = { miners: 0, power: 0, perUnit: 20 / 120 };
+
+// Extractors needed for an extraction rate, richest nodes first. Miners, oil extractors and well satellites
+// run at 250%; water extractors stay at 100%. Pressurizers are counted in proportion to the well output used
+// (the config does not tell which satellite belongs to which well).
+const EXTRACTOR_NAMES = { Desc_MinerMk3_C: 'Miner Mk3', Desc_OilPump_C: 'Oil Extractor', Desc_FrackingExtractor_C: 'Well Extractor' };
+function extractorsFor(resClass, rate) {
+	if (resClass === 'Desc_Water_C') {
+		const count = Math.ceil(rate / 120 - 1e-6);
+		return { text: count + ' Water Extractor @100%', mw: count * resourceNodes.miners.Desc_WaterPump_C.power };
+	}
+	const node = resourceNodes.nodes[resClass];
+	if (!node || !(rate > 0)) return null;
+	const mult = resourceNodes.purityMultipliers;
+	const wellMiner = 'Desc_FrackingExtractor_C';
+	const slots = [];
+	for (const p of ['impure', 'normal', 'pure']) {
+		const isWell = node.miner === wellMiner;
+		for (let i = 0; i < (node[p] || 0); i++) slots.push({ well: isWell, rate: resourceNodes.miners[node.miner].baseRate * mult[p] * resourceNodes.overclock });
+		const wells = node['well' + p[0].toUpperCase() + p.slice(1)] || 0;
+		for (let i = 0; i < wells; i++) slots.push({ well: true, rate: resourceNodes.miners[wellMiner].baseRate * mult[p] * resourceNodes.overclock });
+	}
+	slots.sort((a, b) => b.rate - a.rate);
+	let got = 0, miners = 0, satellites = 0, wellUsed = 0;
+	for (const s of slots) {
+		if (got >= rate - 0.5) break;
+		got += s.rate;
+		if (s.well) { satellites++; wellUsed += s.rate; } else miners++;
+	}
+	const wellTotal = slots.filter(s => s.well).reduce((t, s) => t + s.rate, 0);
+	const pressurizers = wellTotal > 0 ? Math.ceil((node.wellCores || 0) * wellUsed / wellTotal - 1e-6) : 0;
+	const parts = [];
+	if (miners) parts.push(miners + ' ' + EXTRACTOR_NAMES[node.miner]);
+	if (satellites) parts.push(satellites + ' Well Extractor + ' + pressurizers + ' Pressurizer');
+	const mw = (miners * resourceNodes.miners[node.miner].power + pressurizers * resourceNodes.pressurizerPower) * CLOCK_POWER_FACTOR;
+	return { text: parts.join(' + ') + ' @' + resourceNodes.overclock * 100 + '%', mw };
+}
 
 // Power modeled as virtual item "PowerUnit"
 // Recipes/mines consume PowerUnit proportional to their MW
@@ -200,6 +238,23 @@ MINING_POWER_TOTAL['Desc_Water_C'] = { miners: 0, power: 0, perUnit: 20 / 120 };
 // Per PowerUnit: 0.2/2500 = 0.00008 rods, 10/2500 = 0.004 waste
 const MW_TO_RODS = 0.2 / 2500;   // 0.00008
 const MW_TO_WASTE = 10 / 2500;   // 0.004
+
+// Generators are modeled at 100% clock; they are built overclocked to 250%.
+// Fuel and power scale linearly with the clock, so N generators at 100% = N / 2.5 buildings at 250%.
+const GENERATOR_CLOCK = 2.5;
+const GENERATORS = [
+	{ key: 'gen_coal', name: 'Coal Gen (Coal)', mw: 75 },
+	{ key: 'gen_coal_compacted', name: 'Coal Gen (Compacted)', mw: 75 },
+	{ key: 'gen_coal_petcoke', name: 'Coal Gen (Pet. Coke)', mw: 75 },
+	{ key: 'gen_fuel', name: 'Fuel Gen (Fuel)', mw: 250 },
+	{ key: 'gen_fuel_turbo', name: 'Fuel Gen (Turbo)', mw: 250 },
+	{ key: 'gen_fuel_biofuel', name: 'Fuel Gen (Biofuel)', mw: 250 },
+	{ key: 'gen_fuel_rocket', name: 'Fuel Gen (Rocket)', mw: 250 },
+	{ key: 'gen_fuel_ionized', name: 'Fuel Gen (Ionized)', mw: 250 },
+	{ key: 'npp_uranium', name: 'NPP (Uranium)', mw: 2500 },
+	{ key: 'npp_plutonium', name: 'NPP (Plutonium)', mw: 2500 },
+	{ key: 'npp_ficsonium', name: 'NPP (Ficsonium)', mw: 2500 },
+];
 
 function analyzeResult(item, result, recipeData) {
 	const resources = {};
@@ -264,7 +319,7 @@ function analyzeResult(item, result, recipeData) {
 }
 
 async function main() {
-	const gameData = require('../data/gameData.json');
+	const gameData = require('../../data/gameData.json');
 
 	// Collect all alternate recipe classNames (except blocked conversion recipes)
 	const allAlternateRecipes = Object.values(gameData.recipes)
@@ -379,8 +434,10 @@ async function main() {
 	// Parameters
 	addHeaderRow(ws2, ['Parameter', 'Value']);
 	ws2.addRow(['Uranium on map (/min)', 2100]);
-	ws2.addRow(['NPP count', 100]);
-	ws2.addRow(['NPP clock speed', '250%']);
+	const nppCount250 = uraniumRodsPerMin / (0.2 * GENERATOR_CLOCK);
+	ws2.addRow(['NPP count @250%', Math.round(nppCount250 * 10) / 10]);
+	ws2.addRow(['NPP count @100% (LP unit)', Math.round(nppCount250 * GENERATOR_CLOCK * 10) / 10]);
+	ws2.addRow(['NPP clock speed', GENERATOR_CLOCK * 100 + '%']);
 	ws2.addRow(['Uranium per rod (/min)', uraniumPerRod]);
 	ws2.addRow(['Uranium Rods (/min)', Math.round(uraniumRodsPerMin * 100) / 100]);
 	ws2.addRow(['Waste per rod', 50]);
@@ -389,7 +446,7 @@ async function main() {
 	ws2.addRow(['Plutonium Rods (/min)', Math.round(puRodsPerMin * 100) / 100]);
 	ws2.addRow(['Pu Rod sink points', 153184]);
 	ws2.addRow(['Total sink points (/min)', Math.round(puRodsPerMin * 153184)]);
-	ws2.addRow(['NPP Power (uranium)', Math.round(100 * 2500 * 2.5) + ' MW']);
+	ws2.addRow(['NPP Power (uranium)', Math.round(nppCount250 * 2500 * GENERATOR_CLOCK) + ' MW']);
 	ws2.addRow([]);
 
 	// Resource usage table
@@ -648,22 +705,11 @@ async function main() {
 	sinkItems.sort((a, b) => b.totalSink - a.totalSink);
 
 	// Power info from all generator variables
-	const generators = [
-		{ key: 'gen_coal', name: 'Coal Gen (Coal)', mw: 75 },
-		{ key: 'gen_coal_compacted', name: 'Coal Gen (Compacted)', mw: 75 },
-		{ key: 'gen_coal_petcoke', name: 'Coal Gen (Pet. Coke)', mw: 75 },
-		{ key: 'gen_fuel', name: 'Fuel Gen (Fuel)', mw: 250 },
-		{ key: 'gen_fuel_turbo', name: 'Fuel Gen (Turbo)', mw: 250 },
-		{ key: 'gen_fuel_biofuel', name: 'Fuel Gen (Biofuel)', mw: 250 },
-		{ key: 'gen_fuel_rocket', name: 'Fuel Gen (Rocket)', mw: 250 },
-		{ key: 'gen_fuel_ionized', name: 'Fuel Gen (Ionized)', mw: 250 },
-		{ key: 'npp_uranium', name: 'NPP (Uranium)', mw: 2500 },
-		{ key: 'npp_plutonium', name: 'NPP (Plutonium)', mw: 2500 },
-		{ key: 'npp_ficsonium', name: 'NPP (Ficsonium)', mw: 2500 },
-	];
+	const generators = GENERATORS.map(g => ({ ...g }));
 	let totalMW = 0;
 	for (const g of generators) {
 		g.count = lpResult[g.key] || 0;
+		g.count250 = g.count / GENERATOR_CLOCK;
 		g.totalMW = g.count * g.mw;
 		totalMW += g.totalMW;
 	}
@@ -676,10 +722,15 @@ async function main() {
 
 	process.stderr.write('\n--- Power (' + Math.round(totalMW) + ' MW) ---\n');
 	for (const g of generators) {
-		if (g.count > 0.01) process.stderr.write('  ' + g.name + ': ' + g.count.toFixed(1) + ' (' + Math.round(g.totalMW) + ' MW)\n');
+		if (g.count > 0.01) process.stderr.write('  ' + g.name + ': ' + g.count.toFixed(1) + ' @100% = ' + g.count250.toFixed(1) + ' @250% (' + Math.round(g.totalMW) + ' MW)\n');
 	}
 	for (const s of sinkItems) {
 		process.stderr.write('  Sink ' + s.name + ': ' + s.quantity.toFixed(2) + '/min (' + s.totalSink + ' pts)\n');
+	}
+	process.stderr.write('\n--- Extraction ---\n');
+	for (const k of Object.keys(RESOURCE_MAX)) {
+		const ex = extractorsFor(k, resourceUsage[k]);
+		if (ex) process.stderr.write('  ' + (RES_NAMES[k] || k) + ': ' + Math.round(resourceUsage[k]) + '/min = ' + ex.text + ' (' + Math.round(ex.mw) + ' MW)\n');
 	}
 
 	// Collect active recipes for the sheet
@@ -705,11 +756,11 @@ async function main() {
 	addHeaderRow(ws4, ['Full LP Optimization', '']);
 	ws4.addRow(['Total Sink Points /min', Math.round(highsResult.ObjectiveValue || 0)]);
 	ws4.addRow([]);
-	addHeaderRow(ws4, ['Power Generation', 'Count', 'MW']);
+	addHeaderRow(ws4, ['Power Generation', 'Count @100%', 'Count @250%', 'MW']);
 	for (const g of generators) {
-		if (g.count > 0.01) ws4.addRow([g.name, Math.round(g.count * 10) / 10, Math.round(g.totalMW)]);
+		if (g.count > 0.01) ws4.addRow([g.name, Math.round(g.count * 10) / 10, Math.round(g.count250 * 10) / 10, Math.round(g.totalMW)]);
 	}
-	ws4.addRow(['TOTAL', '', Math.round(totalMW)]);
+	ws4.addRow(['TOTAL', '', '', Math.round(totalMW)]);
 	ws4.addRow([]);
 
 	// Sinked items
@@ -727,18 +778,21 @@ async function main() {
 	ws4.addRow([]);
 
 	// Resource usage
-	addHeaderRow(ws4, ['Resource', 'Map Max', 'Used', 'Remaining', '% Used']);
+	addHeaderRow(ws4, ['Resource', 'Map Max', 'Used', 'Remaining', '% Used', 'Extractors', 'Extraction MW']);
 	for (const k of Object.keys(RESOURCE_MAX)) {
-		if (RESOURCE_MAX[k] >= 9999999) continue;
 		const max = RESOURCE_MAX[k];
 		const used = resourceUsage[k] || 0;
 		if (max === 0 && used === 0) continue;
+		const ex = extractorsFor(k, used);
+		const unlimited = max >= 9999999;
 		ws4.addRow([
 			RES_NAMES[k] || k,
-			max,
+			unlimited ? '' : max,
 			Math.round(used),
-			Math.round(max - used),
-			Math.round((used / max) * 1000) / 10,
+			unlimited ? '' : Math.round(max - used),
+			unlimited ? '' : Math.round((used / max) * 1000) / 10,
+			ex ? ex.text : '',
+			ex ? Math.round(ex.mw) : '',
 		]);
 	}
 
@@ -759,6 +813,25 @@ async function main() {
 	const graphmlPath = require('path').join(__dirname, 'sinkAnalysis_' + ts + '.graphml');
 	require('fs').writeFileSync(graphmlPath, graphml);
 	process.stderr.write('Wrote ' + graphmlPath + '\n');
+
+	// Full solution (active variables with their per-unit flows) for sub-chain extraction (subchain.js)
+	const recipeByClassName = {};
+	for (const slug in allRecipes) recipeByClassName[allRecipes[slug].className] = allRecipes[slug];
+	const solution = { objective: highsResult.ObjectiveValue || 0, generatorClock: GENERATOR_CLOCK, variables: {}, items: {}, recipes: {} };
+	for (const v in lpResult) {
+		solution.variables[v] = { value: lpResult[v], flows: model.variables[v] || {} };
+		for (const f in model.variables[v] || {}) {
+			const cls = f.startsWith('flow_') ? f.slice(5) : null;
+			if (cls && allItems[cls]) solution.items[cls] = { name: allItems[cls].name, radioactive: allItems[cls].radioactiveDecay > 0, liquid: !!allItems[cls].liquid };
+		}
+		if (v.startsWith('recipe_')) {
+			const r = recipeByClassName[v.slice(7)];
+			if (r) solution.recipes[v.slice(7)] = { name: r.name, machine: r.producedIn[0], alternate: !!r.alternate, mainProduct: r.products[0] && r.products[0].item };
+		}
+	}
+	const solutionPath = require('path').join(__dirname, 'sinkAnalysis_' + ts + '.json');
+	require('fs').writeFileSync(solutionPath, JSON.stringify(solution, null, 1));
+	process.stderr.write('Wrote ' + solutionPath + '\n');
 }
 
 // ========================================================================
@@ -831,18 +904,19 @@ function generateGraphML(lpResult, model, allRecipes, allItems, RESOURCE_MAX, RE
 		Desc_Converter_C: 'Converter',
 	};
 
-	// --- NPP node ---
-	const nppVal = lpResult['npp_convert'] || 0;
-	if (nppVal > 0.001) {
+	// --- Generator nodes (count at 100% clock, then at the built 250% clock) ---
+	for (const g of GENERATORS) {
+		const val = lpResult[g.key] || 0;
+		if (val < 0.001) continue;
 		const nid = nextId++;
 		nodes.push({
 			id: nid, type: 'generator',
-			label: 'Nuclear Power Plant\n' + fmtNum(nppVal) + 'x (' + Math.round(nppVal * 2500) + ' MW)',
+			label: g.name + '\n' + fmtNum(val) + 'x @100% = ' + fmtNum(val / GENERATOR_CLOCK) + 'x @250%\n(' + Math.round(val * g.mw) + ' MW)',
 		});
-		const varDef = model.variables['npp_convert'];
+		const varDef = model.variables[g.key];
 		for (const k in varDef) {
 			if (k.startsWith('flow_') && k !== 'flow_PowerUnit') {
-				trackFlow(k.slice(5), nid, varDef[k] * nppVal);
+				trackFlow(k.slice(5), nid, varDef[k] * val);
 			}
 		}
 	}
@@ -853,9 +927,10 @@ function generateGraphML(lpResult, model, allRecipes, allItems, RESOURCE_MAX, RE
 		if (val < 0.01) continue;
 		const nid = nextId++;
 		const name = RES_NAMES[resClass] || allItems[resClass]?.name || resClass;
+		const ex = extractorsFor(resClass, val);
 		nodes.push({
 			id: nid, type: 'miner',
-			label: name + '\n' + fmtNum(val) + ' / min',
+			label: name + '\n' + fmtNum(val) + ' / min' + (ex ? '\n' + ex.text : ''),
 		});
 		trackFlow(resClass, nid, val);
 	}

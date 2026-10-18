@@ -38,12 +38,25 @@ Pour éviter la dépendance circulaire (les recettes de fuel rod coûtent du pow
 - Les générateurs **produisent** des `PowerUnit`
 - Pas de lien direct entre fuel rod et recettes → le solver gère la circularité
 
-#### Coût power des miners
+#### Coût power des extracteurs
 
-Basé sur les vrais nombres de nodes de la map (données wiki) :
-- Chaque ressource a un nombre fixe de Miner Mk3 (45 MW chacun)
-- Le coût MW/item extrait = (nombre_miners × 45) / extraction_max
-- Données dans `data/resourceConfig.json`
+Tous les extracteurs sont surcadencés à 250 %, leurs débits comme leur consommation :
+- Débits : foreuse Mk3 impur 300, normal 600, pur 1 200 /min (limite du convoyeur Mk6) ; extracteur de puits impur 75, normal 150, pur 300 m³/min.
+- Consommation à 250 % = consommation à 100 % × 2,5^1,3219 (exposant `mPowerConsumptionExponent` lu en jeu), soit × 3,36 :
+
+| Extracteur | 100 % | 250 % |
+|---|---|---|
+| Foreuse Mk3 | 45 MW | 151 MW |
+| Extracteur de pétrole | 40 MW | 134 MW |
+| Pressuriseur de puits (les extracteurs satellites ne consomment rien) | 150 MW | 504 MW |
+| Extracteur d'eau (reste à 100 %) | 20 MW | — |
+
+- Le coût MW/item extrait = consommation totale des extracteurs de la ressource / extraction_max.
+- Nombres de gisements et de puits lus en jeu (6 puits d'azote, 3 de pétrole), dans `data/resourceConfig.json`.
+
+#### Affichage des bâtiments à 250 %
+
+Le modèle compte les générateurs à 100 %. Comme le combustible et la puissance suivent la cadence, N générateurs à 100 % = N / 2,5 bâtiments à 250 %, la règle de construction. La console, l'onglet « Full LP Optimization » et le graphe donnent les deux nombres pour les générateurs, et le nombre d'extracteurs par ressource (gisements les plus riches d'abord, extracteurs d'eau à 100 %). Les machines de production restent comptées à 100 %.
 
 #### Solver : HiGHS (remplace javascript-lp-solver)
 
@@ -57,13 +70,28 @@ Basé sur les vrais nombres de nodes de la map (données wiki) :
 
 ### 2. Résultat actuel
 
-**297.6M sink points/min** avec :
-- 1507 Fuel Generator (Rocket Fuel) → 377 GW
-- 252 NPP (Uranium) → 630 GW
+**295.0M sink points/min** avec :
+- 1692 Fuel Generator (Rocket Fuel) à 100 %, soit 677 à 250 % → 423 GW
+- 252 NPP (Uranium) à 100 %, soit 100,8 à 250 % → 630 GW
+- Toutes les ressources extraites : 429 foreuses Mk3, 30 extracteurs de pétrole, 63 extracteurs de puits et 9 pressuriseurs à 250 % ; 1 903 extracteurs d'eau à 100 %.
+- Extraction à 250 % : 46 GW de plus qu'avec les extracteurs comptés à 100 % (ancien résultat : 297.6M points/min, 1507 générateurs). La filière nucléaire ne change pas ; le carburant de fusée couvre l'écart.
 - Items sinkés : Ballistic Warp Drive, Assembly Director System, AI Expansion Server, Plutonium Fuel Rod
 - Filière nucléaire complète (waste → plutonium rod → sink)
 
-### 3. Export GraphML (yEd)
+### 3. Extraction d'un bloc : `subchain.js`
+
+Le calcul écrit aussi sa solution complète (`sinkAnalysis_<ts>.json` : variables actives, flux par unité, noms, produit principal de chaque recette). `subchain.js` en extrait un bloc, par exemple la filière nucléaire :
+
+```bash
+node tools/solver/subchain.js tools/solver/sinkAnalysis_<ts>.json block=nuclear [json=<rapport.json>]
+```
+
+- Racines du bloc : les centrales à uranium (`npp_uranium`).
+- Aval : les déchets et tout ce qui en est fait (non fissile, plutonium, barres de plutonium jusqu'au broyeur) rejoignent le bloc en entier.
+- Amont : chaque entrée est demandée à ses producteurs au prorata de leur production. Un sous-produit (qui n'est pas le produit principal de sa recette) est gratuit : il n'entraîne pas sa recette dans le bloc.
+- Sortie : la chaîne radioactive du hub, ce qui doit lui être livré, la chaîne d'approvisionnement (part attribuée de chaque recette du plan), les ressources brutes et l'électricité nette.
+
+### 4. Export GraphML (yEd)
 
 Génération d'un fichier `.graphml` compatible yEd avec :
 - Nœuds colorés par type (orange=recette, gris-bleu=miner, rouge=sink, teal=byproduct, violet=NPP)
@@ -71,7 +99,7 @@ Génération d'un fichier `.graphml` compatible yEd avec :
 - Edges colorés par catégorie d'item (bleu=eau, rouge=nucléaire, jaune=fluides, gris=défaut)
 - Layout recommandé : Hierarchic dans yEd
 
-### 4. Données collectées
+### 5. Données collectées
 
 - `data/resourceConfig.json` : nombre de nodes par ressource/purity (impure/normal/pure), type de miner, coût MW
 - `data/gameData.json` : toutes les recettes, items, générateurs du jeu
@@ -107,8 +135,9 @@ Une fois les coordonnées obtenues, optimiser :
 
 | Fichier | Description |
 |---------|-------------|
-| `tools/analyzeSinkPoints.js` | Script principal LP + export xlsx + graphml |
+| `tools/solver/analyzeSinkPoints.js` | Script principal LP + export xlsx + graphml + json (solution) |
+| `tools/solver/subchain.js` | Extraction d'un bloc de la solution (filière nucléaire) |
 | `data/resourceConfig.json` | Données des nodes par ressource (counts, purity, miners) |
-| `tools/sinkAnalysis_*.xlsx` | Résultats d'optimisation |
-| `tools/sinkAnalysis_*.graphml` | Graphe de production (yEd) |
-| `data/data/gameData.json` | Données du jeu (recettes, items, buildings) |
+| `tools/solver/sinkAnalysis_*.xlsx` | Résultats d'optimisation |
+| `tools/solver/sinkAnalysis_*.graphml` | Graphe de production (yEd) |
+| `data/gameData.json` | Données du jeu (recettes, items, buildings) |

@@ -1,5 +1,8 @@
 {
-  "comment": "Satisfactory 1.0 resource nodes by purity. Miner Mk3: 45MW, 240/min@100%. Oil Extractor: 40MW, 120m³/min@100%. Water Extractor: 20MW, 120m³/min. Resource Well Extractor: 0MW (pressurizer needed). All rates at 250% overclock.",
+  "comment": "Satisfactory 1.0 resource nodes by purity. Miner Mk3: 45MW, 240/min@100%. Oil Extractor: 40MW, 120m³/min@100%. Water Extractor: 20MW, 120m³/min (kept at 100%). Resource Well Extractor: 0MW, its well's pressurizer draws 150MW. All rates and extractor powers at 250% overclock: power x overclock^powerExponent (values read in game).",
+  "overclock": 2.5,
+  "powerExponent": 1.3219289779663086,
+  "pressurizerPower": 150,
   "miners": {
     "Desc_MinerMk3_C": { "power": 45, "baseRate": 240 },
     "Desc_OilPump_C": { "power": 40, "baseRate": 120 },
@@ -18,7 +21,7 @@
     },
     "Desc_Stone_C": {
       "name": "Limestone", "miner": "Desc_MinerMk3_C",
-      "impure": 15, "normal": 50, "pure": 29, "total": 94, "maxRate": 69900
+      "impure": 15, "normal": 50, "pure": 29, "total": 94, "maxRate": 69300
     },
     "Desc_Coal_C": {
       "name": "Coal", "miner": "Desc_MinerMk3_C",
@@ -51,13 +54,13 @@
     "Desc_LiquidOil_C": {
       "name": "Crude Oil", "miner": "Desc_OilPump_C",
       "impure": 10, "normal": 12, "pure": 8,
-      "wellImpure": 8, "wellNormal": 6, "wellPure": 4,
+      "wellImpure": 8, "wellNormal": 6, "wellPure": 4, "wellCores": 3,
       "total": 48, "maxRate": 12600
     },
     "Desc_NitrogenGas_C": {
       "name": "Nitrogen Gas", "miner": "Desc_FrackingExtractor_C",
       "impure": 2, "normal": 7, "pure": 36,
-      "total": 45, "maxRate": 12000
+      "total": 45, "wellCores": 6, "maxRate": 12000
     },
     "Desc_Water_C": {
       "name": "Water", "miner": "Desc_WaterPump_C",
