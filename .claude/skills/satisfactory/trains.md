@@ -157,6 +157,11 @@ Les stubs sont les tracks de liaison entre les docks/station et le réseau :
 
 ## Design de stations
 
+### Règles de l'utilisateur (20/10/2026)
+
+- **Les temps de trajet des tournées ne comptent pas** : si une desserte est trop lente, on y ajoute des trains. La capacité d'un wagon et son temps de remplissage ne sont pas des critères de conception, et une seule plateforme par produit suffit en général (exemple : un seul quai fluide d'acide nitrique au terminus du complexe).
+- **Tous les quais en entrée (chargement) sont bufférisés** : la ligne arrive dans un stockage tampon qui alimente le quai, pour encaisser le temps de chargement du train (voir Buffering ci-dessous).
+
 ### Composition d'une station
 - 1 **Train Station** (toujours en premier)
 - N **Freight Platforms** (1 par wagon) — configurer en "load" ou "unload"

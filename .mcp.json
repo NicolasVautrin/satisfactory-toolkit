@@ -13,6 +13,10 @@
     "zen": {
       "command": "C:\\Users\\nicolasv\\.zen-mcp-server\\venv\\Scripts\\python.exe",
       "args": ["C:\\Users\\nicolasv\\.zen-mcp-server\\server.py"]
+    },
+    "ghidra": {
+      "type": "http",
+      "url": "http://127.0.0.1:13338/mcp"
     }
   }
 }
