@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Réseau de gares de minerai</title>
+<style>
+:root {
+  --bg: #0f1216; --panel: #171b21; --line: #2a3038; --fg: #e3e7ec; --muted: #8d96a1;
+  --copper: #2fc6f0; --iron: #ff6b6b; --bauxite: #c77dff; --rail: #f4f1e8; --accent: #ffd43b;
+  --font: system-ui, "Segoe UI", sans-serif; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); display: grid; grid-template-columns: 1fr 340px; grid-template-rows: auto 1fr; }
+header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+select, button { font: inherit; color: var(--fg); background: #222831; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; }
+button { cursor: pointer; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stats { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--fg); font-weight: 600; }
+.toggles { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.toggles label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; color: var(--muted); }
+.toggles label:has(input:checked) { color: var(--fg); }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+#map { position: relative; overflow: hidden; cursor: grab; background: #0b0d10; }
+#map.drag { cursor: grabbing; }
+svg { width: 100%; height: 100%; display: block; user-select: none; }
+#tip { position: absolute; pointer-events: none; background: rgba(15,18,22,.94); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font-size: 12px; white-space: nowrap; display: none; }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 14px 16px; display: grid; gap: 14px; align-content: start; }
+aside h2 { font-size: 15px; margin: 0; }
+aside .sub { color: var(--muted); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+td, th { padding: 3px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+td.n { text-align: right; }
+.bar { height: 8px; border-radius: 2px; background: #2a3038; display: flex; overflow: hidden; }
+.bar span { display: block; height: 100%; }
+.list tr { cursor: pointer; }
+.list tr:hover td { background: #1f252d; }
+.list tr.on td { background: #262d36; }
+.hint { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Réseau de gares de minerai</h1>
+  <select id="result" aria-label="Résultat"></select>
+  <div class="stats" id="stats"></div>
+  <div class="toggles" id="toggles">
+    <label><input type="checkbox" data-layer="map" checked> carte</label>
+    <label><input type="checkbox" data-layer="rail" checked> voies</label>
+    <label><input type="checkbox" data-layer="belts" checked> convoyeurs</label>
+    <label><input type="checkbox" data-layer="nodes" checked> gisements</label>
+    <label><input type="checkbox" data-res="copper" checked> <span class="dot" style="background:var(--copper)"></span>cuivre</label>
+    <label><input type="checkbox" data-res="iron" checked> <span class="dot" style="background:var(--iron)"></span>fer</label>
+    <label><input type="checkbox" data-res="bauxite" checked> <span class="dot" style="background:var(--bauxite)"></span>bauxite</label>
+  </div>
+  <div style="display:flex;gap:6px"><button id="zin" type="button" aria-label="Zoomer">+</button><button id="zout" type="button" aria-label="Dézoomer">−</button><button id="reset" type="button">Vue d'ensemble</button></div>
+</header>
+<div id="map">
+  <svg id="svg" viewBox="0 0 5000 5000" role="img" aria-label="Carte du réseau de gares">
+    <image id="bg" href="map.jpg" x="0" y="0" width="5000" height="5000" opacity="0.55"/>
+    <g id="g-belts"></g><g id="g-rail"></g><g id="g-nodes"></g><g id="g-stations"></g>
+  </svg>
+  <div id="tip"></div>
+</div>
+<aside id="side"></aside>
+<script>
+const RESULTS = __DATA__;
+const RES = { copper: { label: 'cuivre', color: 'var(--copper)' }, iron: { label: 'fer', color: 'var(--iron)' }, bauxite: { label: 'bauxite', color: 'var(--bauxite)' } };
+const PURITY = { RP_Inpure: 'impur', RP_Normal: 'normal', RP_Pure: 'pur' };
+const NS = 'http://www.w3.org/2000/svg';
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Math.round(n).toLocaleString('fr-FR');
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+let cur = null, selected = null;
+const shown = { map: true, rail: true, belts: true, nodes: true, copper: true, iron: true, bauxite: true };
+
+// --- vue : zoom molette autour du curseur, glisser pour deplacer ---
+const svg = $('svg');
+let vb = { x: 0, y: 0, w: 5000, h: 5000 };
+const applyVB = () => { svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); scaleMarks(); };
+function toSvg(evt) { const r = svg.getBoundingClientRect(), s = Math.max(vb.w / r.width, vb.h / r.height); const ox = (r.width * s - vb.w) / 2, oy = (r.height * s - vb.h) / 2; return { x: vb.x - ox + (evt.clientX - r.left) * s, y: vb.y - oy + (evt.clientY - r.top) * s, s }; }
+svg.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const p = toSvg(e), k = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+  const w = Math.min(6000, Math.max(120, vb.w * k)), f = w / vb.w;
+  vb = { x: p.x - (p.x - vb.x) * f, y: p.y - (p.y - vb.y) * f, w, h: w };
+  applyVB();
+}, { passive: false });
+// defilement : glisser la carte (souris ou doigt), fleches du clavier ; zoom : molette, touches + et -, boutons
+let drag = null;
+const pxScale = () => { const r = svg.getBoundingClientRect(); return Math.max(vb.w / r.width, vb.h / r.height); };
+svg.addEventListener('pointerdown', (e) => { if (e.target.closest('.st, .nd')) return; drag = { cx: e.clientX, cy: e.clientY, vb: { ...vb }, s: pxScale() }; $('map').classList.add('drag'); svg.setPointerCapture(e.pointerId); });
+svg.addEventListener('pointermove', (e) => { if (!drag) return; vb.x = drag.vb.x - (e.clientX - drag.cx) * drag.s; vb.y = drag.vb.y - (e.clientY - drag.cy) * drag.s; applyVB(); });
+const endDrag = () => { drag = null; $('map').classList.remove('drag'); };
+svg.addEventListener('pointerup', endDrag); svg.addEventListener('pointercancel', endDrag);
+function zoomBy(k) { const cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2, w = Math.min(6000, Math.max(120, vb.w * k)); vb = { x: cx - w / 2, y: cy - w / 2, w, h: w }; applyVB(); }
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  const step = vb.w * 0.1;
+  if (e.key === 'ArrowLeft') vb.x -= step; else if (e.key === 'ArrowRight') vb.x += step;
+  else if (e.key === 'ArrowUp') vb.y -= step; else if (e.key === 'ArrowDown') vb.y += step;
+  else if (e.key === '+' || e.key === '=') return zoomBy(1 / 1.3); else if (e.key === '-') return zoomBy(1.3);
+  else if (e.key === 'Escape') return select(null); else return;
+  e.preventDefault(); applyVB();
+});
+$('zin').onclick = () => zoomBy(1 / 1.3);
+$('zout').onclick = () => zoomBy(1.3);
+$('reset').onclick = () => fitAll();
+function fitAll() {
+  const pts = cur.stations.map((s) => [s.px, s.py]).concat(cur.nodes.map((n) => [n.px, n.py]));
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const m = 120, w = Math.max(...xs) - Math.min(...xs) + 2 * m, h = Math.max(...ys) - Math.min(...ys) + 2 * m, size = Math.max(w, h);
+  vb = { x: (Math.min(...xs) + Math.max(...xs)) / 2 - size / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 - size / 2, w: size, h: size };
+  applyVB();
+}
+// taille des reperes constante a l'ecran
+function scaleMarks() {
+  const r = svg.getBoundingClientRect(), s = Math.max(vb.w / r.width, vb.h / r.height);
+  document.querySelectorAll('.st').forEach((g) => g.setAttribute('transform', `translate(${g.dataset.x} ${g.dataset.y}) scale(${s})`));
+  document.querySelectorAll('.nd').forEach((c) => c.setAttribute('r', (+c.dataset.r) * s));
+}
+window.addEventListener('resize', scaleMarks);
+
+// --- dessin ---
+function draw() {
+  for (const id of ['g-belts', 'g-rail', 'g-nodes', 'g-stations']) $(id).replaceChildren();
+  const st = cur.stations;
+  cur.nodes.forEach((n, i) => {
+    const s = st[n.st];
+    el('line', { x1: n.px, y1: n.py, x2: s.px, y2: s.py, stroke: RES[n.res].color, 'stroke-width': 1.2, 'vector-effect': 'non-scaling-stroke', opacity: 0.55, 'data-st': n.st, 'data-res': n.res }, $('g-belts'));
+    const c = el('circle', { cx: n.px, cy: n.py, r: 4, 'data-r': n.purity === 'RP_Pure' ? 5 : n.purity === 'RP_Normal' ? 4 : 3, fill: RES[n.res].color, stroke: '#000', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke', class: 'nd', 'data-st': n.st, 'data-res': n.res }, $('g-nodes'));
+    if (n.forced) c.setAttribute('stroke', '#fff');
+    c.addEventListener('pointerenter', (e) => tip(e, `<b>${RES[n.res].label}</b> ${PURITY[n.purity]} · ${fmt(n.tp)} /min<br>vers ${st[n.st].label}${n.forced ? ' (déjà exploité)' : ''} · ${fmt(n.d)} m de convoyeur<br><span class="hint">(${fmt(n.x)} ; ${fmt(n.y)})</span>`));
+    c.addEventListener('pointerleave', hideTip);
+    c.addEventListener('click', () => select(n.st));
+  });
+  for (const [a, b, len] of cur.edges) {
+    const l = el('line', { x1: st[a].px, y1: st[a].py, x2: st[b].px, y2: st[b].py, stroke: 'var(--rail)', 'stroke-width': 3.5, 'vector-effect': 'non-scaling-stroke', opacity: 0.85 }, $('g-rail'));
+    l.addEventListener('pointerenter', (e) => tip(e, `voie ${st[a].label} – ${st[b].label} · ${(len / 1000).toFixed(2).replace('.', ',')} km`));
+    l.addEventListener('pointerleave', hideTip);
+  }
+  st.forEach((s, k) => {
+    const g = el('g', { class: 'st', 'data-x': s.px, 'data-y': s.py, tabindex: 0, role: 'button', 'aria-label': 'Gare ' + s.label }, $('g-stations'));
+    const total = Object.values(s.load).reduce((a, b) => a + b, 0);
+    const dom = Object.keys(s.load).sort((a, b) => s.load[b] - s.load[a])[0];
+    const size = s.fixed ? 11 : 8;
+    el('rect', { x: -size, y: -size, width: 2 * size, height: 2 * size, rx: 2, transform: 'rotate(45)', fill: dom ? RES[dom].color : '#555', stroke: s.fixed ? 'var(--accent)' : s.imposed ? '#fff' : '#000', 'stroke-width': s.fixed || s.imposed ? 3 : 2, 'stroke-dasharray': s.imposed ? '4 3' : 'none' }, g);
+    el('text', { x: size + 8, y: 4, fill: '#fff', 'font-size': s.fixed ? 15 : 13, 'font-weight': 700, stroke: '#000', 'stroke-width': 3, 'paint-order': 'stroke' }, g).textContent = s.label;
+    g.addEventListener('click', () => select(k));
+    g.addEventListener('keydown', (e) => { if (e.key === 'Enter') select(k); });
+    g.addEventListener('pointerenter', (e) => tip(e, `<b>${s.label}</b> · ${fmt(total)} / ${fmt(s.cap)} /min`));
+    g.addEventListener('pointerleave', hideTip);
+  });
+  applyVisibility(); scaleMarks();
+}
+function applyVisibility() {
+  $('bg').style.display = shown.map ? '' : 'none';
+  $('g-rail').style.display = shown.rail ? '' : 'none';
+  $('g-belts').style.display = shown.belts ? '' : 'none';
+  $('g-nodes').style.display = shown.nodes ? '' : 'none';
+  document.querySelectorAll('[data-res]').forEach((e) => {
+    if (e.tagName === 'INPUT') return;
+    const hide = !shown[e.dataset.res];
+    const dim = selected !== null && +e.dataset.st !== selected;
+    e.style.display = hide ? 'none' : '';
+    e.style.opacity = dim ? (e.tagName === 'line' ? 0.08 : 0.2) : '';
+  });
+}
+
+// --- panneau ---
+function summary() {
+  const res = {};
+  for (const n of cur.nodes) res[n.res] = (res[n.res] || 0) + 1;
+  $('stats').innerHTML = `<span><b>${cur.stations.length}</b> gares</span><span>voies <b>${String(cur.railKm).replace('.', ',')} km</b></span>`
+    + `<span>convoyeurs <b>${String(cur.beltKm).replace('.', ',')} km</b></span><span>trains <b>${String(cur.trainKm).replace('.', ',')} km</b> par tournée</span>`
+    + `<span>${Object.entries(res).map(([r, c]) => `<b>${c}</b> ${RES[r].label}`).join(' · ')}</span>`;
+}
+function side() {
+  const st = cur.stations;
+  if (selected === null) {
+    const rows = st.map((s, k) => {
+      const tot = Object.values(s.load).reduce((a, b) => a + b, 0);
+      return `<tr data-k="${k}"><td><b>${s.label}</b>${s.imposed ? ' <span class="hint">imposée</span>' : ''}</td><td>${bar(s)}</td><td class="n">${fmt(tot)}</td><td>${Object.keys(s.rt).join(', ')}</td></tr>`;
+    }).join('');
+    $('side').innerHTML = `<div><h2>Gares</h2><div class="sub">${cur.dests.map((d) => `<b>${d.label}</b> ← ${d.res.map((r) => RES[r].label).join(', ')}`).join(' · ')}</div></div>`
+      + `<table class="list"><tr><th>Gare</th><th>Minerai</th><th class="n">/min</th><th>Vers</th></tr>${rows}</table>`
+      + `<div class="hint">Cliquez une gare (sur la carte ou dans la liste) pour ses gisements. Zoom : molette, touches + et −, boutons. Défilement : glisser la carte ou flèches du clavier. Échap : retour à la liste.</div>`;
+  } else {
+    const s = st[selected], tot = Object.values(s.load).reduce((a, b) => a + b, 0);
+    const ns = cur.nodes.filter((n) => n.st === selected);
+    const byPur = (r) => ['RP_Pure', 'RP_Normal', 'RP_Inpure'].map((p) => ns.filter((n) => n.res === r && n.purity === p).length).join(' / ');
+    const maxBelt = ns.reduce((m, n) => Math.max(m, n.d), 0);
+    $('side').innerHTML = `<div><button id="back" type="button">← toutes les gares</button></div>`
+      + `<div><h2>${s.label}${s.fixed ? ' (arrivée)' : s.imposed ? ' (imposée)' : ''}</h2><div class="sub">(${fmt(s.x)} ; ${fmt(s.y)}) · ${ns.length} gisements · convoyeur le plus long ${fmt(maxBelt)} m${s.allow ? '<br>minerais acceptés : ' + s.allow.map((r) => RES[r].label).join(', ') : ''}</div></div>`
+      + `<div>${bar(s)}<div class="sub" style="margin-top:4px">${fmt(tot)} / ${fmt(s.cap)} /min (${Math.round(100 * tot / s.cap)} %)</div></div>`
+      + `<table><tr><th>Minerai</th><th class="n">/min</th><th class="n">pur / normal / impur</th></tr>${Object.entries(s.load).map(([r, v]) => `<tr><td><span class="dot" style="background:${RES[r].color}"></span> ${RES[r].label}</td><td class="n">${fmt(v)}</td><td class="n">${byPur(r)}</td></tr>`).join('')}</table>`
+      + `<table><tr><th>Aller-retour vers</th><th class="n">min</th></tr>${Object.entries(s.rt).map(([d, v]) => `<tr><td>${d}</td><td class="n">${String(v).replace('.', ',')}</td></tr>`).join('') || '<tr><td colspan="2" class="hint">aucune desserte</td></tr>'}</table>`;
+    $('back').onclick = () => select(null);
+  }
+  document.querySelectorAll('.list tr[data-k]').forEach((tr) => { tr.onclick = () => select(+tr.dataset.k); });
+}
+function bar(s) {
+  const tot = Math.max(s.cap, Object.values(s.load).reduce((a, b) => a + b, 0));
+  return `<div class="bar" title="${Object.entries(s.load).map(([r, v]) => RES[r].label + ' ' + fmt(v)).join(', ')}">${Object.entries(s.load).map(([r, v]) => `<span style="width:${100 * v / tot}%;background:${RES[r].color}"></span>`).join('')}</div>`;
+}
+function select(k) {
+  selected = k; side(); applyVisibility();
+  if (k !== null) { const s = cur.stations[k]; const ns = cur.nodes.filter((n) => n.st === k); const pts = ns.map((n) => [n.px, n.py]).concat([[s.px, s.py]]); const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const size = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + 160; vb = { x: (Math.min(...xs) + Math.max(...xs)) / 2 - size / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 - size / 2, w: size, h: size }; applyVB(); }
+}
+function tip(e, html) { const t = $('tip'), r = $('map').getBoundingClientRect(); t.innerHTML = html; t.style.display = 'block'; t.style.left = Math.min(e.clientX - r.left + 12, r.width - t.offsetWidth - 8) + 'px'; t.style.top = (e.clientY - r.top + 12) + 'px'; }
+function hideTip() { $('tip').style.display = 'none'; }
+
+// --- commandes ---
+document.querySelectorAll('#toggles input').forEach((i) => i.addEventListener('change', () => { shown[i.dataset.layer || i.dataset.res] = i.checked; applyVisibility(); }));
+const sel = $('result');
+RESULTS.forEach((r, i) => { const o = document.createElement('option'); o.value = i; o.textContent = r.name + ' — ' + r.dests.map((d) => d.label).join(' + '); sel.appendChild(o); });
+sel.onchange = () => load(+sel.value);
+function load(i) { cur = RESULTS[i]; selected = null; summary(); draw(); side(); fitAll(); }
+const start = Math.max(0, RESULTS.findIndex((r) => r.name === 'reseau-commun'));
+sel.value = start; load(start);
+</script>
+</body>
+</html>

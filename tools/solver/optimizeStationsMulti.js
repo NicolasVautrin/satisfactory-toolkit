@@ -12,6 +12,20 @@
  *   maxK=auto   : k max du scan (auto = ceil(demande/capPlancher)+5)
  *   sa=200000   : itérations SA
  *   topK=1      : nombre de meilleurs k à affiner en SA
+ *   res=copper,iron,bauxite : ressources desservies (défaut : les trois)
+ *   root=x,y    : gare d'arrivée fixe (défaut : Usine 335302,45000) ; rootName=<nom> pour son libellé
+ *   dest=<res,...>@x,y@nom;<res,...>@x,y@nom : plusieurs gares d'arrivée, une par groupe de ressources, sur un
+ *                 réseau commun (voies partagées) ; chaque gare fait un aller-retour vers chaque arrivée qu'elle sert
+ *                 (ex. dest="bauxite@289159,63477@Amsterdam;copper,iron@112356,-252112@Hub nord") ; remplace root et res
+ *                 un 4e champ facultatif limite les minerais que l'arrivée ramasse elle-même autour d'elle :
+ *                 bauxite@289159,63477@Amsterdam@bauxite
+ *   fixe=<res,...>@x,y@nom;... : gares imposées (position fixe, minerais acceptés), en plus des gares libres ; ex.
+ *                 fixe="bauxite@60000,50000@Bx nord;copper,iron@-100000,20000@Fe ouest"
+ *   fixeJson=<fichier> : gares imposées lues dans un fichier (garesImposees.js : balises de la partie, gares du jeu et
+ *                 leurs gisements exploités) ; leurs gisements leur sont affectés d'office
+ *   rt=non      : capacité des gares indépendante du temps de trajet (4 quais × 2 convoyeurs Mk6 = 9 600/min) ;
+ *                 règle de l'utilisateur : un trajet trop long se compense en ajoutant des trains
+ *   out=<nom>   : sorties data/stations_multi_<nom>.svg et .json (défaut : data/stations_multi.svg, sans JSON)
  */
 
 const fs   = require('fs');
@@ -25,9 +39,12 @@ for (const arg of process.argv.slice(2)) {
 }
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-const MAP_DATA_PATH = path.join(__dirname, '..', 'data', 'mapObjects.json');
-const TOPO_SVG_PATH = path.join(__dirname, '..', 'data', 'map_topo.svg');
-const OUTPUT_SVG    = path.join(__dirname, '..', 'data', 'stations_multi.svg');
+const MAP_DATA_PATH = path.join(__dirname, '..', '..', 'data', 'mapObjects.json');
+const TOPO_SVG_PATH = path.join(__dirname, '..', '..', 'data', 'map_topo.svg');
+const OUT_TAG       = ARGS.out || null;
+const OUTPUT_SVG    = path.join(__dirname, '..', '..', 'data', OUT_TAG ? `stations_multi_${OUT_TAG}.svg` : 'stations_multi.svg');
+const OUTPUT_JSON   = OUT_TAG ? path.join(__dirname, '..', '..', 'data', `stations_multi_${OUT_TAG}.json`) : null;
+const RT_CAPACITY   = ARGS.rt !== 'non'; // capacité selon le temps de trajet (comportement d'origine)
 
 const DIST_WEIGHT       = parseFloat(ARGS.dw) || 3;
 const SA_ITERATIONS     = parseInt(ARGS.sa)   || 200000;
@@ -57,20 +74,54 @@ const PURITY_COLORS = {
 };
 
 // ─── Ressources ─────────────────────────────────────────────────────────────
-const RESOURCES = [
+const ALL_RESOURCES = [
   { id: 'copper',  label: 'Cuivre',  abbr: 'Cu', type: 'Desc_OreCopper_C', color: '#00ccff' },
   { id: 'iron',    label: 'Fer',     abbr: 'Fe', type: 'Desc_OreIron_C',   color: '#ff6b6b' },
   { id: 'bauxite', label: 'Bauxite', abbr: 'Bx', type: 'Desc_OreBauxite_C', color: '#cc5de8' },
 ];
 
+const RES_FILTER = ARGS.dest ? ARGS.dest.split(';').flatMap((d) => d.split('@')[0].split(',')) : ARGS.res ? ARGS.res.split(',') : null;
+const RESOURCES = RES_FILTER ? ALL_RESOURCES.filter(r => RES_FILTER.includes(r.id)) : ALL_RESOURCES;
+if (!RESOURCES.length) throw new Error('res= : aucune ressource connue (copper, iron, bauxite)');
 const RES_IDS   = RESOURCES.map(r => r.id);
 const RES_ABBR  = Object.fromEntries(RESOURCES.map(r => [r.id, r.abbr]));
 const RES_COLOR = Object.fromEntries(RESOURCES.map(r => [r.id, r.color]));
 
-// Gares fixes (positions imposées, non déplaçables par le SA)
-const FIXED_STATIONS = [
-  { x: 335302, y: 45000, label: 'Usine' },
-];
+// Arrivées : dest= (plusieurs, une par groupe de ressources), sinon root= / Usine pour toutes les ressources
+const DESTS = ARGS.dest
+  ? ARGS.dest.split(';').map((d) => {
+    const [res, xy, label, accept] = d.split('@');
+    const [x, y] = xy.split(',').map(Number);
+    return { res: res.split(','), x, y, label: label || 'Arrivée', allow: accept ? accept.split(',') : null };
+  })
+  : [{ res: RES_IDS, ...(ARGS.root
+    ? { x: Number(ARGS.root.split(',')[0]), y: Number(ARGS.root.split(',')[1]), label: ARGS.rootName || 'Arrivée' }
+    : { x: 335302, y: 45000, label: 'Usine' }) }];
+const MULTI_DEST = DESTS.length > 1;
+const RES_DEST = {}; // ressource -> indice de son arrivée (gares fixes 0..n-1)
+DESTS.forEach((d, k) => d.res.forEach((r) => { RES_DEST[r] = k; }));
+for (const r of RES_IDS) if (RES_DEST[r] === undefined) throw new Error('dest= : pas d\'arrivée pour ' + r);
+// Gares fixes (positions imposées, non déplaçables par le SA) : les arrivées
+// Gares imposées : position fixe, minerais acceptés (fixe=)
+const IMPOSED = ARGS.fixe
+  ? ARGS.fixe.split(';').filter(Boolean).map((d, i) => {
+    const [res, xy, label] = d.split('@');
+    const [x, y] = xy.split(',').map(Number);
+    const allow = res.split(',').filter(Boolean);
+    for (const r of allow) if (!RES_IDS.includes(r)) throw new Error('fixe= : ressource inconnue ou non desservie : ' + r);
+    return { x, y, label: label || 'Imposée ' + (i + 1), allow };
+  })
+  : [];
+if (ARGS.fixeJson) {
+  const list = JSON.parse(fs.readFileSync(path.resolve(ARGS.fixeJson), 'utf8'));
+  for (const g of list) {
+    const allow = g.allow ? g.allow.filter((r) => RES_IDS.includes(r)) : RES_IDS.slice();
+    IMPOSED.push({ x: g.x, y: g.y, label: g.label, allow, deposits: (g.deposits || []).filter((dp) => RES_IDS.includes(dp.res)) });
+  }
+}
+const N_DESTS = DESTS.length;
+const FIXED_STATIONS = DESTS.map((d) => ({ x: d.x, y: d.y, label: d.label, allow: d.allow }))
+  .concat(IMPOSED.map((d) => ({ x: d.x, y: d.y, label: d.label, allow: d.allow, imposed: true })));
 
 // ─── Coordonnées ────────────────────────────────────────────────────────────
 function gameToPixel(gx, gy) {
@@ -160,7 +211,40 @@ function computeDistToRoot(stations) {
       }
     }
   }
-  return { distToRoot, mst };
+  return { distToRoot, mst, adj };
+}
+
+/** Distances le long de l'arbre depuis chaque arrivee (gares fixes 0..n-1) : distFrom[k][s] */
+function computeDistFromRoots(stations) {
+  const { distToRoot, mst, adj } = computeDistToRoot(stations);
+  const distFrom = [distToRoot];
+  for (let k = 1; k < N_DESTS; k++) {
+    const d = new Array(stations.length).fill(-1);
+    d[k] = 0;
+    const queue = [k];
+    while (queue.length > 0) {
+      const u = queue.shift();
+      for (const { to, d: w } of adj[u]) if (d[to] < 0) { d[to] = d[u] + w; queue.push(to); }
+    }
+    distFrom.push(d);
+  }
+  return { distToRoot, distFrom, mst };
+}
+
+/** Arrivées servies par chaque gare (selon les ressources qui lui sont affectées) */
+function stationDests(stations, allNodes, assignments) {
+  const dests = stations.map(() => new Set());
+  for (let i = 0; i < allNodes.length; i++) dests[assignments[i]].add(RES_DEST[allNodes[i].resource]);
+  return dests;
+}
+
+/** Coût train multi-arrivées : un aller-retour par gare et par arrivée servie, le long de l'arbre commun */
+function multiTrainDist(stations, allNodes, assignments) {
+  const { distFrom } = computeDistFromRoots(stations);
+  const dests = stationDests(stations, allNodes, assignments);
+  let total = 0;
+  for (let s = 0; s < stations.length; s++) for (const k of dests[s]) total += 2 * distFrom[k][s];
+  return total;
 }
 
 /** Coût train = Σ aller-retour de chaque gare vers la racine */
@@ -183,6 +267,7 @@ function totalTrainDist(stations) {
 const BELT_CAP_PER_DOCK = 2400; // 2 × Mk6 (1200/min)
 
 function stationMaxThroughput(rtMin) {
+  if (!RT_CAPACITY) return BELT_CAP_PER_DOCK * DOCKS_PER_STATION;
   const perDock = Math.min(
     BELT_CAP_PER_DOCK,
     Math.max(DOCK_CAPACITY / (rtMin + LOAD_UNLOAD_TIME), DOCK_CAPACITY / (FILL_TIME + LOAD_UNLOAD_TIME)),
@@ -195,6 +280,8 @@ function cloneStation(s) {
   const c = { x: s.x, y: s.y };
   if (s.fixed) c.fixed = true;
   if (s.label) c.label = s.label;
+  if (s.allow) c.allow = s.allow;
+  if (s.imposed) c.imposed = true;
   return c;
 }
 
@@ -203,9 +290,21 @@ function cloneStations(stations) {
 }
 
 // ─── Affectation ────────────────────────────────────────────────────────────
+// Gisements affectés d'office à une gare imposée (indice du gisement -> libellé de la gare), calculé dans main()
+let FORCED = [];
+
 function assignNodes(allNodes, stations, maxTP) {
   const assignments = new Array(allNodes.length).fill(-1);
   const loads       = new Array(stations.length).fill(0);
+  if (FORCED.length) {
+    const byLabel = {};
+    stations.forEach((s, k) => { if (s.fixed) byLabel[s.label] = k; });
+    FORCED.forEach((label, i) => {
+      if (label == null || byLabel[label] === undefined) return;
+      assignments[i] = byLabel[label];
+      loads[byLabel[label]] += allNodes[i].throughput;
+    });
+  }
 
   // Trier par distance au plus proche
   const indexed = allNodes.map((n, i) => {
@@ -219,9 +318,11 @@ function assignNodes(allNodes, stations, maxTP) {
 
   // Passe 1 : plus proche avec capacité
   for (const { idx } of indexed) {
+    if (assignments[idx] >= 0) continue; // affecte d'office
     const n = allNodes[idx];
     let bestS = -1, bestD = Infinity;
     for (let s = 0; s < stations.length; s++) {
+      if (stations[s].allow && !stations[s].allow.includes(n.resource)) continue;
       if (loads[s] + n.throughput > maxTP[s]) continue;
       const d = dist(n, stations[s]);
       if (d < bestD) { bestD = d; bestS = s; }
@@ -237,6 +338,7 @@ function assignNodes(allNodes, stations, maxTP) {
     if (assignments[i] >= 0) continue;
     let bestS = 0, bestD = Infinity;
     for (let s = 0; s < stations.length; s++) {
+      if (stations[s].allow && !stations[s].allow.includes(allNodes[i].resource)) continue;
       const d = dist(allNodes[i], stations[s]);
       if (d < bestD) { bestD = d; bestS = s; }
     }
@@ -278,7 +380,7 @@ function totalCost(stations, allNodes) {
   const { distToRoot } = computeDistToRoot(stations);
   const maxTP = distToRoot.map(d => stationMaxThroughput(2 * d / TRAIN_SPEED));
   const asg   = assignNodes(allNodes, stations, maxTP);
-  return totalTrainDist(stations)
+  return (MULTI_DEST ? multiTrainDist(stations, allNodes, asg) : totalTrainDist(stations))
     + DIST_WEIGHT * totalConveyorDist(allNodes, stations, asg)
     + capacityPenalty(allNodes, stations, asg, maxTP);
 }
@@ -385,7 +487,7 @@ function optimizeSA(initStations, allNodes, maxIter = SA_ITERATIONS) {
 }
 
 // ─── Génération SVG multi-layers ────────────────────────────────────────────
-function generateSVG(stations, allNodes, assignments, distToRoot) {
+function generateSVG(stations, allNodes, assignments, distToRoot, rtLabels) {
   const topoSvg   = fs.readFileSync(TOPO_SVG_PATH, 'utf8');
   const topoInner = topoSvg.match(/<svg[^>]*>([\s\S]*)<\/svg>/)[1];
 
@@ -414,13 +516,13 @@ function generateSVG(stations, allNodes, assignments, distToRoot) {
     const fill = RES_COLOR[dominant];
 
     const totalTp = sn.reduce((sum, n) => sum + n.throughput, 0);
-    const rtMin   = (2 * distToRoot[i] / TRAIN_SPEED).toFixed(1);
+    const rtMin   = rtLabels ? rtLabels[i] : (2 * distToRoot[i] / TRAIN_SPEED).toFixed(1);
     const maxTP   = Math.round(stationMaxThroughput(2 * distToRoot[i] / TRAIN_SPEED));
 
     return [
       `    <rect x="${(px-size).toFixed(1)}" y="${(py-size).toFixed(1)}" width="${size*2}" height="${size*2}" rx="3" fill="${fill}" stroke="${sk}" stroke-width="${sw}" transform="rotate(45 ${px.toFixed(1)} ${py.toFixed(1)})"/>`,
       `    <text x="${(px+size+8).toFixed(1)}" y="${(py-14).toFixed(1)}" fill="#fff" font-size="${s.fixed?16:14}" font-weight="bold" font-family="sans-serif" stroke="#000" stroke-width="3" paint-order="stroke">${label}</text>`,
-      `    <text x="${(px+size+8).toFixed(1)}" y="${(py+4).toFixed(1)}" fill="#ccc" font-size="11" font-family="sans-serif" stroke="#000" stroke-width="2" paint-order="stroke">${totalTp}/${maxTP} rt=${rtMin}m</text>`,
+      `    <text x="${(px+size+8).toFixed(1)}" y="${(py+4).toFixed(1)}" fill="#ccc" font-size="11" font-family="sans-serif" stroke="#000" stroke-width="2" paint-order="stroke">${totalTp}/${maxTP} rt=${rtMin} min</text>`,
     ].join('\n');
   }).join('\n');
 
@@ -471,11 +573,25 @@ ${resLayers}
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 function main() {
-  console.log('=== Optimisation multi-ressources (gares partagées, capacité dynamique) ===');
+  console.log(`=== Optimisation multi-ressources (gares partagées, ${RT_CAPACITY ? 'capacité dynamique' : 'capacité fixe, sans temps de trajet'}) ===`);
+  console.log(`ressources: ${RES_IDS.join(', ')} ; arrivées: ${DESTS.map((d) => `${d.label} (${d.x}, ${d.y}) <- ${d.res.join('+')}`).join(' ; ')}`);
+  if (IMPOSED.length) console.log(`gares imposées: ${IMPOSED.map((d) => `${d.label} (${d.x}, ${d.y}) ${d.allow.join('+')}`).join(' ; ')}`);
   console.log(`dw=${DIST_WEIGHT}, ${DOCKS_PER_STATION} docks/gare, sa=${SA_ITERATIONS}, topK=${SA_TOP_K}`);
   console.log(`capacité/dock: ${DOCK_CAPACITY}/(rt+${LOAD_UNLOAD_TIME}) items/min, plancher à rt=${FILL_TIME}min\n`);
 
   const allNodes    = loadAllNodes();
+  FORCED = new Array(allNodes.length).fill(null);
+  for (const g of IMPOSED) {
+    for (const dp of g.deposits || []) {
+      let best = -1, bd = Infinity;
+      allNodes.forEach((n, i) => { if (n.resource !== dp.res) return; const dd = dist(n, dp); if (dd < bd) { bd = dd; best = i; } });
+      if (best < 0 || bd > 100) { console.log(`  !! ${g.label} : gisement ${dp.res} (${dp.x}, ${dp.y}) introuvable sur la carte`); continue; }
+      if (FORCED[best] && FORCED[best] !== g.label) console.log(`  !! gisement (${dp.x}, ${dp.y}) revendique par ${FORCED[best]} et ${g.label}`);
+      FORCED[best] = g.label;
+    }
+  }
+  const nForced = FORCED.filter(Boolean).length;
+  if (nForced) console.log(`Gisements affectés d'office aux gares imposées : ${nForced}`);
   const totalDemand = allNodes.reduce((s, n) => s + n.throughput, 0);
   const baseCap     = stationMaxThroughput(FILL_TIME); // capacité plancher
 
@@ -503,16 +619,16 @@ function main() {
     for (let run = 0; run < 20; run++) {
       const free = kmeans(allNodes, k - nFixed);
       const stations = [
-        ...FIXED_STATIONS.map(s => ({ x: s.x, y: s.y, fixed: true, label: s.label })),
+        ...FIXED_STATIONS.map(s => cloneStation(Object.assign({ fixed: true }, s))),
         ...free.map(c => ({ x: c.x, y: c.y })),
       ];
       const cost = totalCost(stations, allNodes);
       if (cost < bestCost) { bestCost = cost; bestStations = cloneStations(stations); }
     }
-    const trainD   = totalTrainDist(bestStations);
     const { distToRoot } = computeDistToRoot(bestStations);
     const maxTP    = distToRoot.map(d => stationMaxThroughput(2 * d / TRAIN_SPEED));
     const asg      = assignNodes(allNodes, bestStations, maxTP);
+    const trainD   = MULTI_DEST ? multiTrainDist(bestStations, allNodes, asg) : totalTrainDist(bestStations);
     const ct       = totalConveyorDist(allNodes, bestStations, asg);
     const trainMin = (trainD / TRAIN_SPEED).toFixed(1);
     console.log(`  k=${String(k).padStart(2)} train=${trainMin.padStart(6)}min conv=${(ct/100).toFixed(0).padStart(6)}m cost=${bestCost.toFixed(0)}`);
@@ -542,7 +658,11 @@ function main() {
   const maxTP       = distToRoot.map(d => stationMaxThroughput(2 * d / TRAIN_SPEED));
   const assignments = assignNodes(allNodes, stations, maxTP);
 
-  const trainD        = totalTrainDist(stations);
+  const trainD        = MULTI_DEST ? multiTrainDist(stations, allNodes, assignments) : totalTrainDist(stations);
+  const { distFrom }  = computeDistFromRoots(stations);
+  const dests         = stationDests(stations, allNodes, assignments);
+  // aller-retour (min) vers chaque arrivee servie : « Amsterdam 2.8 / Hub nord 5.1 »
+  const rtText = (c) => [...dests[c]].sort().map((k) => (MULTI_DEST ? FIXED_STATIONS[k].label + ' ' : '') + (2 * distFrom[k][c] / TRAIN_SPEED).toFixed(1)).join(' / ') || '-';
   const convD         = totalConveyorDist(allNodes, stations, assignments);
   const penalty       = capacityPenalty(allNodes, stations, assignments, maxTP);
   const totalTrainMin = (trainD / TRAIN_SPEED).toFixed(1);
@@ -552,8 +672,8 @@ function main() {
     const s  = stations[c];
     const sn = allNodes.filter((_, i) => assignments[i] === c);
     const mx = sn.reduce((m, n) => Math.max(m, dist(n, s)), 0);
-    const fl = s.fixed ? ` [${s.label}]` : '';
-    const rt = (2 * distToRoot[c] / TRAIN_SPEED).toFixed(1);
+    const fl = s.fixed ? ` [${s.label}${s.allow ? ' : ' + s.allow.map((r) => RES_ABBR[r]).join('+') : ''}]` : '';
+    const rt = rtText(c);
 
     // Throughput par ressource
     const tpPerRes = {};
@@ -575,9 +695,33 @@ function main() {
     console.log(`  G${String(c+1).padStart(2)}${fl} (${s.x.toFixed(0)}, ${s.y.toFixed(0)}) ${resStr} total=${totalTp}/${cap} (${pct}%) rt=${rt}min conv_max=${(mx/100).toFixed(0)}m${warn}`);
   }
 
+  // JSON (gares, charges par ressource, liaisons de l'arbre)
+  if (OUTPUT_JSON) {
+    const { mst } = computeDistToRoot(stations);
+    const label = (c) => stations[c].fixed ? stations[c].label : 'G' + (c + 1);
+    const out = {
+      date: new Date().toISOString(), args: ARGS, resources: RES_IDS, rtCapacity: RT_CAPACITY,
+      dests: DESTS.map((d) => ({ label: d.label, x: d.x, y: d.y, res: d.res, allow: d.allow })),
+      imposed: IMPOSED,
+      trainKm: trainD / 100000, beltKm: convD / 100000,
+      stations: stations.map((s, c) => {
+        const load = {};
+        for (let i = 0; i < allNodes.length; i++) if (assignments[i] === c) load[allNodes[i].resource] = (load[allNodes[i].resource] || 0) + allNodes[i].throughput;
+        return { label: label(c), x: Math.round(s.x), y: Math.round(s.y), fixed: !!s.fixed, imposed: !!s.imposed, allow: s.allow || null, load, cap: Math.round(maxTP[c]),
+          rtMin: Object.fromEntries([...dests[c]].map((k) => [FIXED_STATIONS[k].label, +(2 * distFrom[k][c] / TRAIN_SPEED).toFixed(1)])),
+          nodes: allNodes.filter((_, i) => assignments[i] === c).length };
+      }),
+      edges: mst.edges.map(([a, b]) => [label(a), label(b), Math.round(dist(stations[a], stations[b]) / 100)]),
+      nodes: allNodes.map((n, i) => ({ x: Math.round(n.x), y: Math.round(n.y), res: n.resource, purity: n.purity, tp: n.throughput,
+        st: assignments[i], forced: !!FORCED[i] })),
+    };
+    fs.writeFileSync(OUTPUT_JSON, JSON.stringify(out, null, 1), 'utf8');
+    console.log('JSON: ' + OUTPUT_JSON);
+  }
+
   // SVG
   console.log('\n── Génération SVG ──');
-  generateSVG(stations, allNodes, assignments, distToRoot);
+  generateSVG(stations, allNodes, assignments, distToRoot, stations.map((_, c) => rtText(c)));
   console.log('\nTerminé!');
 }
 
