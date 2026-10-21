@@ -134,6 +134,8 @@ const NATIVE_SPECS = {
   staticFindFirstObject: ['coreUObject', '?StaticFindFirstObject@@YAPEAVUObject@@PEAVUClass@@PEB_WW4EFindFirstObjectOptions@@W4Type@ELogVerbosity@@1@Z',
     'pointer', ['pointer', 'pointer', 'int', 'int', 'pointer']],
   uclassStaticClass: ['coreUObject', '?GetPrivateStaticClass@UClass@@CAPEAV1@XZ', 'pointer', []],
+  // Objet d'un TWeakObjectPtr (null s'il n'existe plus)
+  weakObjectPtrGet: ['coreUObject', '?Get@FWeakObjectPtr@@QEBAPEAVUObject@@XZ', 'pointer', ['pointer']],
   // Reflexion : FName passe PAR VALEUR (8 octets en shipping, sinon MSVC le passerait par adresse)
   findPropertyByName: ['coreUObject', '?FindPropertyByName@UStruct@@QEBAPEAVFProperty@@VFName@@@Z', 'pointer', ['pointer', 'uint64']],
   fnameCtor: ['core', '??0FName@@QEAA@PEB_WW4EFindName@@@Z', 'pointer', ['pointer', 'pointer', 'int']],
@@ -173,6 +175,14 @@ const NATIVE_SPECS = {
     '?LineTraceSingleByChannel@UWorld@@QEBA_NAEAUFHitResult@@AEBU?$TVector@N@Math@UE@@1W4ECollisionChannel@@AEBUFCollisionQueryParams@@AEBUFCollisionResponseParams@@@Z',
     'uint8', ['pointer', 'pointer', 'pointer', 'pointer', 'int', 'pointer', 'pointer']],
   // FactoryGame
+  // Repartiteur intelligent : regles de tri (FSplitterSortRule de 16 octets passe par valeur = par adresse, ABI MSVC x64)
+  splitterAddSortRule: ['game', '?AddSortRule@AFGBuildableSplitterSmart@@QEAAXUFSplitterSortRule@@@Z', 'void', ['pointer', 'pointer']],
+  splitterRemoveSortRuleAt: ['game', '?RemoveSortRuleAt@AFGBuildableSplitterSmart@@QEAAXH@Z', 'void', ['pointer', 'int']],
+  // Descripteurs speciaux des regles : trop-plein, n'importe quel objet, aucun, objet sans autre regle
+  overflowDescriptorClass: ['game', '?Z_Construct_UClass_UFGOverflowDescriptor_NoRegister@@YAPEAVUClass@@XZ', 'pointer', []],
+  wildCardDescriptorClass: ['game', '?Z_Construct_UClass_UFGWildCardDescriptor_NoRegister@@YAPEAVUClass@@XZ', 'pointer', []],
+  noneDescriptorClass: ['game', '?Z_Construct_UClass_UFGNoneDescriptor_NoRegister@@YAPEAVUClass@@XZ', 'pointer', []],
+  anyUndefinedDescriptorClass: ['game', '?Z_Construct_UClass_UFGAnyUndefinedDescriptor_NoRegister@@YAPEAVUClass@@XZ', 'pointer', []],
   spawnHologramFromRecipe: ['game',
     '?SpawnHologramFromRecipe@AFGHologram@@SAPEAV1@V?$TSubclassOf@VUFGRecipe@@@@PEAVAActor@@AEBU?$TVector@N@Math@UE@@PEAVAPawn@@AEBV?$TFunction@$$A6AXPEAVAFGHologram@@@Z@@@Z',
     'pointer', ['pointer', 'pointer', 'pointer', 'pointer', 'pointer']],
@@ -201,8 +211,14 @@ const NATIVE_SPECS = {
   circuitConnectionStaticClass: ['game', '?GetPrivateStaticClass@UFGCircuitConnectionComponent@@CAPEAVUClass@@XZ', 'pointer', []],
   powerConnectionStaticClass: ['game', '?GetPrivateStaticClass@UFGPowerConnectionComponent@@CAPEAVUClass@@XZ', 'pointer', []],
   getNumConnections: ['game', '?GetNumConnections@UFGCircuitConnectionComponent@@QEBAHXZ', 'int', ['pointer']],
+  // Connecteurs relies a celui-ci (bouts opposes des cables et liaisons cachees) : TArray rempli par reference
+  circuitGetConnections: ['game',
+    '?GetConnections@UFGCircuitConnectionComponent@@QEBAXAEAV?$TArray@PEAVUFGCircuitConnectionComponent@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z',
+    'void', ['pointer', 'pointer']],
   getMaxNumConnections: ['game', '?GetMaxNumConnections@UFGCircuitConnectionComponent@@QEBAHXZ', 'int', ['pointer']],
   getCircuitID: ['game', '?GetCircuitID@UFGCircuitConnectionComponent@@QEBAHXZ', 'int', ['pointer']],
+  findCircuit: ['game', '?FindCircuit@AFGCircuitSubsystem@@QEBAPEAVUFGCircuit@@H@Z', 'pointer', ['pointer', 'int']],
+  resetFuse: ['game', '?ResetFuse@UFGPowerCircuit@@QEAAXPEAVAFGPlayerController@@@Z', 'void', ['pointer', 'pointer']],
   getPowerInfo: ['game', '?GetPowerInfo@UFGPowerConnectionComponent@@QEBAPEAVUFGPowerInfoComponent@@XZ', 'pointer', ['pointer']],
   powerInfoHasPower: ['game', '?HasPower@UFGPowerInfoComponent@@QEBA_NXZ', 'uint8', ['pointer']],
   // Connecteurs de convoyeur (FVector rendus par valeur : pointeur cache)
@@ -254,6 +270,24 @@ const NATIVE_SPECS = {
     'pointer', ['pointer', 'pointer']],
   makeInventoryStack: ['game', '?MakeInventoryStack@UFGInventoryLibrary@@SA?AUFInventoryStack@@HUFInventoryItem@@@Z',
     'pointer', ['pointer', 'int', 'pointer']],
+  // Pieces legeres (fondations, rampes, murs, poutres...) : sous-systeme et reference d'instance (classe + numero).
+  // Les numeros sont bornes par le jeu (pointeur nul hors du tableau) et RemoveByInstanceIndex ne retire qu'une
+  // instance valide (FRuntimeBuildableInstanceData::IsValid) : un numero deja retire est sans effet.
+  lwSubsystemGet: ['game', '?Get@AFGLightweightBuildableSubsystem@@SAPEAV1@PEAVUObject@@@Z', 'pointer', ['pointer']],
+  lwRuntimeData: ['game',
+    '?GetRuntimeDataForBuildableClassAndIndex@AFGLightweightBuildableSubsystem@@QEAAPEAUFRuntimeBuildableInstanceData@@V?$TSubclassOf@VAFGBuildable@@@@H@Z',
+    'pointer', ['pointer', 'pointer', 'int']],
+  lwDataIsValid: ['game', '?IsValid@FRuntimeBuildableInstanceData@@QEBA_NXZ', 'uint8', ['pointer']],
+  lwRefCtor: ['game', '??0FLightweightBuildableInstanceRef@@QEAA@XZ', 'pointer', ['pointer']],
+  lwRefInitialize: ['game',
+    '?Initialize@FLightweightBuildableInstanceRef@@QEAAXPEAVAFGLightweightBuildableSubsystem@@V?$TSubclassOf@VAFGBuildable@@@@H@Z',
+    'void', ['pointer', 'pointer', 'pointer', 'int']],
+  // FTransform rendu par valeur : pointeur cache apres this
+  lwRefTransform: ['game', '?GetBuildableTransform@FLightweightBuildableInstanceRef@@QEBA?AU?$TTransform@N@Math@UE@@XZ',
+    'pointer', ['pointer', 'pointer']],
+  lwRefRemove: ['game', '?Remove@FLightweightBuildableInstanceRef@@QEAA_NXZ', 'uint8', ['pointer']],
+  // Taille de pile reelle d'un objet (statique ; TSubclassOf passe par adresse)
+  itemStackSize: ['game', '?GetStackSize@UFGItemDescriptor@@SAHV?$TSubclassOf@VUFGItemDescriptor@@@@@Z', 'int', ['pointer']],
   inventoryNumItems: ['game', '?GetNumItems@UFGInventoryComponent@@QEBAHV?$TSubclassOf@VUFGItemDescriptor@@@@@Z',
     'int', ['pointer', 'pointer']],
   // Non virtuelle : n'appeler que sur un AFGWireHologram (verifie via la vtable de Construct)
@@ -293,6 +327,22 @@ const NATIVE_SPECS = {
   cargoPlatformStaticClass: ['game', '?GetPrivateStaticClass@AFGBuildableTrainPlatformCargo@@CAPEAVUClass@@XZ', 'pointer', []],
   cargoPlatformSetLoadMode: ['game', '?SetIsInLoadMode@AFGBuildableTrainPlatformCargo@@UEAAX_N@Z', 'void', ['pointer', 'uint8']],
   cargoPlatformIsInLoadMode: ['game', '?GetIsInLoadMode@AFGBuildableTrainPlatformCargo@@UEBA_NXZ', 'uint8', ['pointer']],
+  // Retrait d'une balise de la carte : ne lit que FMapMarker::MarkerGUID (Multicast_RemoveMapMarker sur le serveur)
+  mapManagerRemoveMarker: ['game', '?RemoveMapMarker@AFGMapManager@@QEAAXAEBUFMapMarker@@@Z', 'void', ['pointer', 'pointer']],
+  // Pose d'une balise : copie inMarker dans outMarker, nouveau GUID, Multicast_CreateUpdateMapMarker sur le serveur
+  mapManagerAddMarker: ['game', '?AddNewMapMarker@AFGMapManager@@QEAA_NAEBUFMapMarker@@AEAU2@@Z', 'uint8', ['pointer', 'pointer', 'pointer']],
+  // Liaison directe de deux connecteurs de rail (dans les deux sens, sans recherche par collision) ; ne met pas a jour les
+  // graphes du systeme ferroviaire (seul AActor::ForceNetUpdate est appele) : voir railSubsystemRemoveTrack / AddTrack
+  railConnAddConnection: ['game', '?AddConnection@UFGRailroadTrackConnectionComponent@@QEAAXPEAV1@@Z', 'void', ['pointer', 'pointer']],
+  // Inscription d'un rail dans le systeme ferroviaire : AddTrack fusionne son graphe avec ceux des rails relies
+  railSubsystemRemoveTrack: ['game', '?RemoveTrack@AFGRailroadSubsystem@@QEAAXPEAVAFGBuildableRailroadTrack@@@Z', 'void', ['pointer', 'pointer']],
+  railSubsystemAddTrack: ['game', '?AddTrack@AFGRailroadSubsystem@@QEAAXPEAVAFGBuildableRailroadTrack@@@Z', 'void', ['pointer', 'pointer']],
+  // Session de sauvegarde de la partie (celle du mode de jeu), depuis n'importe quel objet du monde
+  saveSessionGet: ['game', '?Get@UFGSaveSession@@SAPEAV1@PEAVUObject@@@Z', 'pointer', ['pointer']],
+  // Sauvegarde nommee : nom par reference (copie), delegue de fin passe par valeur (tampon detruit par l'appele ; vide =
+  // jamais appele), donnee utilisateur. Ecrite au tick suivant du monde (tout de suite si le jeu est en pause) ; ignoree
+  // si une sauvegarde est deja en cours ou si le nom est invalide (: / \ * < > @ ^ |)
+  saveSessionSaveGame: ['game', '?SaveGame@UFGSaveSession@@QEAAXAEBVFString@@V?$TDelegate@$$A6AX_NAEBVFText@@PEAX@ZUFDefaultDelegateUserPolicy@@@@PEAX@Z', 'void', ['pointer', 'pointer', 'pointer', 'pointer']],
   railTrackLength: ['game', '?GetLength@AFGBuildableRailroadTrack@@QEBAMXZ', 'float', ['pointer']],
   railTrackGraphId: ['game', '?GetTrackGraphID@AFGBuildableRailroadTrack@@QEBAHXZ', 'int', ['pointer']],
   // Liste du monde entier tenue pour le scanner d'objets (FGuid passe par reference)
@@ -364,6 +414,20 @@ function readRotator(p) {
 function quatFromYaw(yawDeg) {
   const h = (yawDeg * Math.PI) / 360;
   return { x: 0, y: 0, z: Math.sin(h), w: Math.cos(h) };
+}
+
+// FRotator::Quaternion (degres) : tangage > 0 leve l'axe X local
+function quatFromRotator(pitchDeg, yawDeg, rollDeg) {
+  const h = Math.PI / 360;
+  const sp = Math.sin(pitchDeg * h), cp = Math.cos(pitchDeg * h);
+  const sy = Math.sin(yawDeg * h), cy = Math.cos(yawDeg * h);
+  const sr = Math.sin(rollDeg * h), cr = Math.cos(rollDeg * h);
+  return {
+    x: cr * sp * sy - sr * cp * cy,
+    y: -cr * sp * cy - sr * cp * sy,
+    z: cr * cp * sy - sr * sp * cy,
+    w: cr * cp * cy + sr * sp * sy,
+  };
 }
 
 // FTransform UE5 : Rotation @0x00 (quat), Translation @0x20, Scale3D @0x40 (W de padding a 0)

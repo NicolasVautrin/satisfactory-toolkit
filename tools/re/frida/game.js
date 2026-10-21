@@ -90,6 +90,17 @@ function calibrateHitResult(hit, start, end) {
   throw new Error('FHitResult : TraceStart introuvable, disposition inconnue');
 }
 
+// Decalage de FHitResult.Component (TWeakObjectPtr<UPrimitiveComponent>), lu par reflexion
+let hitComponentOff = null;
+function hitComponentOffset() {
+  if (hitComponentOff === null) {
+    const field = fieldsOf(findFirstObject('HitResult')).find((f) => f.name === 'Component');
+    if (!field) throw new Error('FHitResult.Component introuvable par reflexion');
+    hitComponentOff = field.offset;
+  }
+  return hitComponentOff;
+}
+
 // Lancer de rayon de start vers end. Le FHitResult reste en memoire (hit.ptr) pour etre passe a un hologramme.
 function trace(ctx, start, end) {
   const hit = zeroAlloc(0x200, 16);
@@ -275,7 +286,13 @@ function hologramDisqualifiers(holo) {
 }
 
 function requireInventory(ctx) {
-  const inventory = native('playerInventory')(requirePawn(ctx));
+  // Joueur aux commandes d'un vehicule (locomotive, constate le 21/10/2026) : le pion est le vehicule, l'inventaire est
+  // celui du personnage, toujours present (partie solo : le premier Char_Player). GetInventory n'est appele que sur un
+  // personnage.
+  let character = requirePawn(ctx);
+  const cls = scanClass('Char_Player_C');
+  if (!cls.isNull() && !isA(character, cls)) character = actorsOfClass(ctx, cls).filter(isUObject)[0] || NULL;
+  const inventory = character.isNull() ? NULL : native('playerInventory')(character);
   if (!isUObject(inventory)) throw new Error('inventaire du joueur introuvable (requis par la validation)');
   return inventory;
 }
@@ -350,13 +367,17 @@ function syncPlatformTrack(holo) {
 }
 
 // Position libre : transform impose
+// opts.pitch / opts.roll : inclinaison (degres, FRotator) ; opts.holoFields : champs de l'hologramme ecrits avant la
+// validation (ex. { mCurrentLength: 3800 } pour la longueur d'une poutre, en uu)
 function buildOnGameThread(ctx, recipePath, location, yaw, opts) {
+  const o = opts || {};
   return placeValidateConstruct(ctx, recipePath, location, (holo) => {
-    const transform = newTransform(location, quatFromYaw(yaw || 0));
+    const transform = newTransform(location, quatFromRotator(o.pitch || 0, yaw || 0, o.roll || 0));
     native('setActorTransform')(holo, transform.ptr, 0, NULL, TELEPORT_NONE);
     syncPlatformTrack(holo);
+    if (o.holoFields) writeFields(holo, o.holoFields);
     return { mode: 'transform' };
-  }, opts || {});
+  }, o);
 }
 
 // Quai de fret : chargement (true) ou dechargement (false) ; load omis = lecture seule
@@ -371,7 +392,8 @@ function platformLoadModeOnGameThread(path, load) {
 // C'est le jeu qui place l'hologramme : accroche aux gisements, grille des fondations, murs...
 // opts.scrollRotation : rotation appliquee par le jeu au placement (touche R du pistolet ; 180 retourne un quai accroche)
 function buildAimOnGameThread(ctx, recipePath, from, to, opts) {
-  const aim = trace(ctx, from, to);
+  // opts.onActor : point touche fabrique sur ce batiment au point `to` (loin du joueur, il n'a pas de collision)
+  const aim = opts && opts.onActor ? actorHit(ctx, requireActor(opts.onActor), to) : trace(ctx, from, to);
   if (!aim.blocked) throw new Error('la visee ne touche rien entre ' + JSON.stringify(r0(from)) + ' et ' + JSON.stringify(r0(to)));
   return placeValidateConstruct(ctx, recipePath, aim.location, (holo) => {
     if (opts && opts.scrollRotation != null) writeFields(holo, { mScrollRotation: Math.round(opts.scrollRotation) });
@@ -427,16 +449,22 @@ function powerStatus(actor) {
   return status;
 }
 
+// Bout de cable : un batiment (son premier connecteur electrique) ou un connecteur nomme
+// (ex. <tour>.PowerTowerConnection, la liaison entre tours, plus longue que celle des poteaux)
+function circuitEnd(path) {
+  const obj = requireActor(path);
+  const circuitClass = native('circuitConnectionStaticClass')();
+  if (isA(obj, circuitClass)) return { actor: requireActor(path.slice(0, path.lastIndexOf('.'))), conn: obj };
+  const conn = componentOfClass(obj, circuitClass);
+  if (conn.isNull()) throw new Error('aucun connecteur electrique sur ' + path);
+  return { actor: obj, conn };
+}
+
 // Cable entre les connecteurs electriques de deux batiments, valide par le jeu (longueur, connecteur plein,
 // cable deja existant) puis construit par AFGWireHologram::Construct -> AFGBuildableWire::Connect.
 function wireOnGameThread(ctx, fromPath, toPath, opts) {
-  const from = requireActor(fromPath);
-  const to = requireActor(toPath);
-  const circuitClass = native('circuitConnectionStaticClass')();
-  const fromConn = componentOfClass(from, circuitClass);
-  const toConn = componentOfClass(to, circuitClass);
-  if (fromConn.isNull()) throw new Error('aucun connecteur electrique sur ' + fromPath);
-  if (toConn.isNull()) throw new Error('aucun connecteur electrique sur ' + toPath);
+  const { actor: from, conn: fromConn } = circuitEnd(fromPath);
+  const { actor: to, conn: toConn } = circuitEnd(toPath);
   return placeValidateConstruct(ctx, POWER_LINE_RECIPE, actorPose(from).location, (holo) => {
     const construct = virtualMethod(holo, 'construct');
     if (construct.label.indexOf('AFGWireHologram::') !== 0) {
@@ -542,19 +570,46 @@ const BELT_MAX_CLICKS = 4;
 function beltOnGameThread(ctx, recipePath, fromPath, fromName, to, opts) {
   const start = requireConnection(fromPath, fromName);
   let endConn = null;
-  const endAim = () => {
+  const endAim = (holoAt) => {
     if (to.path !== undefined) {
       const conn = requireConnection(to.path, to.name);
+      endConn = conn;
       try {
         return aimAtConnector(ctx, conn);
       } catch (e) {
         const l = conn.location, n = conn.normal;
-        endConn = conn;
         return actorHit(ctx, requireActor(to.path), { x: l.x - n.x * 20, y: l.y - n.y * 20, z: l.z });
       }
     }
+    // opts.endOnActor : point touche fabrique sur ce batiment au point `to` (support de tuyau), sans imposer de
+    // connecteur : le jeu accroche le bout comme sous le pistolet. Le cote du point touche decide du sens : 30 cm
+    // avant le point d'accroche, du cote d'ou arrive le tuyau, celui-ci traverse le support ; au point d'accroche
+    // meme (ou en imposant SnapOnly0 par to.path), le bout se retourne face au support : boucle a chaque support.
+    if (opts && opts.endOnActor) return actorHit(ctx, requireActor(opts.endOnActor), to);
+    // opts.exactEnd : le bout est pose exactement au point donne (point touche fabrique au-dessus du sol), par exemple
+    // pour une ligne a altitude constante
+    if (opts && opts.exactEnd) return pointAim(ctx, to);
+    // opts.endZ (ascenseur) : la hauteur se lit sur le rayon de visee, la ou il croise l'axe vertical de l'ascenseur
+    // (FHologramHelpers::CalcPoleHeight). Rayon horizontal fabrique qui croise cet axe a l'altitude voulue.
+    if (opts && opts.endZ != null && holoAt) {
+      const t = pointAim(ctx, { x: holoAt.x, y: holoAt.y, z: opts.endZ });
+      writeVector(t.hit.ptr.add(hitLayout.traceStart), { x: holoAt.x - 1000, y: holoAt.y, z: opts.endZ });
+      writeVector(t.hit.ptr.add(hitLayout.traceStart + 0x18), { x: holoAt.x + 1000, y: holoAt.y, z: opts.endZ });
+      return t;
+    }
     const aim = trace(ctx, { x: to.x, y: to.y, z: to.z + 1000 }, { x: to.x, y: to.y, z: to.z - 1000 });
     if (!aim.blocked) throw new Error('rien sous le point d\'arrivee ' + JSON.stringify(r0(to)));
+    // opts.poleHeight (uu) : hauteur du poteau ajoute en bout. Le jeu la lit la ou le rayon de visee croise l'axe du
+    // poteau (FHologramHelpers::CalcPoleHeight) ; un rayon vertical, sur l'axe, ne donne pas de hauteur et le poteau
+    // prend sa hauteur maximale (7 m constates). Point touche garde au sol, rayon remplace par un rayon horizontal
+    // dans l'axe du convoyeur, a la hauteur voulue au-dessus du point touche.
+    if (opts && opts.poleHeight != null) {
+      const d = { x: to.x - start.location.x, y: to.y - start.location.y };
+      const k = 1000 / (Math.hypot(d.x, d.y) || 1);
+      const z = aim.location.z + opts.poleHeight;
+      writeVector(aim.hit.ptr.add(hitLayout.traceStart), { x: to.x - d.x * k, y: to.y - d.y * k, z });
+      writeVector(aim.hit.ptr.add(hitLayout.traceStart + 0x18), { x: to.x + d.x * k, y: to.y + d.y * k, z });
+    }
     return aim;
   };
   return placeValidateConstruct(ctx, recipePath, start.location, (holo) => {
@@ -570,14 +625,27 @@ function beltOnGameThread(ctx, recipePath, fromPath, fromName, to, opts) {
     let startAim;
     let fabricated = false;
     try {
+      // opts.fabricatedStart : point touche fabrique sur le batiment de depart meme pres du joueur (le rayon peut
+      // toucher le poteau sous le joint, qui oriente alors un ascenseur a l'envers)
+      if (opts && opts.fabricatedStart) throw new Error('point touche fabrique demande');
       startAim = aimAtConnector(ctx, start);
     } catch (e) {
       const l = start.location, n = start.normal;
       startAim = actorHit(ctx, requireActor(fromPath), { x: l.x - n.x * 20, y: l.y - n.y * 20, z: l.z });
+      // Rayon de visee aligne sur le connecteur, de l'exterieur vers l'interieur, comme un joueur qui le regarde :
+      // un ascenseur prend son orientation du rayon (vertical, il se pose a l'envers par-dessus le convoyeur)
+      writeVector(startAim.hit.ptr.add(hitLayout.traceStart), { x: l.x + n.x * 100, y: l.y + n.y * 100, z: l.z });
+      writeVector(startAim.hit.ptr.add(hitLayout.traceStart + 0x18), { x: l.x - n.x * 100, y: l.y - n.y * 100, z: l.z });
       fabricated = true;
     }
+    // opts.startScroll : rotation de la molette au depart (ascenseur accroche au bout d'un convoyeur : 180 le retourne)
+    if (opts && opts.startScroll != null) writeFields(holo, { mScrollRotation: Math.round(opts.startScroll) });
     update.fn(holo, startAim.hit.ptr);
-    if (fabricated && snapSlots.readPointer().isNull()) snapSlots.writePointer(start.comp);
+    // ConfigureComponents raccorde le troncon construit aux connecteurs de mSnappedConnectionComponents, avant qu'il
+    // n'entre dans une chaine de convoyeurs. Or au bout d'un troncon pose sur un poteau, FindOverlappingConnections
+    // retient souvent le point d'accroche du poteau (SnapOnly0), qui ne se raccorde pas ; loin du joueur il ne trouve
+    // rien. On y inscrit donc le connecteur vise, apres chaque visee (le jeu le recalcule).
+    snapSlots.writePointer(start.comp);
     const snapped = distance(actorPose(holo).location, start.location);
     const tolerance = (opts && opts.snapTolerance) || 5;
     if (snapped > tolerance) throw new Error('accroche au depart echouee (' + Math.round(snapped) + ' uu du connecteur ' + fromName + ')');
@@ -585,15 +653,21 @@ function beltOnGameThread(ctx, recipePath, fromPath, fromName, to, opts) {
     // Arrivee : visee, validation, clic... jusqu'a la fin du placement. opts.endScroll : rotation de la molette pour
     // l'arrivee (ascenseur : 180 tourne la sortie du bas a l'oppose de celle du haut)
     if (opts && opts.endScroll != null) writeFields(holo, { mScrollRotation: Math.round(opts.endScroll) });
-    const aim = endAim();
+    const aim = endAim(actorPose(holo).location);
     for (let clicks = 1; clicks <= BELT_MAX_CLICKS; clicks++) {
       update.fn(holo, aim.hit.ptr);
-      if (endConn !== null && snapSlots.add(8).readPointer().isNull()) snapSlots.add(8).writePointer(endConn.comp);
+      snapSlots.writePointer(start.comp);
+      if (endConn !== null) snapSlots.add(8).writePointer(endConn.comp);
       native('resetConstructDisqualifiers')(holo);
       native('validatePlacementAndCost')(holo, inventory);
       if (click.fn(holo, 0) !== 0) {
         native('resetConstructDisqualifiers')(holo);
-        return { mode: 'aim', from: fromName, to: to.path !== undefined ? to.name : r0(aim.location), clicks: clicks + 1 };
+        // Connecteurs que ConfigureComponents raccordera au troncon construit (null : bout libre ou poteau)
+        const snappedNames = [0, 8].map((o) => {
+          const c = snapSlots.add(o).readPointer();
+          return isUObject(c) ? splitFullName(c).path.split('.').slice(-2).join('.') : null;
+        });
+        return { mode: 'aim', from: fromName, to: to.path !== undefined ? to.name : r0(aim.location), clicks: clicks + 1, snapped: snappedNames, fabricatedStart: fabricated };
       }
     }
     throw new Error('placement non termine apres ' + (BELT_MAX_CLICKS + 1) + ' clics ; disqualificateurs : '
@@ -731,13 +805,40 @@ function aimAtRailEndForTrack(ctx, conn) {
 // Le rayon part 50 cm au-dessus du point : plus haut, il toucherait ce qui surplombe le point (quai au-dessus d'une voie
 // en contrebas) et l'hologramme s'y accrocherait.
 function pointAim(ctx, p) {
-  const t = trace(ctx, { x: p.x, y: p.y, z: p.z + 50 }, { x: p.x, y: p.y, z: p.z - 100000 });
-  if (!t.blocked) throw new Error('rien sous le point ' + JSON.stringify(r0(p)));
+  let t = trace(ctx, { x: p.x, y: p.y, z: p.z + 50 }, { x: p.x, y: p.y, z: p.z - 100000 });
+  // Point en l'air au-dessus d'un batiment (voie a un etage d'helice, au-dessus d'une voie ou d'une gare) : l'hologramme
+  // s'accrocherait a ce que le rayon touche (bout de la voie du dessous, constate le 21/10/2026 : rails a blanc de
+  // l'etage 1 tires 25 m plus bas). A plus de 2 m sous le point, on passe a travers tout ce qui n'est pas le relief.
+  // (60 traversees : deux gares superposees en comptent plus de 10, plancher, toit, quais...)
+  for (let k = 0; t.blocked && k < 60 && p.z - t.location.z > 200 && !isLandscapeHit(t); k++) {
+    t = trace(ctx, { x: p.x, y: p.y, z: t.location.z - 100 }, { x: p.x, y: p.y, z: p.z - 100000 });
+  }
+  if (!t.blocked) {
+    // Relief non charge (a plus de ~1,3 km du joueur) : le point touche d'un rayon sous les pieds du joueur sert de
+    // gabarit, deplace ensuite au point voulu (actorHit y inscrit l'acteur vise)
+    const me = actorPose(requirePawn(ctx)).location;
+    t = trace(ctx, { x: me.x, y: me.y, z: me.z - 250 }, { x: me.x, y: me.y, z: me.z - 100000 });
+    if (!t.blocked) throw new Error('rien sous le point ' + JSON.stringify(r0(p)) + ' ni sous le joueur');
+    writeVector(t.hit.ptr.add(hitLayout.traceStart), { x: p.x, y: p.y, z: p.z + 50 });
+    writeVector(t.hit.ptr.add(hitLayout.traceStart + 0x18), { x: p.x, y: p.y, z: p.z - 100000 });
+  }
   writeVector(t.hit.ptr.add(hitLayout.location), p);
   writeVector(t.hit.ptr.add(hitLayout.location + 0x18), p);
-  writeVector(t.hit.ptr.add(hitLayout.normal), { x: 0, y: 0, z: 1 });
-  writeVector(t.hit.ptr.add(hitLayout.impactNormal), { x: 0, y: 0, z: 1 });
+  // p.grade : pente de la voie en ce point (fraction, > 0 = monte vers p.yaw). Le bout de rail prend la pente de la
+  // surface visee : normale d'un plan qui monte de p.grade le long de p.yaw (sinon horizontale)
+  let n = { x: 0, y: 0, z: 1 };
+  if (p.grade) {
+    const a = ((p.yaw || 0) * Math.PI) / 180, k = Math.hypot(p.grade, 1);
+    n = { x: (-p.grade * Math.cos(a)) / k, y: (-p.grade * Math.sin(a)) / k, z: 1 / k };
+  }
+  writeVector(t.hit.ptr.add(hitLayout.normal), n);
+  writeVector(t.hit.ptr.add(hitLayout.impactNormal), n);
   return Object.assign(t, { location: { x: p.x, y: p.y, z: p.z } });
+}
+
+function isLandscapeHit(t) {
+  const comp = native('weakObjectPtrGet')(t.hit.ptr.add(hitComponentOffset()));
+  return !comp.isNull() && /^Landscape/.test(splitFullName(comp).cls);
 }
 
 function snappedRailConnections(holo) {
@@ -747,8 +848,10 @@ function snappedRailConnections(holo) {
 
 // Rail pose comme le pistolet : visee du depart (bout de voie ou point libre), clic, visee de l'arrivee, clic.
 //  - from / to = { path, name } : connecteur d'un rail (accroche verifiee) ;
-//  - from / to = { x, y, z, yaw } : point libre au sol ; yaw = direction de la voie en ce point (degres), imposee par
-//    la rotation de l'hologramme (mScrollRotation, arrondie au pas de rotation du jeu).
+//  - from / to = { x, y, z, yaw, grade } : point libre au sol ; yaw = direction de la voie en ce point (degres), imposee par
+//    la rotation de l'hologramme (mScrollRotation, arrondie au pas de rotation du jeu) ; grade = pente en ce point
+//    (fraction, cf. pointAim), sans quoi le bout est a plat et le rail fait un S entre deux points d altitudes differentes ;
+//    auto = direction d arrivee calculee par le jeu (cf. plus bas).
 // Le jeu trace la courbe et la valide (longueur, rayon de courbure, pente) : disqualificateurs FGCD...
 function railOnGameThread(ctx, recipe, from, to, opts) {
   const isConn = (e) => e && e.path !== undefined;
@@ -767,7 +870,8 @@ function railOnGameThread(ctx, recipe, from, to, opts) {
       throw new Error('accroche au depart echouee : ' + (isUObject(got) ? compName(got) + ' de ' + pathOrNull(native('railConnTrack')(got)) : 'aucun bout de voie'));
     }
     if (click.fn(holo, 0) !== 0) throw new Error('placement termine des le depart : etat de l\'hologramme inattendu');
-    if (!endConn) writeFields(holo, { mScrollRotation: Math.round(to.yaw || 0), mUseCustomEndRotation: true });
+    // to.auto : direction d'arrivee laissee au jeu (pas de mUseCustomEndRotation), qui n'est pas arrondie au pas de 10 deg
+    if (!endConn && !to.auto) writeFields(holo, { mScrollRotation: Math.round(to.yaw || 0), mUseCustomEndRotation: true });
     update.fn(holo, (endConn ? aimAtRailEndForTrack(ctx, endConn) : groundAim(to)).hit.ptr);
     let endForced = false;
     if (endConn && !snappedRailConnections(holo)[1].equals(endConn.comp)) {
@@ -793,10 +897,24 @@ function railOnGameThread(ctx, recipe, from, to, opts) {
     const rules = readProperties(holo, { mMinLength: 'float', mMaxLength: 'float', mMinBendRadius: 'float', mMaxGrade: 'float' });
     if (click.fn(holo, 0) === 0) throw new Error('placement non termine apres 2 clics ; disqualificateurs : ' + JSON.stringify(hologramDisqualifiers(holo)));
     native('resetConstructDisqualifiers')(holo);
+    // Construct raccorde le rail aux connecteurs de mSnappedConnectionComponents[0|1] (ConfigureComponents), mais le jeu
+    // les recherche par collision (TryFindAndSnapToOverlappingConnection -> FindClosestOverlappingConnection) a chaque
+    // mise a jour et les efface quand il ne trouve rien : loin du joueur, l'accroche du depart, reussie a la visee, etait
+    // perdue (departs restes libres a 1,2 et 1,5 km, 21/10/2026). On reinscrit donc les connecteurs voulus avant Construct.
+    const lost = snappedRailConnections(holo).map((c) => (isUObject(c) ? compName(c) + ' de ' + pathOrNull(native('railConnTrack')(c)) : null));
+    const slots = holo.add(propertyOffset(native('getObjectClass')(holo), 'mSnappedConnectionComponents'));
+    let startForced = false;
+    if (startConn && !slots.readPointer().equals(startConn.comp)) { slots.writePointer(startConn.comp); startForced = true; }
+    if (endConn && !slots.add(8).readPointer().equals(endConn.comp)) { slots.add(8).writePointer(endConn.comp); endForced = true; }
+    // connecteurs que Construct va raccorder (mSnappedConnectionComponents[0|1]) : nom + rail, ou null
+    const snapped = snappedRailConnections(holo).map((c) => (isUObject(c) ? compName(c) + ' de ' + pathOrNull(native('railConnTrack')(c)) : null));
     return {
       mode: 'aim',
+      snapped,
+      snappedByGame: lost,
       from: startConn ? startConn.name : r0(from),
       to: endConn ? endConn.name : r0(to),
+      startForced,
       endForced,
       rules,
       spline,
@@ -860,12 +978,27 @@ function itemCount(inventory, itemClass) {
   return native('inventoryNumItems')(inventory, slot.ptr);
 }
 
+// Facteur de charge (la productivite affichee par le jeu) : octet mCurrentProductivity, 255 = 100 %. Echelle verifiee
+// sur trois foreuses contre leur duree de production mesuree (mLastProductivityMeasurement*). null sans mesure.
+const productivityOffsets = new Map();
+function productivity(actor) {
+  const cls = native('getObjectClass')(actor);
+  if (!productivityOffsets.has(cls.toString())) {
+    let off = null;
+    try { off = propertyOffset(cls, 'mCurrentProductivity'); } catch (e) { /* classe sans mesure */ }
+    productivityOffsets.set(cls.toString(), off);
+  }
+  const off = productivityOffsets.get(cls.toString());
+  return off === null ? null : actor.add(off).readU8() / 255;
+}
+
 function machineStatus(actor) {
   const status = {
     class: splitFullName(actor).cls,
     pendingPotential: native('getPendingPotential')(actor),
     currentPotential: native('getCurrentPotential')(actor),
     maxPotential: virtualMethod(actor, 'getCurrentMaxPotential').fn(actor),
+    productivity: productivity(actor),
     paused: native('isProductionPaused')(actor) !== 0,
     power: powerStatus(actor),
   };
@@ -998,6 +1131,36 @@ function availableRecipesOnGameThread(ctx) {
 
 // Cree `count` objets (eclats de puissance par defaut) directement dans l'inventaire de potentiel de la machine.
 // Gratuit (choix utilisateur). Le jeu filtre les emplacements et previent la machine (OnPotentialInventoryItemChanged).
+const SPECIAL_DESCRIPTORS = {
+  any: 'wildCardDescriptorClass',
+  overflow: 'overflowDescriptorClass',
+  none: 'noneDescriptorClass',
+  undefined: 'anyUndefinedDescriptorClass',
+};
+function smartRulesOnGameThread(path, rules) {
+  const actor = requireActor(path);
+  const off = propertyOffset(native('getObjectClass')(actor), 'mSortRules'); // leve une erreur hors repartiteur intelligent
+  const read = () => {
+    const data = actor.add(off).readPointer();
+    const num = actor.add(off + 8).readS32();
+    const out = [];
+    for (let i = 0; i < num; i++) out.push({ item: className(data.add(16 * i).readPointer()), output: data.add(16 * i + 8).readS32() });
+    return out;
+  };
+  if (rules) {
+    while (actor.add(off + 8).readS32() > 0) native('splitterRemoveSortRuleAt')(actor, 0);
+    for (const r of rules) {
+      const cls = SPECIAL_DESCRIPTORS[r.item] ? native(SPECIAL_DESCRIPTORS[r.item])() : loadClass(r.item);
+      if (!isUObject(cls)) throw new Error('classe d\'objet introuvable : ' + r.item);
+      const rule = zeroAlloc(16, 8);
+      rule.ptr.writePointer(cls);
+      rule.ptr.add(8).writeS32(r.output);
+      native('splitterAddSortRule')(actor, rule.ptr);
+    }
+  }
+  return { rules: read() };
+}
+
 function addPotentialItemsOnGameThread(path, count, itemPath) {
   const actor = requireFactory(path);
   const inventory = native('getPotentialInventory')(actor);
@@ -1012,6 +1175,21 @@ function addPotentialItemsOnGameThread(path, count, itemPath) {
   native('makeInventoryStack')(stack.ptr, count, item.ptr);
   const added = virtualMethod(inventory, 'addStack').fn(inventory, stack.ptr, 1);
   return Object.assign({ item: className(itemClass), requested: count, added }, machineStatus(actor));
+}
+
+// Cree `count` objets de la classe itemPath dans un inventaire (chemin complet d'un UFGInventoryComponent, ex.
+// <centrale>.FuelInventory). Uniquement sur accord explicite de l'utilisateur : c'est fabriquer des objets.
+function addItemsOnGameThread(inventoryPath, count, itemPath) {
+  const inventory = requireActor(inventoryPath);
+  const itemClass = loadClass(itemPath);
+  const classSlot = zeroAlloc(8, 8);
+  classSlot.ptr.writePointer(itemClass);
+  const item = zeroAlloc(0x80, 16);
+  native('makeInventoryItem')(item.ptr, classSlot.ptr);
+  const stack = zeroAlloc(0x80, 16);
+  native('makeInventoryStack')(stack.ptr, count, item.ptr);
+  const added = virtualMethod(inventory, 'addStack').fn(inventory, stack.ptr, 1);
+  return { item: className(itemClass), requested: count, added, now: itemCount(inventory, itemClass) };
 }
 
 function dismantleOnGameThread(ctx, path, force) {
@@ -1080,7 +1258,7 @@ function pickupOnGameThread(ctx, path, near) {
 // Resume leger d'une machine pour les scans (sans la liste des recettes disponibles)
 function machineBrief(actor) {
   if (!isA(actor, native('factoryStaticClass')())) return null;
-  const brief = { potential: native('getPendingPotential')(actor), paused: native('isProductionPaused')(actor) !== 0 };
+  const brief = { potential: native('getPendingPotential')(actor), productivity: productivity(actor), paused: native('isProductionPaused')(actor) !== 0 };
   if (isA(actor, native('manufacturerStaticClass')())) {
     const recipe = zeroAlloc(8, 8);
     native('getCurrentRecipe')(actor, recipe.ptr);
@@ -1194,6 +1372,31 @@ function worldScannablesOnGameThread(ctx, list, opts) {
 
 // --- RPC ----------------------------------------------------------------------------------------
 
+// Acces aux instances legeres d'une classe : at(i) = null hors du tableau, sinon { valid, location } (la reference
+// lw.ref est alors initialisee sur cette instance, prete pour lwRefRemove)
+function lightweightOf(ctx, classPath) {
+  const sub = native('lwSubsystemGet')(ctx.subsystem);
+  if (!isUObject(sub)) throw new Error('sous-systeme des pieces legeres introuvable');
+  const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+  slot.ptr.writePointer(loadClass(classPath));
+  const ref = zeroAlloc(0x100, 16), xf = zeroAlloc(0x60, 16);
+  native('lwRefCtor')(ref.ptr);
+  let n = 0;
+  return {
+    ref,
+    count: () => n,
+    at(i) {
+      const data = native('lwRuntimeData')(sub, slot.ptr, i);
+      if (data.isNull()) return null;
+      n = Math.max(n, i + 1);
+      if (native('lwDataIsValid')(data) === 0) return { valid: false };
+      native('lwRefInitialize')(ref.ptr, sub, slot.ptr, i);
+      native('lwRefTransform')(ref.ptr, xf.ptr);
+      return { valid: true, location: readVec(xf.ptr.add(0x20)) };
+    },
+  };
+}
+
 function withContext(label, fn) {
   return onGameThread(label, (subsystem) => fn(gameContext(subsystem)));
 }
@@ -1264,11 +1467,21 @@ Object.assign(rpc.exports, {
     }));
   },
   // Lancers de rayons en lot : [{from, to}] -> [{hit, location}]. Les collisions ne sont chargees qu'autour du joueur.
-  rays(segments) {
-    return withContext('rays', (ctx) => segments.map(({ from, to }) => {
-      const t = trace(ctx, from, to);
-      return t.blocked ? { hit: true, location: r0(t.location) } : { hit: false };
-    }));
+  // opts.who : composant touche (FHitResult.Component), pour savoir si c'est le relief, un arbre, un rocher, un batiment
+  rays(segments, opts) {
+    return withContext('rays', (ctx) => {
+      const who = opts && opts.who ? hitComponentOffset() : null;
+      return segments.map(({ from, to }) => {
+        const t = trace(ctx, from, to);
+        if (!t.blocked) return { hit: false };
+        const out = { hit: true, location: r0(t.location) };
+        if (who !== null) {
+          const comp = native('weakObjectPtrGet')(t.hit.ptr.add(who));
+          out.component = comp.isNull() ? null : splitFullName(comp);
+        }
+        return out;
+      });
+    });
   },
   // opts.machine : ajoute recette / vitesse / pause des machines
   scan(kind, center, radius, limit, opts) {
@@ -1304,6 +1517,48 @@ Object.assign(rpc.exports, {
   },
   power(path) {
     return withContext('power', () => powerStatus(requireActor(path)));
+  },
+  // Parcours du reseau electrique depuis un batiment, par ses connecteurs (cables, liaisons cachees), sans traverser
+  // les batiments `exclude` : premier generateur dont la classe contient `target` (ex. GeneratorNuclear), ou rien.
+  // Sert a savoir si retirer des poteaux couperait un batiment de la production.
+  powerReach(startPath, exclude, target, maxNodes) {
+    return withContext('powerReach', () => {
+      const circuitClass = native('circuitConnectionStaticClass')();
+      const skip = new Set((exclude || []).map((p) => requireActor(p).toString()));
+      const start = requireActor(startPath);
+      const seen = new Set([start.toString()]), queue = [{ actor: start, depth: 0 }];
+      let visited = 0;
+      while (queue.length && visited < (maxNodes || 200000)) {
+        const { actor, depth } = queue.shift();
+        visited++;
+        const cls = splitFullName(actor).cls;
+        if (actor !== start && target && cls.indexOf(target) >= 0) return { found: splitFullName(actor).path, depth, visited };
+        const slot = zeroAlloc(8, 8); slot.ptr.writePointer(circuitClass);
+        const arr = zeroAlloc(16, 8);
+        native('getComponentsByClass')(actor, arr.ptr, slot.ptr);
+        for (const comp of takePointerArray(arr.ptr)) {
+          if (!isUObject(comp)) continue;
+          const links = zeroAlloc(16, 8);
+          native('circuitGetConnections')(comp, links.ptr);
+          for (const other of takePointerArray(links.ptr)) {
+            if (!isUObject(other)) continue;
+            const path = splitFullName(other).path, owner = findObject(path.slice(0, path.lastIndexOf('.')));
+            if (owner.isNull() || seen.has(owner.toString()) || skip.has(owner.toString())) continue;
+            seen.add(owner.toString());
+            queue.push({ actor: owner, depth: depth + 1 });
+          }
+        }
+      }
+      return { found: null, visited };
+    });
+  },
+  // Circuit electrique par son numero (power().circuitId) : chemin de l'objet, a lire ensuite avec dump
+  // (mPowerProduced, mPowerConsumed, mPowerProductionCapacity, mIsFuseTriggered...)
+  circuit(subsystemPath, id) {
+    return withContext('circuit', () => {
+      const c = native('findCircuit')(requireActor(subsystemPath), id);
+      return isUObject(c) ? { path: splitFullName(c).path } : { path: null };
+    });
   },
   // Recette lue dans le jeu : duree, ingredients et produits (quantite et debit/min a 100 %), producteurs
   recipe(name) {
@@ -1356,8 +1611,179 @@ Object.assign(rpc.exports, {
     });
   },
   // Eclats de puissance (ou autre objet de potentiel via itemPath), crees gratuitement dans la machine
+  // Pieces legeres d'une classe (chemin complet, ex. .../Build_Foundation_8x1_01.Build_Foundation_8x1_01_C) : instances
+  // valides a moins de radius (uu, en plan) de center ; sans center, toutes. -> { count, items: [{ index, location }] }
+  lightweight(classPath, center, radius) {
+    return withContext('lightweight', (ctx) => {
+      const lw = lightweightOf(ctx, classPath), items = [];
+      for (let i = 0; ; i++) {
+        const st = lw.at(i);
+        if (st === null) break;
+        if (!st.valid) continue;
+        if (center && Math.hypot(st.location.x - center.x, st.location.y - center.y) > radius) continue;
+        items.push({ index: i, location: r0(st.location) });
+      }
+      return { count: lw.count(), items };
+    });
+  },
+  // Retire des pieces legeres par numero, chacune seulement si elle est encore la ou on l'attend (at[k], a 20 uu pres)
+  lightweightRemove(classPath, indices, at) {
+    return withContext('lightweightRemove', (ctx) => {
+      const lw = lightweightOf(ctx, classPath);
+      return indices.map((i, k) => {
+        const st = lw.at(i);
+        if (st === null || !st.valid) return { index: i, removed: false, reason: 'absente' };
+        if (at && at[k] && Math.hypot(st.location.x - at[k].x, st.location.y - at[k].y, st.location.z - at[k].z) > 20) {
+          return { index: i, removed: false, reason: 'ailleurs : ' + JSON.stringify(r0(st.location)) };
+        }
+        return { index: i, removed: native('lwRefRemove')(lw.ref.ptr) !== 0 };
+      });
+    });
+  },
+  // Taille de pile reelle (UFGItemDescriptor::GetStackSize) de chaque objet : chemins de classes
+  stackSize(itemPaths) {
+    return withContext('stackSize', () => itemPaths.map((p) => {
+      const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+      const cls = loadClass(p);
+      slot.ptr.writePointer(cls);
+      return { item: className(cls), stackSize: native('itemStackSize')(slot.ptr) };
+    }));
+  },
+  addItems(inventoryPath, count, itemPath) {
+    return withContext('addItems', () => addItemsOnGameThread(inventoryPath, count, itemPath));
+  },
+  // Regles de tri d'un repartiteur intelligent (AFGBuildableSplitterSmart.mSortRules) : sans rules, les lit ; avec rules
+  // = [{ item, output }], les remplace. item : 'any' | 'overflow' | 'none' | 'undefined' | chemin de classe d'objet ;
+  // output : 0, 1 (centre) ou 2.
+  smartRules(path, rules) {
+    return withContext('smartRules', () => smartRulesOnGameThread(path, rules));
+  },
   addShards(path, count, itemPath) {
     return withContext('addShards', () => addPotentialItemsOnGameThread(path, count || 1, itemPath));
+  },
+  // Rearme le disjoncteur d'un circuit, comme le bouton du jeu (UFGPowerCircuit::ResetFuse avec le controleur du joueur)
+  resetFuse(subsystemPath, id) {
+    return withContext('resetFuse', (ctx) => {
+      const c = native('findCircuit')(requireActor(subsystemPath), id);
+      if (!isUObject(c)) throw new Error('circuit ' + id + ' introuvable');
+      const pawn = requirePawn(ctx);
+      const controller = pawn.add(propertyOffset(native('getObjectClass')(pawn), 'Controller')).readPointer();
+      if (!isUObject(controller)) throw new Error('controleur du joueur introuvable');
+      native('resetFuse')(c, controller);
+      return { circuit: splitFullName(c).path };
+    });
+  },
+  // Toutes les machines (AFGBuildableFactory, generateurs compris) : pause, cadence, consommation a cette cadence
+  // (mPowerConsumption x cadence ^ mPowerConsumptionExponent, lus par reflexion)
+  machines() {
+    return withContext('machines', (ctx) => {
+      const byClass = new Map();
+      const out = [];
+      for (const a of actorsOfClass(ctx, native('factoryStaticClass')())) {
+        if (!isUObject(a)) continue;
+        const cls = native('getObjectClass')(a);
+        if (!byClass.has(cls.toString())) {
+          let power = null, exponent = null;
+          try { power = propertyOffset(cls, 'mPowerConsumption'); exponent = propertyOffset(cls, 'mPowerConsumptionExponent'); } catch (e) { /* sans consommation */ }
+          byClass.set(cls.toString(), { power, exponent });
+        }
+        const off = byClass.get(cls.toString());
+        const name = splitFullName(a);
+        const p = actorPose(a).location;
+        const potential = native('getCurrentPotential')(a);
+        const base = off.power === null ? 0 : a.add(off.power).readFloat();
+        const exp = off.exponent === null ? 1 : a.add(off.exponent).readFloat();
+        out.push({ path: name.path, cls: name.cls, x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z),
+          paused: native('isProductionPaused')(a) !== 0, potential, mw: Math.round(base * Math.pow(potential, exp) * 10) / 10 });
+      }
+      return out;
+    });
+  },
+  // Pause (true) ou reprise (false) d'une liste de machines ; renvoie le nombre traite et les echecs
+  pauseMany(paths, paused) {
+    return withContext('pauseMany', () => {
+      let done = 0;
+      const failed = [];
+      for (const path of paths) {
+        try {
+          const actor = requireFactory(path);
+          virtualMethod(actor, 'setIsProductionPaused').fn(actor, paused ? 1 : 0);
+          done++;
+        } catch (e) { failed.push(path.split('.').pop() + ' : ' + e.message); }
+      }
+      return { done, failed };
+    });
+  },
+  // Machines en amont d'une liste d'acteurs, par les convoyeurs et les tuyaux. On traverse convoyeurs, ascenseurs,
+  // repartiteurs, fusionneurs, stockages, tuyaux, jonctions, pompes, vannes et reservoirs ; on remonte a leur tour les
+  // machines a recette ; on s'arrete aux quais de gare et aux ports de drones (relies a une autre gare ou un autre port,
+  // a remonter a part). Un tuyau
+  // n'a pas de sens : une machine n'y est une source que par un raccord producteur.
+  // down : vers l'aval (sorties, raccords producteurs ; une machine n'est atteinte par un tuyau que par un consommateur)
+  upstream(paths, maxNodes, down) {
+    return withContext('upstream', () => {
+      const beltDir = down ? 'output' : 'input';
+      const ownPipe = down ? 'tuyau-producteur' : 'tuyau-consommateur';
+      const otherPipe = down ? 'tuyau-consommateur' : 'tuyau-producteur';
+      const uclass = native('uclassStaticClass')();
+      const manufacturer = native('manufacturerStaticClass')();
+      const extractor = findFirstObject('FGBuildableResourceExtractorBase', uclass);
+      const generator = findFirstObject('FGBuildableGenerator', uclass);
+      const cargo = findFirstObject('FGBuildableTrainPlatformCargo', uclass);
+      const drone = findFirstObject('FGBuildableDroneStation', uclass);
+      const kindOf = (a) => (isA(a, cargo) ? 'quai' : !drone.isNull() && isA(a, drone) ? 'drone'
+        : isA(a, manufacturer) || isA(a, extractor) || isA(a, generator) ? 'machine' : 'passif');
+      const linkedOf = (comp) => {
+        const p = comp.add(propertyOffset(native('getObjectClass')(comp), 'mConnectedComponent')).readPointer();
+        return isUObject(p) ? p : null;
+      };
+      const pipeType = (comp) => PIPE_CONNECTION_TYPE[comp.add(propertyOffset(native('getObjectClass')(comp), 'mPipeConnectionType')).readU8()];
+      const ownerOf = (comp) => {
+        const path = splitFullName(comp).path;
+        return findObject(path.slice(0, path.lastIndexOf('.')));
+      };
+      const seen = new Set();
+      const queue = [];
+      const machines = [];
+      const platforms = [];
+      for (const p of paths) {
+        const a = requireActor(p);
+        seen.add(a.toString());
+        queue.push({ actor: a, depth: 0 });
+      }
+      let visited = 0;
+      while (queue.length && visited < (maxNodes || 50000)) {
+        const { actor, depth } = queue.shift();
+        visited++;
+        const passive = kindOf(actor) === 'passif';
+        const links = [];
+        for (const c of factoryConnections(actor)) if (c.direction === beltDir && c.connected) links.push({ comp: linkedOf(c.comp), pipe: false });
+        for (const c of pipeConnections(actor)) if (c.connected && (passive || c.direction === ownPipe)) links.push({ comp: linkedOf(c.comp), pipe: true });
+        for (const { comp, pipe } of links) {
+          if (comp === null) continue;
+          const owner = ownerOf(comp);
+          if (owner.isNull() || seen.has(owner.toString())) continue;
+          const kind = kindOf(owner);
+          // Par un tuyau, une machine voisine qui consomme le meme fluide n'est pas une source
+          if (pipe && kind !== 'passif' && pipeType(comp) !== otherPipe) continue;
+          seen.add(owner.toString());
+          const name = splitFullName(owner);
+          const short = name.path.split('.').pop();
+          if (kind === 'quai' || kind === 'drone') { platforms.push({ path: short, kind, depth: depth + 1, paused: native('isProductionPaused')(owner) !== 0 }); continue; }
+          if (kind === 'machine') {
+            const m = { path: short, cls: name.cls.split('.').pop(), depth: depth + 1, paused: native('isProductionPaused')(owner) !== 0 };
+            if (isA(owner, manufacturer)) {
+              const recipe = zeroAlloc(8, 8);
+              native('getCurrentRecipe')(owner, recipe.ptr);
+              m.recipe = className(recipe.ptr.readPointer());
+            }
+            machines.push(m);
+            queue.push({ actor: owner, depth: depth + 1 });
+          } else queue.push({ actor: owner, depth });
+        }
+      }
+      return { visited, truncated: queue.length > 0, machines, platforms };
+    });
   },
   pause(path, paused) {
     return withContext('pause', () => {
@@ -1391,5 +1817,94 @@ Object.assign(rpc.exports, {
   },
   dismantle(path, force) {
     return withContext('dismantle', (ctx) => dismantleOnGameThread(ctx, path, force === true));
+  },
+  // Relie deux connecteurs de rail sans recherche par collision (UFGRailroadTrackConnectionComponent::AddConnection, comme
+  // ConfigureComponents a la construction), puis reinscrit le rail A dans le systeme ferroviaire (RemoveTrack + AddTrack,
+  // qui fusionne son graphe avec ceux des rails relies). Repare un joint reste libre parce que pose loin du joueur.
+  railLink(subsystemPath, trackA, nameA, trackB, nameB) {
+    return withContext('railLink', () => {
+      const sub = requireActor(subsystemPath);
+      const ta = requireActor(trackA), tb = requireActor(trackB);
+      const a = requireRailConnection(trackA, nameA), b = requireRailConnection(trackB, nameB);
+      const graphs = () => [native('railTrackGraphId')(ta), native('railTrackGraphId')(tb)];
+      const before = graphs();
+      native('railConnAddConnection')(a.comp, b.comp);
+      native('railSubsystemRemoveTrack')(sub, ta);
+      native('railSubsystemAddTrack')(sub, ta);
+      return { graphsBefore: before, graphsAfter: graphs() };
+    });
+  },
+  // Sauvegarde nommee de la partie (UFGSaveSession::SaveGame, comme le menu du jeu), sans delegue de fin : elle est ecrite
+  // au tick suivant ; c'est le fichier <SaveGames>/<compte>/<nom>.sav qui fait foi (plans/fg.js save attend son ecriture)
+  saveGame(name) {
+    return withContext('saveGame', (ctx) => {
+      const session = native('saveSessionGet')(ctx.subsystem);
+      if (!isUObject(session)) throw new Error('session de sauvegarde introuvable');
+      const text = Memory.allocUtf16String(name);
+      const str = Memory.alloc(16);
+      str.writePointer(text); str.add(8).writeS32(name.length + 1); str.add(12).writeS32(name.length + 1);
+      const delegate = zeroAlloc(0x40, 16); // TDelegate vide : non lie
+      native('saveSessionSaveGame')(session, str, delegate.ptr, NULL);
+      return { session: splitFullName(session).path, name };
+    });
+  },
+  // Retire des balises de la carte par leur GUID ({ A, B, C, D }, champ markerGuid de mMapMarkers) :
+  // AFGMapManager::RemoveMapMarker ne lit que ce champ, le reste du FMapMarker passe est laisse a zero
+  removeMapMarkers(managerPath, guids) {
+    return withContext('removeMapMarkers', () => {
+      const manager = findObject(managerPath);
+      if (manager.isNull()) throw new Error('gestionnaire de carte introuvable : ' + managerPath);
+      const marker = requireStruct('/Script/FactoryGame.MapMarker');
+      const buf = zeroAlloc(structSize(marker), 16);
+      const guid = buf.ptr.add(propertyOffset(marker, 'markerGuid'));
+      for (const g of guids) {
+        guid.writeS32(g.A); guid.add(4).writeS32(g.B); guid.add(8).writeS32(g.C); guid.add(12).writeS32(g.D);
+        native('mapManagerRemoveMarker')(manager, buf.ptr);
+      }
+      return { removed: guids.length };
+    });
+  },
+  // Pose des balises sur la carte (AFGMapManager::AddNewMapMarker, qui copie la balise, lui donne un GUID et la diffuse) :
+  // markers = [{ name, location: {x,y,z}, icon, type, color: {r,g,b,a}, scale }] ; icon, type, color et scale par defaut
+  // ceux des balises posees par l'utilisateur (16, gris fonce, 1). -> GUID de chaque balise
+  addMapMarkers(managerPath, markers) {
+    return withContext('addMapMarkers', () => {
+      const manager = findObject(managerPath);
+      if (manager.isNull()) throw new Error('gestionnaire de carte introuvable : ' + managerPath);
+      const struct = requireStruct('/Script/FactoryGame.MapMarker');
+      const size = structSize(struct);
+      const f = {};
+      for (const x of fieldsOf(struct)) f[x.name] = x;
+      const need = (n, type, bytes) => {
+        if (!f[n] || f[n].type !== type || (bytes && f[n].size !== bytes)) {
+          throw new Error('FMapMarker.' + n + ' : ' + (f[n] ? f[n].type + ' de ' + f[n].size + ' octets' : 'absent') + ', attendu ' + type);
+        }
+        return f[n].offset;
+      };
+      const oLoc = need('Location', 'StructProperty', 24), oName = need('Name', 'StrProperty', 16);
+      const oIcon = need('IconID', 'IntProperty', 4), oColor = need('Color', 'StructProperty', 16);
+      const oScale = need('Scale', 'FloatProperty', 4), oGuid = need('markerGuid', 'StructProperty', 16);
+      const oType = f.MapMarkerType && f.MapMarkerType.size === 1 ? f.MapMarkerType.offset : null;
+      if (oType === null) throw new Error('FMapMarker.MapMarkerType : taille inattendue');
+      return markers.map((m) => {
+        const inBuf = zeroAlloc(size, 16), outBuf = zeroAlloc(size, 16);
+        const p = inBuf.ptr;
+        p.add(oLoc).writeDouble(m.location.x); p.add(oLoc + 8).writeDouble(m.location.y); p.add(oLoc + 16).writeDouble(m.location.z);
+        const text = Memory.allocUtf16String(m.name || '');
+        p.add(oName).writePointer(text); p.add(oName + 8).writeS32((m.name || '').length + 1); p.add(oName + 12).writeS32((m.name || '').length + 1);
+        p.add(oIcon).writeS32(m.icon == null ? 350 : m.icon);
+        p.add(oType).writeU8(m.type == null ? 16 : m.type);
+        const c = m.color || { r: 0.132868, g: 0.132868, b: 0.135633, a: 1 };
+        p.add(oColor).writeFloat(c.r); p.add(oColor + 4).writeFloat(c.g); p.add(oColor + 8).writeFloat(c.b); p.add(oColor + 12).writeFloat(c.a);
+        p.add(oScale).writeFloat(m.scale == null ? 1 : m.scale);
+        const ok = native('mapManagerAddMarker')(manager, p, outBuf.ptr) !== 0;
+        const g = outBuf.ptr.add(oGuid);
+        // La copie de sortie tient des chaines allouees par le moteur : sans le destructeur de FMapMarker (non exporte),
+        // on libere Name et CategoryName ; le reste (LastEditedBy) fuit de quelques octets par balise
+        freeFString(outBuf.ptr.add(oName));
+        if (f.CategoryName) freeFString(outBuf.ptr.add(f.CategoryName.offset));
+        return { name: m.name, added: ok, guid: { A: g.readS32(), B: g.add(4).readS32(), C: g.add(8).readS32(), D: g.add(12).readS32() } };
+      });
+    });
   },
 });

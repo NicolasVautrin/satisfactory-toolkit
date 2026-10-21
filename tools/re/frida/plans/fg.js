@@ -9,6 +9,7 @@
 // --frame : repere d'une gare (voir frame.js) ; chaque position {x,y,z} du resultat recoit aussi "uvz" dans ce repere.
 //
 // Commandes :
+//   help                              cette aide (en-tete de fg.js), sans appel au jeu
 //   call <fonction> [arg...]          appel brut d'une fonction de l'agent ; arg = JSON, <point> ou <acteur>
 //   player                            joueur (position, regard)
 //   teleport <point> [cap]            deplace le joueur
@@ -16,6 +17,9 @@
 //   pose <acteur...>                  position et rotation
 //   bounds <acteur...>                boite englobante dans le repere de l'acteur (min, max) et sa pose ; ex. plan d'eau
 //   markers [motif]                   balises de la carte du jeu (nom, position, icone), filtrees par nom
+//   markers-remove <motif>            supprime les balises dont le nom correspond (ex. "^(HD|MS)$")
+//   markers-add <nom> <point> [icone] pose une balise sur la carte (icone : numero du jeu, 350 par defaut)
+//   save [etiquette]                  sauvegarde nommee agent_<jjmmaa>_<hhmmss>[_<etiquette>] ; attend le fichier .sav
 //   dump <acteur> [champ...]          proprietes (reflexion du jeu), --depth pour les objets imbriques
 //   fields <classe|structure> [motif] liste des proprietes (nom, type, offset)
 //   rails <rail...>                   connecteurs d'un rail : position, normale, raccords, signaux
@@ -25,6 +29,8 @@
 //   dismantle <acteur...>             demonte (avec la voie integree des gares et quais)
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { call } = require('./client');
 const { stationFrame } = require('./frame');
 
@@ -136,6 +142,47 @@ const COMMANDS = {
       name: m.Name, category: m.CategoryName || undefined, type: m.MapMarkerType, icon: m.IconID,
       location: { x: Math.round(m.Location.X), y: Math.round(m.Location.Y), z: Math.round(m.Location.Z) },
     }));
+  },
+  // Pose une balise : nom, point (x,y,z monde ou @u,v,z avec --frame), numero d'icone du jeu (350 par defaut)
+  // Sauvegarde nommee agent_<jjmmaa>_<hhmmss>[_<etiquette>] (a faire avant tout changement important), puis attente du
+  // fichier .sav dans le dossier des sauvegardes du jeu (60 s au plus)
+  async save(label) {
+    const d = new Date(), p2 = (n) => String(n).padStart(2, '0');
+    const stamp = p2(d.getDate()) + p2(d.getMonth() + 1) + String(d.getFullYear()).slice(2) + '_' + p2(d.getHours()) + p2(d.getMinutes()) + p2(d.getSeconds());
+    const name = 'agent_' + stamp + (label ? '_' + label.replace(/[^A-Za-z0-9_-]+/g, '-') : '');
+    const root = path.join(process.env.LOCALAPPDATA, 'FactoryGame', 'Saved', 'SaveGames');
+    const started = Date.now();
+    const r = await call('saveGame', name);
+    for (;;) {
+      for (const dir of fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+        const file = path.join(root, dir.name, name + '.sav');
+        if (!fs.existsSync(file)) continue;
+        // ecriture terminee : taille stable sur 1 s
+        const size = fs.statSync(file).size;
+        await new Promise((res) => setTimeout(res, 1000));
+        if (fs.statSync(file).size === size && size > 0) return { ...r, file, size };
+      }
+      if (Date.now() - started > 60000) throw new Error('sauvegarde ' + name + ' non ecrite apres 60 s (jeu en pause ? sauvegarde deja en cours ?)');
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+  },
+  async 'markers-add'(name, where, icon) {
+    if (!name || !where) throw new Error('markers-add <nom> <point> [icone]');
+    const manager = (await call('scan', 'FGMapManager', null, 0, 1, {})).items[0];
+    if (!manager) throw new Error('gestionnaire de carte introuvable');
+    return call('addMapMarkers', manager.path, [{ name, location: await point(where), icon: icon == null ? null : Number(icon) }]);
+  },
+  // Supprime les balises dont le nom correspond au motif (expression reguliere, sans casse : '^(HD|MS)$')
+  async 'markers-remove'(pattern) {
+    if (!pattern) throw new Error('motif obligatoire');
+    const manager = (await call('scan', 'FGMapManager', null, 0, 1, {})).items[0];
+    if (!manager) throw new Error('gestionnaire de carte introuvable');
+    const re = new RegExp(pattern, 'i');
+    const list = (await call('dump', manager.path, 3, 100000, ['mMapMarkers'])).mMapMarkers || [];
+    const targets = list.filter((m) => re.test(m.Name));
+    if (targets.length) await call('removeMapMarkers', manager.path, targets.map((m) => m.markerGuid));
+    const left = (await call('dump', manager.path, 3, 100000, ['mMapMarkers'])).mMapMarkers || [];
+    return { removed: targets.length, matchingLeft: left.filter((m) => re.test(m.Name)).length, total: left.length };
   },
   async dump(name, ...only) {
     return call('dump', await actor(name), Number(opt('depth', '1')), 50, only.length ? only : null);
@@ -262,6 +309,16 @@ const COMMANDS = {
     frame = await stationFrame(name, Number(offset || '0'));
   }
   const [cmd, ...args] = argv;
+  // Aide : l'en-tete de ce fichier, qui decrit les commandes (une seule source, a jour avec le code), sans appel au jeu
+  if (!cmd || cmd === 'help') {
+    const head = [];
+    for (const line of fs.readFileSync(__filename, 'utf8').split('\n')) {
+      if (!line.startsWith('//')) break;
+      head.push(line.replace(/^\/\/ ?/, ''));
+    }
+    console.log(head.join('\n'));
+    return;
+  }
   if (!COMMANDS[cmd]) {
     console.error('commande inconnue : ' + cmd + '\ncommandes : ' + Object.keys(COMMANDS).join(', ') + ' (voir l\'en-tete de fg.js)');
     process.exitCode = 1;

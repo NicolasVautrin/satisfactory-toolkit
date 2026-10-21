@@ -10,12 +10,23 @@
 //   node railplan.js <plan.js> teardown                   -> demonte tout ce que build a construit
 //   node railplan.js <plan.js> remove <id...>             -> demonte des rails / signaux (id du plan) ou 'quais' ;
 //                                                            le build suivant les reconstruit
+// build --rails <regex> : ne pose que les rails dont l'id correspond (les autres au lancement suivant), sans les
+// signaux (poses au lancement complet). Sert quand les aiguillages sont trop loin les uns des autres pour un seul
+// emplacement du joueur (un depart sur un joint deja raccorde ne s'y raccorde qu'a moins d'environ 140 m).
+// build --signaux <regex> : ne pose que ces signaux (avec ou sans --rails ; leurs rails doivent etre poses).
 // Options communes : --nom <gare construite> (nom de l'etat ; defaut : nom du fichier de plan) ; un plan modele
 // (fonction) recoit toutes les options (ex. layouts/gare-contournement.js : --quais 4 --chargement oui).
 //
 // check : chaque rail est pose a blanc (points libres, aucun joint) ; le jeu donne sa courbe et ses refus (longueur,
 // rayon, pente). Puis decoupage en blocs d'apres les signaux du plan, regles du wiki (Train_Signals) et ecarts entre
 // voies mesures sur les courbes du jeu.
+//
+// Rail du plan deja construit (voie existante sur laquelle on greffe des aiguillages) : { id, from, to, existing:
+// <chemin du rail> } ; jamais construit ni demonte, mais ses connecteurs servent d'accroche aux rails neufs (au check
+// comme au build) et il entre dans les blocs et les ecarts (droite entre ses deux joints). Pente d'un bout libre :
+// fromGrade / toGrade (fraction, > 0 = monte dans le sens from -> to) ; meme pente aux deux bouts = rail droit.
+// toAuto : direction d'arrivee laissee au jeu (pas d'arrondi du cap au pas de 10 deg ; toCap ne sert plus qu'au sens de
+// la pente) : un rail accroche au bout du precedent, arrivee libre, suit alors un arc de cercle.
 'use strict';
 
 const fs = require('fs');
@@ -31,7 +42,7 @@ const arg = (name, def) => {
 // Criteres de degagement entre deux voies (choix de conception, pas des regles lues dans le jeu) : a moins de H_MIN
 // a l'horizontale, il faut V_MIN de hauteur libre. Pres d'un joint commun (FOUL), les voies se rejoignent : ignore.
 // Le wiki : des rails qui se touchent ou se traversent sont dans le meme bloc ("Always leave at least one block of space")
-const H_MIN = 6;
+const H_MIN = 6.2; // mesure du 20/10/2026 : deux rails paralleles a 6 m se touchent pour le jeu, plus a 6,2 m
 const V_MIN = 7;
 const FOUL = 15;
 const SAMPLE_STEP = 100; // uu entre deux points de courbe echantillonnes
@@ -144,6 +155,31 @@ function sampleSpline(spline, base) {
   return out;
 }
 
+// Courbe d'un rail deja construit, lue dans le jeu (mSplineData : points relatifs a l'acteur, dont la rotation est nulle
+// pour les rails). Si la courbe ne relie pas les deux joints du plan (rail tourne, lecture impossible), droite entre eux :
+// pour un rail courbe, la corde rapproche a tort les voies voisines (faux contacts entre blocs).
+async function existingCurve(path, a, b) {
+  const chord = () => {
+    const pts = [];
+    for (let k = 0; k <= 80; k++) pts.push({ x: a.x + (b.x - a.x) * (k / 80), y: a.y + (b.y - a.y) * (k / 80), z: a.z + (b.z - a.z) * (k / 80) });
+    pts.chord = true;
+    return pts;
+  };
+  try {
+    const pose = await call('pose', path);
+    const rot = pose.rotation;
+    if (Math.abs(rot.yaw) > 0.01 || Math.abs(rot.pitch) > 0.01 || Math.abs(rot.roll) > 0.01) return chord();
+    const { mSplineData: spline } = await call('dump', path, 3, 50, ['mSplineData']);
+    const pts = sampleSpline(spline, pose.location);
+    const ends = [pts[0], pts[pts.length - 1]];
+    const fits = (p, q) => dist(p, q) < 100;
+    if (!((fits(ends[0], a) && fits(ends[1], b)) || (fits(ends[0], b) && fits(ends[1], a)))) return chord();
+    return pts;
+  } catch (e) {
+    return chord();
+  }
+}
+
 function lengthOf(points) {
   let l = 0;
   for (let i = 1; i < points.length; i++) l += dist(points[i - 1], points[i]);
@@ -173,12 +209,26 @@ async function check(plan, frame) {
   let refused = 0;
   console.log('Repere : origine ' + JSON.stringify(roundP(frame.origin)) + ', cap de u ' + frame.axis + '\n');
   console.log('Rails (poses a blanc, courbe et refus du jeu) :');
+  const existing = existingState(plan);
   for (const r of plan.rails) {
     const a = plan.joints[r.from];
     const b = plan.joints[r.to];
-    const from = Object.assign(frame.world(a), { yaw: frame.axis + r.fromCap });
-    const to = Object.assign(frame.world(b), { yaw: frame.axis + r.toCap });
-    const res = await call('rail', RECIPES.rail, from, to, { dryRun: true });
+    if (r.existing) {
+      const pts = await existingCurve(r.existing, frame.world(a), frame.world(b));
+      curves.set(r.id, pts);
+      console.log('  ' + r.id.padEnd(10) + ' ' + (r.from + fmt(a)).padEnd(22) + ' -> ' + (r.to + fmt(b)).padEnd(22) + ' existant ' + short(r.existing)
+        + (pts.chord ? ' (courbe illisible : droite entre ses joints)' : ''));
+      continue;
+    }
+    // Bout sur une voie existante : son connecteur, sinon point libre
+    const from = await endpoint(existing, frame, plan, r.from, r.fromCap, r.fromCap, r.fromGrade);
+    const to = await endpoint(existing, frame, plan, r.to, r.toCap, r.toCap + 180, r.toGrade, r.toAuto);
+    let res;
+    try {
+      res = await call('rail', RECIPES.rail, from, to, { dryRun: true });
+    } catch (e) {
+      throw new Error('rail ' + r.id + ' (' + r.from + ' -> ' + r.to + ') : ' + e.message);
+    }
     const pts = sampleSpline(res.spline, res.hologram.location);
     curves.set(r.id, pts);
     const zs = pts.map((p) => p.z);
@@ -263,11 +313,31 @@ function saveState(instance, state) {
   fs.writeFileSync(statePath(instance), JSON.stringify(state, null, 2));
 }
 
-// Connecteurs de rails deja construits, par joint du plan
-async function connectorsAt(state, frame, joint) {
-  const at = frame.world(joint);
+// Etat fait des seuls rails existants du plan (accroches du check)
+function existingState(plan) {
+  const rails = {};
+  for (const r of plan.rails) if (r.existing) rails[r.id] = r.existing;
+  return { rails, integrated: [] };
+}
+
+// Sous-systeme ferroviaire de la partie (pour railLink), cherche une fois
+let railroadSubsystemPath = null;
+async function railroadSubsystem() {
+  if (!railroadSubsystemPath) {
+    const it = (await call('scan', 'FGRailroadSubsystem', null, 0, 1, {})).items[0];
+    if (!it) throw new Error('sous-systeme ferroviaire introuvable');
+    railroadSubsystemPath = it.path;
+  }
+  return railroadSubsystemPath;
+}
+
+// Connecteurs de rails deja construits a un joint du plan : seulement les rails du plan qui aboutissent a ce joint, et les
+// voies integrees des gares (relire tous les rails construits coutait ~600 lectures par rail pose a la gare de triage)
+async function connectorsAt(state, frame, plan, jointName) {
+  const at = frame.world(plan.joints[jointName]);
   const out = [];
-  const tracks = Object.values(state.rails).concat(state.integrated || []);
+  const ids = plan.rails.filter((r) => r.from === jointName || r.to === jointName).map((r) => r.id);
+  const tracks = ids.map((id) => state.rails[id]).filter(Boolean).concat(state.integrated || []);
   for (const t of tracks) {
     for (const c of (await call('rails', t)).connections) if (dist(c.location, at) < 20) out.push(Object.assign({ track: t }, c));
   }
@@ -291,9 +361,9 @@ async function callAiming(fn, ...args) {
 }
 
 // Bout de rail a poser : connecteur existant au joint (normale attendue), sinon point libre
-async function endpoint(state, frame, plan, jointName, cap, wantOut) {
-  const conns = await connectorsAt(state, frame, plan.joints[jointName]);
-  if (!conns.length) return Object.assign(frame.world(plan.joints[jointName]), { yaw: frame.axis + cap });
+async function endpoint(state, frame, plan, jointName, cap, wantOut, grade, auto) {
+  const conns = await connectorsAt(state, frame, plan, jointName);
+  if (!conns.length) return Object.assign(frame.world(plan.joints[jointName]), { yaw: frame.axis + cap }, grade ? { grade } : {}, auto ? { auto: true } : {});
   const want = frame.dir(wantOut);
   const match = conns.find((c) => dot2(c.normal, want) > 0.9);
   if (!match) throw new Error('joint ' + jointName + ' : aucun connecteur de normale attendue (' + conns.map((c) => short(c.track) + '.' + c.name).join(', ') + ')');
@@ -301,7 +371,7 @@ async function endpoint(state, frame, plan, jointName, cap, wantOut) {
 }
 
 async function buildStation(plan, frame, state) {
-  if (state.station) return;
+  if (state.station || !plan.station) return; // plan de voies seules (sans gare)
   const s = plan.station;
   const res = await call('build', RECIPES.station, frame.world(s.at), frame.axis + s.cap, {});
   if (!res.built) throw new Error('gare refusee : ' + res.blocking.join(','));
@@ -319,6 +389,7 @@ async function buildStation(plan, frame, state) {
 // Quais : visee verticale sur le toit du batiment precedent, 4 m avant son bout libre (au bout meme, le rayon passe par
 // l'ouverture du quai et touche la voie) ; le jeu accroche le quai au connecteur libre le plus proche du point touche
 async function buildPlatforms(plan, frame, state) {
+  if (!plan.platforms) return;
   for (let k = state.platforms.length; k < plan.platforms.count; k++) {
     const endU = plan.platforms.firstAt + k * plan.platforms.length;
     const at = frame.world([endU - 4, 0, 0]);
@@ -355,10 +426,13 @@ async function buildPlatforms(plan, frame, state) {
 }
 
 async function buildRails(plan, frame, state) {
+  for (const r of plan.rails) if (r.existing) state.rails[r.id] = r.existing; // jamais dans state.built
+  const only = arg('rails') ? new RegExp('^(' + arg('rails') + ')$') : null;
   for (const r of plan.rails) {
     if (state.rails[r.id]) continue;
-    const from = await endpoint(state, frame, plan, r.from, r.fromCap, r.fromCap); // connecteur partenaire : normale = cap de depart
-    const to = await endpoint(state, frame, plan, r.to, r.toCap, r.toCap + 180); // a l'arrivee : normale opposee au cap
+    if (only && !only.test(r.id)) continue; // --rails : ce lancement ne pose que ces rails (joueur pres de leurs joints)
+    const from = await endpoint(state, frame, plan, r.from, r.fromCap, r.fromCap, r.fromGrade); // connecteur partenaire : normale = cap de depart
+    const to = await endpoint(state, frame, plan, r.to, r.toCap, r.toCap + 180, r.toGrade, r.toAuto); // a l'arrivee : normale opposee au cap
     const res = await callAiming('rail', RECIPES.rail, from, to, {});
     if (!res.built) throw new Error('rail ' + r.id + ' refuse : ' + res.blocking.join(','));
     state.rails[r.id] = res.actor;
@@ -373,21 +447,44 @@ async function buildRails(plan, frame, state) {
         if (other.normal.x * c.normal.x + other.normal.y * c.normal.y + other.normal.z * c.normal.z > 0.5) bad.push(c.name + '~' + short(x.track));
       }
     }
+    // Raccords voulus mais que le jeu n'a pas faits : le rail est pose, le bout reste libre, sans erreur (joint loin du
+    // joueur : constate a 1,2 et 1,5 km le 21/10/2026, reussi a 670 m). On les fait avec railLink (liaison directe des
+    // connecteurs puis reinscription du rail dans le systeme ferroviaire), puis on verifie.
+    const linked = (inf, want) => inf.connections.some((c) => c.connections.some((x) => x.track === want.path && x.name === want.name));
+    const repaired = [], missing = [];
+    let now = info;
+    for (const [end, want, joint] of [['depart', from, r.from], ['arrivee', to, r.to]]) {
+      if (typeof want.path !== 'string' || linked(now, want)) continue;
+      const at = frame.world(plan.joints[joint]);
+      const own = now.connections.find((c) => dist(c.location, at) < 20);
+      if (own) {
+        await call('railLink', await railroadSubsystem(), res.actor, own.name, want.path, want.name);
+        now = await call('rails', res.actor);
+      }
+      if (linked(now, want)) repaired.push(end); else missing.push(end + ' sur ' + short(want.path) + '.' + want.name);
+    }
     console.log('rail ' + r.id.padEnd(10) + short(res.actor) + ' ' + Math.round(info.length / 100) + ' m'
-      + (typeof from.path === 'string' ? ' (depart accroche)' : '')
-      + (typeof to.path === 'string' ? (res.endForced ? ' (arrivee raccordee hors de portee du joueur)' : ' (arrivee accrochee)') : '')
+      + (typeof from.path === 'string' ? (repaired.includes('depart') ? ' (depart relie par railLink)' : ' (depart raccorde)') : '')
+      + (typeof to.path === 'string' ? (repaired.includes('arrivee') ? ' (arrivee reliee par railLink)' : res.endForced ? ' (arrivee raccordee hors de portee du joueur)' : ' (arrivee raccordee)') : '')
+      + (missing.length ? '  NON RACCORDE : ' + missing.join(', ') : '')
       + (bad.length ? '  JOINT ANORMAL ' + bad.join(' ') : ''));
+    if (missing.length) throw new Error('rail ' + r.id + ' non raccorde (' + missing.join(', ') + ') : rapprocher le joueur du joint, demonter le rail (remove) et le reposer');
     if (bad.length) throw new Error('joint anormal sur ' + r.id);
   }
 }
 
 async function buildSignals(plan, frame, state) {
+  const only = arg('signaux') ? new RegExp('^(' + arg('signaux') + ')$') : null;
   for (const s of plan.signals) {
     if (state.signals[s.id]) continue;
+    if (only && !only.test(s.id)) continue; // --signaux : ces signaux seulement (leurs rails doivent etre poses)
     const joint = signalJoint(plan, s);
     const at = frame.world(plan.joints[joint]);
     const conn = (await call('rails', state.rails[s.rail])).connections.find((c) => dist(c.location, at) < 20);
-    const res = await callAiming('signal', RECIPES[s.type], { path: state.rails[s.rail], name: conn.name }, {});
+    // Cote du signal : s.left, sinon plan.signalsLeftHanded (circulation a gauche : bord exterieur d'une double voie),
+    // sinon celui que choisit l'agent (signal oppose du joint, sinon droite)
+    const left = s.left != null ? s.left : plan.signalsLeftHanded;
+    const res = await callAiming('signal', RECIPES[s.type], { path: state.rails[s.rail], name: conn.name }, left != null ? { leftHanded: !!left } : {});
     if (!res.built) throw new Error('signal ' + s.id + ' refuse : ' + res.blocking.join(','));
     state.signals[s.id] = res.actor;
     state.built.push(res.actor);
@@ -405,11 +502,12 @@ async function build(plan, frame) {
     await buildPlatforms(plan, frame, state);
     saveState(plan.instance, state);
     await buildRails(plan, frame, state);
-    await buildSignals(plan, frame, state);
+    // signaux au lancement complet, ou ceux de --signaux
+    if (!arg('rails') || arg('signaux')) await buildSignals(plan, frame, state);
   } finally {
     saveState(plan.instance, state);
   }
-  console.log('\nConstruit : ' + state.built.length + ' objets. Controle : node railsignals.js --station ' + state.station);
+  console.log('\nConstruit : ' + state.built.length + ' objets.' + (state.station ? ' Controle : node railsignals.js --station ' + state.station : ''));
 }
 
 // Demonte des elements du plan (rails ou signaux par id, 'quais' pour tous les quais) et les retire de l'etat : le
@@ -420,6 +518,7 @@ async function remove(plan, ids) {
   const forget = (p) => { state.built = state.built.filter((x) => x !== p); };
   try {
     for (const id of ids) {
+      if (plan.rails.some((r) => r.id === id && r.existing)) throw new Error(id + ' : rail existant, hors de ce que le plan construit');
       const group = state.signals[id] ? state.signals : state.rails[id] ? state.rails : null;
       if (group) {
         await call('dismantle', group[id], true);
