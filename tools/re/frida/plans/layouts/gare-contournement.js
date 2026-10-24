@@ -17,7 +17,13 @@
 // Repere de railplan.js (metres) : origine = sortie de la gare, u le long des quais, v = cap de u + 90 (cote voie
 // ouest), z vertical.
 // Options : --quais <n> (4), --chargement oui|non (oui)
+//   --ecart <m> : ecart entre les deux voies de la ligne (8 dans le modele valide ; 6,5 pour nos doubles voies) ; la voie
+//   ouest, la convergence C et la boucle suivent
+//   --miroir oui : plan symetrique par rapport a l'axe u (v -> -v) pour la circulation a gauche (utilisateur, 24/10/2026,
+//   gare G15 du solveur) : la voie qui descend vers -u reste la plus proche de la gare, la gare est du cote +v de la ligne,
+//   les quais ont leurs entrees / sorties a l'exterieur (+v) et les signaux sont a gauche
 // Usage : node railplan.js layouts/gare-contournement.js check|build --beside <gare> --offset <m> [--nom <instance>]
+//   ou --origin x,y,z --axis <cap de +u>
 'use strict';
 
 const QUAI = 16; // longueur d'une gare ou d'un quai (voie integree de 16 m, verifiee a la construction)
@@ -44,6 +50,7 @@ module.exports = (opt) => {
   const D = PL + 44; // aiguillage nord : troncon de 12 m apres les quais + courbe en S de 32 m
   const B = -46; // aiguillage sud : troncon de 12 m apres la gare + courbe en S de 34 m (en 2 rails)
   const C = B + 34; // convergence de la boucle sur la voie ouest
+  const VW = 16 + Number(opt.ecart || 8); // axe de la voie ouest (v = 24 dans le modele valide)
 
   const joints = {
     ST: [0, 0, 0], // sortie de la gare
@@ -64,13 +71,13 @@ module.exports = (opt) => {
     ES: [B - 24, 16, 0],
     // Boucle de demi-tour
     LA: [B + 2, 0, -9],
-    LB: [B - 18, 20, -9],
-    LT: [B + 2, 40, 0], // haut de la remontee de la boucle (signal de chemin : bloc de convergence de niveau)
-    C: [C, 24, 0],
-    W1: [C + 12, 24, 0],
-    WN: [D + 24, 24, 0],
-    WS: [B - 24, 24, 0],
-    WS1: [C - 16, 24, 0], // signal de chemin : assez loin de C pour que la courbe en S de la boucle soit a plus de 6 m
+    LB: [B - 18, (16 + VW) / 2, -9],
+    LT: [B + 2, VW + 16, 0], // haut de la remontee de la boucle (signal de chemin : bloc de convergence de niveau)
+    C: [C, VW, 0],
+    W1: [C + 12, VW, 0],
+    WN: [D + 24, VW, 0],
+    WS: [B - 24, VW, 0],
+    WS1: [C - 16, VW, 0], // signal de chemin : assez loin de C pour que la courbe en S de la boucle soit a plus de 6 m
   };
   if (joints.RB[0] - joints.RS[0] < 12) throw new Error('trop peu de quais pour ce modele (contournement < 12 m)');
 
@@ -100,11 +107,20 @@ module.exports = (opt) => {
     { id: 'w2', from: 'WS1', fromCap: 0, to: 'C', toCap: 0 },
   ];
 
+  // Miroir (circulation a gauche) : v -> -v, caps -> -cap ; quais non retournes pour garder leurs entrees / sorties a
+  // l'exterieur de la ligne (+v) ; signaux a gauche (bord exterieur de la double voie)
+  const mirror = /^(oui|true|1)$/i.test(String(opt.miroir || 'non'));
+  if (mirror) {
+    for (const k of Object.keys(joints)) joints[k] = [joints[k][0], -joints[k][1], joints[k][2]];
+    for (const r of rails) { r.fromCap = (360 - r.fromCap) % 360; r.toCap = (360 - r.toCap) % 360; }
+  }
+
   return {
     station: { at: [QUAI / 2, 0, 0], cap: 0 }, // centre de la gare (sortie en u = 0)
     // Quais de fret retournes comme a Breda (entrees / sorties de convoyeur cote -v, a l'oppose de la voie ouest) ; en
     // l'air (pas de dalle) : refus "pas de sol" accepte
-    platforms: { count: quais, firstAt: QUAI, length: QUAI, load, reversed: true, inAir: true },
+    platforms: { count: quais, firstAt: QUAI, length: QUAI, load, reversed: !mirror, inAir: true },
+    signalsLeftHanded: mirror ? true : undefined,
     platformsRail: { id: 'quais', from: 'PL', fromCap: 180, to: 'ST', toCap: 180 },
     joints,
     rails,

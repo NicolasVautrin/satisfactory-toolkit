@@ -127,6 +127,21 @@ G 3 (149959, 4666) [2Cu 2Fe] Cu:3600/2dk Fe:3600/2dk total=7200/m rt=1.9min conv
 - `rt=1.9min` : round-trip train vers l'Usine
 - `!!` = overflow (throughput > capacité dock), `~` = under-utilisation du dock
 
+### Dans la partie en cours (agent Frida)
+
+```bash
+node tools/solver/gisementsExploites.js lister          # gisements étiquetés « exploite » -> data/gisements_exploites.json
+node tools/solver/optimizeStationsMulti.js "dest=bauxite@289159,63477@Amsterdam;copper,iron@112356,-252112@Hub nord" \
+  rt=non fixeJson=../../data/gares_existantes.json exploitesJson=../../data/gisements_exploites.json out=<nom>
+node tools/solver/stationsViewer.js                     # data/stations_viewer.html, sélecteur de résultat
+node tools/solver/balisesSolveur.js poser <nom>         # une balise magenta « solveur G<n> » par gare proposée
+node tools/solver/balisesSolveur.js retirer             # retire toutes les balises « solveur ... »
+```
+
+- `data/gares_existantes.json` : nos gares de minerai, imposées sans minerai à prendre (`allow: []`, leurs quais sont pleins) ; elles ne comptent que comme points du réseau.
+- Les balises ne nomment que la gare, pas ses minerais (utilisateur, 24/10/2026). `poser` retire d'abord les balises du solveur déjà en place.
+- Le scan s'arrête par défaut à `maxK` = ceil(demande / 9 600) + 5 gares, arrivées et gares imposées comprises : si le coût baisse encore au dernier k, relancer avec `maxK=` plus grand.
+
 ## Référence commune
 
 ### Débits des miners (Miner Mk3, 100%)

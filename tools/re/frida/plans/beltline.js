@@ -120,7 +120,12 @@ async function main() {
         if (g.z === null) { lastError = 'pas de sol sous (' + Math.round(c.x) + ', ' + Math.round(c.y) + ')'; continue; }
         cand = { x: c.x, y: c.y, z: g.z };
         const here = state.segments.length ? state.segments[state.segments.length - 1].to : line.points[0];
-        if (here.x !== undefined && Math.abs(cand.z - here.z) / (Math.hypot(cand.x - here.x, cand.y - here.y) || 1) > MAX_SLOPE) { lastError = 'pente trop forte vers (' + Math.round(c.x) + ', ' + Math.round(c.y) + ') sol ' + Math.round(cand.z / 100) + ' m'; continue; }
+        // pente du convoyeur, de sommet de poteau a sommet de poteau (le jeu donne un poteau 1 m plus court que
+        // demande) ; au depart, le connecteur de depart. Comparer les sols seuls refusait un poteau haut sous une
+        // sortie en surplomb (foreuse de caterium a flanc de colline : 4,6 m de sol sur 4 m, convoyeur 1,2 m, 23/10/2026)
+        const top = (p, tt) => p.z + Math.max(0, (poleOpts(tt).poleHeight != null ? poleOpts(tt).poleHeight : 700) - 100);
+        const hereTop = state.segments.length ? top(here, i ? all[i - 1] : {}) : here.z;
+        if (here.x !== undefined && Math.abs(top(cand, t) - hereTop) / (Math.hypot(cand.x - here.x, cand.y - here.y) || 1) > MAX_SLOPE) { lastError = 'pente trop forte vers (' + Math.round(c.x) + ', ' + Math.round(c.y) + ') sol ' + Math.round(cand.z / 100) + ' m'; continue; }
       }
       label = 'troncon ' + (state.segments.length + 1) + ' -> ' + (last ? short(cand.path) + '.' + cand.name : '(' + Math.round(cand.x / 100) + ', ' + Math.round(cand.y / 100) + ') sol ' + Math.round(cand.z / 100) + ' m' + (poleOpts(t).poleHeight != null ? ', poteau ' + poleOpts(t).poleHeight / 100 + ' m' : ''));
       try {

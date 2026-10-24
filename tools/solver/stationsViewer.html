@@ -221,7 +221,8 @@ const sel = $('result');
 RESULTS.forEach((r, i) => { const o = document.createElement('option'); o.value = i; o.textContent = r.name + ' — ' + r.dests.map((d) => d.label).join(' + '); sel.appendChild(o); });
 sel.onchange = () => load(+sel.value);
 function load(i) { cur = RESULTS[i]; selected = null; summary(); draw(); side(); fitAll(); }
-const start = Math.max(0, RESULTS.findIndex((r) => r.name === 'reseau-commun'));
+// le calcul le plus recent (ses gares sont celles des balises « solveur G<n> » posees en jeu)
+const start = RESULTS.reduce((b, r, i) => (String(r.date || '') > String(RESULTS[b].date || '') ? i : b), 0);
 sel.value = start; load(start);
 </script>
 </body>

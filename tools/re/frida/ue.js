@@ -174,6 +174,14 @@ const NATIVE_SPECS = {
   lineTraceSingleByChannel: ['engine',
     '?LineTraceSingleByChannel@UWorld@@QEBA_NAEAUFHitResult@@AEBU?$TVector@N@Math@UE@@1W4ECollisionChannel@@AEBUFCollisionQueryParams@@AEBUFCollisionResponseParams@@@Z',
     'uint8', ['pointer', 'pointer', 'pointer', 'pointer', 'int', 'pointer', 'pointer']],
+  // Balayage d'une forme (boite) de start a end, orientee par un FQuat : premier obstacle bloquant
+  sweepSingleByChannel: ['engine',
+    '?SweepSingleByChannel@UWorld@@QEBA_NAEAUFHitResult@@AEBU?$TVector@N@Math@UE@@1AEBU?$TQuat@N@45@W4ECollisionChannel@@AEBUFCollisionShape@@AEBUFCollisionQueryParams@@AEBUFCollisionResponseParams@@@Z',
+    'uint8', ['pointer', 'pointer', 'pointer', 'pointer', 'pointer', 'int', 'pointer', 'pointer', 'pointer']],
+  // La forme posee en un point touche-t-elle un obstacle bloquant ?
+  overlapBlockingTestByChannel: ['engine',
+    '?OverlapBlockingTestByChannel@UWorld@@QEBA_NAEBU?$TVector@N@Math@UE@@AEBU?$TQuat@N@34@W4ECollisionChannel@@AEBUFCollisionShape@@AEBUFCollisionQueryParams@@AEBUFCollisionResponseParams@@@Z',
+    'uint8', ['pointer', 'pointer', 'pointer', 'int', 'pointer', 'pointer', 'pointer']],
   // FactoryGame
   // Repartiteur intelligent : regles de tri (FSplitterSortRule de 16 octets passe par valeur = par adresse, ABI MSVC x64)
   splitterAddSortRule: ['game', '?AddSortRule@AFGBuildableSplitterSmart@@QEAAXUFSplitterSortRule@@@Z', 'void', ['pointer', 'pointer']],
@@ -189,6 +197,37 @@ const NATIVE_SPECS = {
   getNewNetConstructionID: ['game', '?GetNewNetConstructionID@AFGBuildableSubsystem@@QEAAXAEAUFNetConstructionID@@@Z',
     'void', ['pointer', 'pointer']],
   executeDismantle: ['game', '?Execute_Dismantle@IFGDismantleInterface@@SAXPEAVUObject@@@Z', 'void', ['pointer']],
+  // Contour du pistolet de demontage : UFGOutlineComponent::ShowOutline(acteur, couleur, createDefaultProxies,
+  // onlyHighlightProxies) et HideOutline(acteur) ; le composant est mOutlineComponent du personnage
+  outlineShow: ['game', '?ShowOutline@UFGOutlineComponent@@QEAAXPEAVAActor@@W4EOutlineColor@@_N2@Z', 'void', ['pointer', 'pointer', 'uint8', 'uint8', 'uint8']],
+  outlineHide: ['game', '?HideOutline@UFGOutlineComponent@@QEAAXPEAVAActor@@@Z', 'void', ['pointer', 'pointer']],
+  // Bulle de visualisation : acteur de decor (StaticMeshActor) apparu en deux temps, maillage et materiau charges par chemin
+  staticLoadObject: ['coreUObject', '?StaticLoadObject@@YAPEAVUObject@@PEAVUClass@@PEAV1@PEB_W2IPEAVUPackageMap@@_NPEBVFLinkerInstancingContext@@@Z',
+    'pointer', ['pointer', 'pointer', 'pointer', 'pointer', 'uint32', 'pointer', 'uint8', 'pointer']],
+  beginDeferredSpawn: ['engine', '?BeginDeferredActorSpawnFromClass@UGameplayStatics@@SAPEAVAActor@@PEBVUObject@@V?$TSubclassOf@VAActor@@@@AEBU?$TTransform@N@Math@UE@@W4ESpawnActorCollisionHandlingMethod@@PEAV2@W4ESpawnActorScaleMethod@@@Z',
+    'pointer', ['pointer', 'pointer', 'pointer', 'uint8', 'pointer', 'uint8']],
+  finishSpawningActor: ['engine', '?FinishSpawningActor@UGameplayStatics@@SAPEAVAActor@@PEAV2@AEBU?$TTransform@N@Math@UE@@W4ESpawnActorScaleMethod@@@Z',
+    'pointer', ['pointer', 'pointer', 'uint8']],
+  // UActorComponent* AActor::AddComponentByClass(TSubclassOf<UActorComponent> (par adresse), bool bManualAttachment,
+  // const FTransform& RelativeTransform, bool bDeferredFinish)
+  addComponentByClass: ['engine', '?AddComponentByClass@AActor@@QEAAPEAVUActorComponent@@V?$TSubclassOf@VUActorComponent@@@@_NAEBU?$TTransform@N@Math@UE@@1@Z',
+    'pointer', ['pointer', 'pointer', 'uint8', 'pointer', 'uint8']],
+  // FCollisionQueryParams(FName TraceTag, const TStatId&, bool bTraceComplex, const AActor* IgnoreActor) ; AddIgnoredActor
+  queryParamsCtor: ['engine', '??0FCollisionQueryParams@@QEAA@VFName@@AEBUTStatId@@_NPEBVAActor@@@Z', 'pointer', ['pointer', 'uint64', 'pointer', 'uint8', 'pointer']],
+  queryAddIgnoredActor: ['engine', '?AddIgnoredActor@FCollisionQueryParams@@QEAAXPEBVAActor@@@Z', 'void', ['pointer', 'pointer']],
+  // UActorComponent* AActor::GetComponentByClass(TSubclassOf<UActorComponent> (par adresse)) const
+  actorComponentByClass: ['engine', '?GetComponentByClass@AActor@@QEBAPEAVUActorComponent@@V?$TSubclassOf@VUActorComponent@@@@@Z', 'pointer', ['pointer', 'pointer']],
+  // bool UWorldPartitionStreamingSourceComponent::IsStreamingCompleted() const
+  wpSourceStreamingCompleted: ['engine', '?IsStreamingCompleted@UWorldPartitionStreamingSourceComponent@@QEBA_NXZ', 'uint8', ['pointer']],
+  staticMeshSetMesh: ['engine', '?SetStaticMesh@UStaticMeshComponent@@UEAA_NPEAVUStaticMesh@@@Z', 'uint8', ['pointer', 'pointer']],
+  meshSetMaterial: ['engine', '?SetMaterial@UMeshComponent@@UEAAXHPEAVUMaterialInterface@@@Z', 'void', ['pointer', 'int', 'pointer']],
+  sceneSetMobility: ['engine', '?SetMobility@USceneComponent@@UEAAXW4Type@EComponentMobility@@@Z', 'void', ['pointer', 'uint8']],
+  setActorEnableCollision: ['engine', '?SetActorEnableCollision@AActor@@QEAAX_N@Z', 'void', ['pointer', 'uint8']],
+  primitiveSetCollisionEnabled: ['engine', '?SetCollisionEnabled@UPrimitiveComponent@@UEAAXW4Type@ECollisionEnabled@@@Z', 'void', ['pointer', 'uint8']],
+  primitiveSetCastShadow: ['engine', '?SetCastShadow@UPrimitiveComponent@@QEAAX_N@Z', 'void', ['pointer', 'uint8']],
+  // Valeurs d'un enum lues en jeu : nom par index (FString rendue par valeur : pointeur cache), valeur par nom
+  enumNameStringByIndex: ['coreUObject', '?GetNameStringByIndex@UEnum@@QEBA?AVFString@@H@Z', 'pointer', ['pointer', 'pointer', 'int']],
+  enumValueByNameString: ['coreUObject', '?GetValueByNameString@UEnum@@QEBA_JAEBVFString@@W4EGetByNameFlags@@@Z', 'int64', ['pointer', 'pointer', 'int']],
   actorInstanceHandleAssign: ['engine', '??4FActorInstanceHandle@@QEAAAEAU0@PEAVAActor@@@Z', 'pointer', ['pointer', 'pointer']],
   sceneComponentLocation: ['engine', '?K2_GetComponentLocation@USceneComponent@@QEBA?AU?$TVector@N@Math@UE@@XZ', 'pointer', ['pointer', 'pointer']],
   sceneComponentForward: ['engine', '?GetForwardVector@USceneComponent@@QEBA?AU?$TVector@N@Math@UE@@XZ', 'pointer', ['pointer', 'pointer']],
@@ -288,6 +327,8 @@ const NATIVE_SPECS = {
   lwRefRemove: ['game', '?Remove@FLightweightBuildableInstanceRef@@QEAA_NXZ', 'uint8', ['pointer']],
   // Taille de pile reelle d'un objet (statique ; TSubclassOf passe par adresse)
   itemStackSize: ['game', '?GetStackSize@UFGItemDescriptor@@SAHV?$TSubclassOf@VUFGItemDescriptor@@@@@Z', 'int', ['pointer']],
+  // Retire num objets d'une classe (TSubclassOf passe par adresse, comme pour GetNumItems)
+  inventoryRemove: ['game', '?Remove@UFGInventoryComponent@@QEAAXV?$TSubclassOf@VUFGItemDescriptor@@@@H@Z', 'void', ['pointer', 'pointer', 'int']],
   inventoryNumItems: ['game', '?GetNumItems@UFGInventoryComponent@@QEBAHV?$TSubclassOf@VUFGItemDescriptor@@@@@Z',
     'int', ['pointer', 'pointer']],
   // Non virtuelle : n'appeler que sur un AFGWireHologram (verifie via la vtable de Construct)
@@ -343,6 +384,14 @@ const NATIVE_SPECS = {
   // jamais appele), donnee utilisateur. Ecrite au tick suivant du monde (tout de suite si le jeu est en pause) ; ignoree
   // si une sauvegarde est deja en cours ou si le nom est invalide (: / \ * < > @ ^ |)
   saveSessionSaveGame: ['game', '?SaveGame@UFGSaveSession@@QEAAXAEBVFString@@V?$TDelegate@$$A6AX_NAEBVFText@@PEAX@ZUFDefaultDelegateUserPolicy@@@@PEAX@Z', 'void', ['pointer', 'pointer', 'pointer', 'pointer']],
+  // Nom d'une gare : FText::FromString (Core, statique : FText rendu par valeur = pointeur cache en premier) copie la
+  // chaine ; SetStationName (identifiant de la gare) la passe au filtre de texte du jeu
+  // (UFGBlueprintFunctionLibrary::FilterText) et applique le nom dans son rappel. Le destructeur de FText n'est pas
+  // exporte : le texte cree n'est pas libere (quelques dizaines d'octets par renommage)
+  textFromString: ['core', '?FromString@FText@@SA?AV1@AEBVFString@@@Z', 'pointer', ['pointer', 'pointer']],
+  // Allocation par le moteur (tableaux que le moteur liberera lui-meme) : taille, alignement
+  memMalloc: ['core', '?Malloc@FMemory@@SAPEAX_KI@Z', 'pointer', ['uint64', 'uint32']],
+  trainStationSetName: ['game', '?SetStationName@AFGTrainStationIdentifier@@QEAAXAEBVFText@@@Z', 'void', ['pointer', 'pointer']],
   railTrackLength: ['game', '?GetLength@AFGBuildableRailroadTrack@@QEBAMXZ', 'float', ['pointer']],
   railTrackGraphId: ['game', '?GetTrackGraphID@AFGBuildableRailroadTrack@@QEBAHXZ', 'int', ['pointer']],
   // Liste du monde entier tenue pour le scanner d'objets (FGuid passe par reference)
@@ -520,6 +569,36 @@ function calibrateReflection() {
   reflection.sizeField = uniqueOffset(0x28, 0x200,
     (o) => sizes.every(([s, size]) => s.add(o).readS32() === size), 'UStruct::PropertiesSize');
   return reflection;
+}
+
+// FProperty::PropertyFlags (EPropertyFlags, 64 bits) : etalonne comme Offset_Internal, sur des drapeaux connus.
+// CPF_ZeroConstructor 0x200, CPF_IsPlainOldData 0x40000000 (champs de FQuat, eux aussi CPF_SaveGame), CPF_SaveGame
+// 0x1000000 : FGTrainStationIdentifier.mStationName est sauvegarde (vu dans une sauvegarde le 23/10/2026), comme le mode
+// des quais (FGBuildableTrainPlatformCargo.mIsInLoadMode) ; AActor.Tags est editable (CPF_Edit 0x1,
+// CPF_BlueprintVisible 0x4, CPF_ZeroConstructor). Releve du 23/10/2026 : PropertyFlags a 0x38, juste avant
+// Offset_Internal (0x44).
+const CPF_SAVEGAME = uint64(0x1000000);
+let propertyFlagsField = null;
+function propertyFlagsOffset() {
+  if (propertyFlagsField !== null) return propertyFlagsField;
+  const quat = requireStruct('/Script/CoreUObject.Quat');
+  const quatProps = ['X', 'Y', 'Z', 'W'].map((n) => findProperty(quat, n));
+  const ident = findProperty(requireStruct('/Script/FactoryGame.FGTrainStationIdentifier'), 'mStationName');
+  const tags = findProperty(requireStruct('/Script/Engine.Actor'), 'Tags');
+  const load = findProperty(requireStruct('/Script/FactoryGame.FGBuildableTrainPlatformCargo'), 'mIsInLoadMode');
+  const has = (p, o, mask) => !p.add(o).readU64().and(uint64(mask)).equals(0);
+  const hits = [];
+  for (let o = 0x20; o < 0x100; o += 8) {
+    try {
+      // Pas de condition sur le CPF_SaveGame de Tags : l'agent le pose, et il reste pose en memoire quand l'hote redemarre
+      if (quatProps.every((p) => has(p, o, 0x200) && has(p, o, 0x40000000) && has(p, o, 0x1000000))
+        && has(ident, o, 0x1000000) && has(load, o, 0x1000000) && has(tags, o, 0x1) && has(tags, o, 0x4)
+        && has(tags, o, 0x200)) hits.push(o);
+    } catch (e) { /* lecture hors zone */ }
+  }
+  if (hits.length !== 1) throw new Error('etalonnage FProperty::PropertyFlags : ' + hits.length + ' candidats ' + JSON.stringify(hits));
+  propertyFlagsField = hits[0];
+  return propertyFlagsField;
 }
 
 function propertyOffset(struct, name) {

@@ -33,3 +33,5 @@ tools/pak-tool/exports-index.json
 .mcp.json
 # Etat des constructions en jeu (chemins d acteurs propres a une partie)
 tools/re/frida/plans/*-state.json
+tools/re/frida/plans/cache/
+tools/re/frida/plans/traces/

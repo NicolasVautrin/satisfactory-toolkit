@@ -26,7 +26,8 @@
 //                                     // plateforme ; sens : sens du flux le long de la rangee (+lx / -lx)
 //     "collecteur": { "sens": "-lx" },
 //     "poteaux": [ [lx, ly], ... ],   // facultatif (repere de la rangee, m) ; defaut : un par pile devant le collecteur
-//     "reseau": "<poteau du reseau>" }
+//     "reseau": "<poteau du reseau>",
+//     "enLAir": true }              // sans fondations : pied des piles et poteaux poses en l air (complexes sur l eau)
 // Reperes : plateforme = origine au centre des fondations, x le long de la grille (cap), y a +90 ; rangee = origine au
 // centre de la rangee, ly vers l'avant des machines, lx a -90 de ly (+x local de la machine).
 // Etat : <nom>-pile-state.json a cote de ce fichier (non versionne).
@@ -196,7 +197,7 @@ const PHASES = {
 
   async machines(cfg, g, st, ops) {
     for (const [s, lx] of g.stacks.entries()) for (let i = 0; i < g.floors; i++) {
-      await ops.build('machines', 'pile ' + s + ' machine ' + i, R.buildingRecipeOf(g.rec.producer), g.W(lx, 0, g.zf(i)), g.machineYaw, i ? STACKED : {});
+      await ops.build('machines', 'pile ' + s + ' machine ' + i, R.buildingRecipeOf(g.rec.producer), g.W(lx, 0, g.zf(i)), g.machineYaw, i || cfg.enLAir ? STACKED : {});
     }
   },
 
@@ -272,7 +273,7 @@ const PHASES = {
     if (!recipe) throw new Error('aucun poteau electrique debloque');
     const spots = cfg.poteaux ? cfg.poteaux.map(([lx, ly]) => [lx * 100, ly * 100]) : g.stacks.map((lx) => [lx, g.merger.y + DESIGN.COLLECTOR_FRONT + DESIGN.POLE_FRONT]);
     const poles = [];
-    for (const [k, [lx, ly]] of spots.entries()) poles.push(await ops.build('poles', 'poteau ' + k, recipe, g.W(lx, ly, g.pf.dessus), g.machineYaw, {}));
+    for (const [k, [lx, ly]] of spots.entries()) poles.push(await ops.build('poles', 'poteau ' + k, recipe, g.W(lx, ly, g.pf.dessus), g.machineYaw, cfg.enLAir ? AIR : {}));
     if (poles.some((p) => !p)) return;
     // pile k sur le poteau k (modulo le nombre de poteaux) ; poteaux chaines, le premier relie au reseau
     const plan = [];

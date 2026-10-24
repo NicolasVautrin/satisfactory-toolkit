@@ -101,16 +101,117 @@ function hitComponentOffset() {
   return hitComponentOff;
 }
 
+// Parametres de requete des rayons et balayages : ceux du moteur par defaut, ou (le temps d'un releve) une requete qui
+// ignore la vegetation (utilisateur, 24/10/2026 : « normalement la vegetation est transparente » ; « fais-le pour la
+// vegetation tout de suite ») : FCollisionQueryParams construit par le moteur, chaque InstancedFoliageActor charge ajoute
+// aux acteurs ignores. Les rayons traversent alors les arbres d'un coup, sans relance.
+let traceQueryParams = null;
+const queryParams = () => traceQueryParams || dataExport('engine', QUERY_PARAMS);
+function foliageQueryParams(ctx) {
+  const p = Memory.alloc(0x400);
+  const stat = zeroAlloc(16, 8);
+  native('queryParamsCtor')(p, uint64(0), stat.ptr, 0, NULL); // FName NAME_None, TStatId vide, rayons simples
+  let n = 0;
+  for (const a of actorsOfClass(ctx, loadClass('/Script/Foliage.InstancedFoliageActor'))) {
+    if (isUObject(a)) { native('queryAddIgnoredActor')(p, a); n++; }
+  }
+  p.foliageIgnored = n;
+  return p;
+}
+function withoutFoliage(ctx, fn) {
+  traceQueryParams = foliageQueryParams(ctx);
+  try { return fn(); } finally { traceQueryParams = null; }
+}
+
 // Lancer de rayon de start vers end. Le FHitResult reste en memoire (hit.ptr) pour etre passe a un hologramme.
 function trace(ctx, start, end) {
   const hit = zeroAlloc(0x200, 16);
   const s = newVector(start);
   const e = newVector(end);
   const blocked = native('lineTraceSingleByChannel')(ctx.world, hit.ptr, s.ptr, e.ptr, ECC_VISIBILITY,
-    dataExport('engine', QUERY_PARAMS), dataExport('engine', RESPONSE_PARAMS));
+    queryParams(), dataExport('engine', RESPONSE_PARAMS));
   if (blocked === 0) return { blocked: false, hit, location: null };
   calibrateHitResult(hit.ptr, start, end);
   return { blocked: true, hit, location: readVec(hit.ptr.add(hitLayout.location)) };
+}
+
+// FCollisionShape : type (ECollisionShape : Line 0, Box 1, Sphere 2, Capsule 3), puis l'union de flottants ; pour une
+// boite, ses trois demi-cotes (uu). Le type est ecrit sur 4 octets : enum sans type sous-jacent, ou uint8 suivi du
+// remplissage jusqu'a l'alignement des flottants (16 octets dans les deux cas)
+function newBoxShape(half) {
+  const m = zeroAlloc(16, 8);
+  m.ptr.writeS32(1);
+  m.ptr.add(4).writeFloat(half.x);
+  m.ptr.add(8).writeFloat(half.y);
+  m.ptr.add(12).writeFloat(half.z);
+  return m;
+}
+
+function newQuat(q) {
+  const m = zeroAlloc(32, 16);
+  m.ptr.writeDouble(q.x);
+  m.ptr.add(8).writeDouble(q.y);
+  m.ptr.add(16).writeDouble(q.z);
+  m.ptr.add(24).writeDouble(q.w);
+  return m;
+}
+
+// Orientation d'une boite balayee de start a end : axe X local le long du trajet (lacet et tangage du segment),
+// sauf yaw / pitch imposes
+function sweepRotation(start, end, yaw, pitch) {
+  const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
+  const h = Math.hypot(dx, dy);
+  const y = yaw != null ? yaw : (h > 1e-6 ? (Math.atan2(dy, dx) * 180) / Math.PI : 0);
+  const p = pitch != null ? pitch : (h > 1e-6 || Math.abs(dz) > 1e-6 ? (Math.atan2(dz, h) * 180) / Math.PI : 0);
+  return quatFromRotator(p, y, 0);
+}
+
+// Balayage d'une boite (demi-cotes half, uu) de start a end : premier obstacle bloquant (canal Visibility, comme les
+// rayons). Le FHitResult a la meme disposition que celui d'un rayon (Location = centre de la boite au contact)
+function sweepBox(ctx, start, end, half, yaw, pitch) {
+  const hit = zeroAlloc(0x200, 16);
+  const s = newVector(start);
+  const e = newVector(end);
+  const q = newQuat(sweepRotation(start, end, yaw, pitch));
+  const shape = newBoxShape(half);
+  const blocked = native('sweepSingleByChannel')(ctx.world, hit.ptr, s.ptr, e.ptr, q.ptr, ECC_VISIBILITY, shape.ptr,
+    queryParams(), dataExport('engine', RESPONSE_PARAMS));
+  if (blocked === 0) return { blocked: false, hit };
+  calibrateHitResult(hit.ptr, start, end);
+  return {
+    blocked: true,
+    hit,
+    location: readVec(hit.ptr.add(hitLayout.location)),
+    impact: readVec(hit.ptr.add(hitLayout.location + 0x18)),
+    normal: readVec(hit.ptr.add(hitLayout.normal)),
+  };
+}
+
+// Ce qu'un rayon a touche : batiment (acteur Build_*, pieces legeres), vegetation (le jeu la degage a la construction)
+// ou nature (relief, rochers)
+function hitKind(name) {
+  if (/\.Build_\w+_C_\d+|Lightweight/i.test(name)) return 'batiment';
+  if (/Foliage/i.test(name)) return 'vegetation';
+  return 'nature';
+}
+
+// Surface naturelle sous (x, y) : premier relief ou rocher en descendant de zTop, en traversant batiments et vegetation
+// (un rayon parti de l'interieur d'une collision ne la touche pas en sortant, mais en touche les faces internes : on
+// repart 5 cm sous chaque contact, jusqu'a 400 fois ; un batiment pose sur le sol a son dernier contact au ras du sol,
+// un pas plus grand ferait partir le rayon sous le relief). null si rien jusqu'a zBottom ou batiment trop epais.
+function naturalTop(ctx, x, y, zTop, zBottom, whoOff, skipped) {
+  let z = zTop;
+  const seen = {}; // mailles traversees, comptees une fois par sorte
+  for (let k = 0; k < 400; k++) {
+    const t = trace(ctx, { x, y, z }, { x, y, z: zBottom });
+    if (!t.blocked) return null;
+    const comp = native('weakObjectPtrGet')(t.hit.ptr.add(whoOff));
+    const kind = comp.isNull() ? 'nature' : hitKind(splitFullName(comp).path);
+    if (kind === 'nature') return t.location.z;
+    if (!seen[kind]) { seen[kind] = true; skipped[kind] = (skipped[kind] || 0) + 1; }
+    z = t.location.z - 5;
+  }
+  return null;
 }
 
 // Altitude du premier obstacle sous (x, y) entre zTop et zBottom, ou null
@@ -805,19 +906,36 @@ function aimAtRailEndForTrack(ctx, conn) {
 // Le rayon part 50 cm au-dessus du point : plus haut, il toucherait ce qui surplombe le point (quai au-dessus d'une voie
 // en contrebas) et l'hologramme s'y accrocherait.
 function pointAim(ctx, p) {
-  let t = trace(ctx, { x: p.x, y: p.y, z: p.z + 50 }, { x: p.x, y: p.y, z: p.z - 100000 });
+  let t;
   // Point en l'air au-dessus d'un batiment (voie a un etage d'helice, au-dessus d'une voie ou d'une gare) : l'hologramme
   // s'accrocherait a ce que le rayon touche (bout de la voie du dessous, constate le 21/10/2026 : rails a blanc de
   // l'etage 1 tires 25 m plus bas). A plus de 2 m sous le point, on passe a travers tout ce qui n'est pas le relief.
   // (60 traversees : deux gares superposees en comptent plus de 10, plancher, toit, quais...)
-  for (let k = 0; t.blocked && k < 60 && p.z - t.location.z > 200 && !isLandscapeHit(t); k++) {
-    t = trace(ctx, { x: p.x, y: p.y, z: t.location.z - 100 }, { x: p.x, y: p.y, z: p.z - 100000 });
-  }
+  // La vegetation est toujours traversee, meme au ras du point (le jeu la degage a la construction), en repartant 5 cm
+  // sous le contact : un buisson pose au sol, depasse d'un metre, envoyait le rayon sous le relief, puis sur le repli
+  // sous le joueur, qui touchait le toit d'un quai -> FGCDInvalidAimLocation (boucle du terminus de l'ancien Venray,
+  // 23/10/2026).
+  // Seuls les batiments sont traverses (en plus de la vegetation), pas les rochers ni les falaises : au-dessus d'une
+  // falaise du decor (FGCliffActor) sans Landscape dessous, le rayon traversait tout et ne trouvait rien (rail A18 de la
+  // ligne des mines, 23/10/2026 : « rien sous le point ni sous le joueur »)
+  const kindOf = (h) => { const c = native('weakObjectPtrGet')(h.hit.ptr.add(hitComponentOffset())); return c.isNull() ? 'nature' : hitKind(splitFullName(c).path); };
+  const foliage = (h) => kindOf(h) === 'vegetation';
+  const through = (x, y, zTop, minDrop) => {
+    let h = trace(ctx, { x, y, z: zTop }, { x, y, z: zTop - 100000 });
+    for (let k = 0; h.blocked && k < 200; k++) {
+      const veg = foliage(h);
+      if (!veg && !(zTop - h.location.z > minDrop && kindOf(h) === 'batiment')) break;
+      h = trace(ctx, { x, y, z: h.location.z - (veg ? 5 : 100) }, { x, y, z: zTop - 100000 });
+    }
+    return h;
+  };
+  t = through(p.x, p.y, p.z + 50, 250);
   if (!t.blocked) {
     // Relief non charge (a plus de ~1,3 km du joueur) : le point touche d'un rayon sous les pieds du joueur sert de
-    // gabarit, deplace ensuite au point voulu (actorHit y inscrit l'acteur vise)
+    // gabarit, deplace ensuite au point voulu (actorHit y inscrit l'acteur vise) ; ce rayon traverse aussi batiments
+    // et vegetation jusqu'au relief (le joueur peut voler au-dessus d'une gare)
     const me = actorPose(requirePawn(ctx)).location;
-    t = trace(ctx, { x: me.x, y: me.y, z: me.z - 250 }, { x: me.x, y: me.y, z: me.z - 100000 });
+    t = through(me.x, me.y, me.z - 250, 0);
     if (!t.blocked) throw new Error('rien sous le point ' + JSON.stringify(r0(p)) + ' ni sous le joueur');
     writeVector(t.hit.ptr.add(hitLayout.traceStart), { x: p.x, y: p.y, z: p.z + 50 });
     writeVector(t.hit.ptr.add(hitLayout.traceStart + 0x18), { x: p.x, y: p.y, z: p.z - 100000 });
@@ -874,9 +992,22 @@ function railOnGameThread(ctx, recipe, from, to, opts) {
     if (!endConn && !to.auto) writeFields(holo, { mScrollRotation: Math.round(to.yaw || 0), mUseCustomEndRotation: true });
     update.fn(holo, (endConn ? aimAtRailEndForTrack(ctx, endConn) : groundAim(to)).hit.ptr);
     let endForced = false;
+    // aiguillage existant : plusieurs bouts libres au meme point, dans le meme sens (branches qui partent du joint) ; le
+    // jeu peut accrocher l'arrivee a une autre branche que celle visee. Accepte : l'appelant (railplan) relie ensuite la
+    // branche voulue par railLink (anneau A du Hub nord, 23/10/2026 : entree de la gare est 1 au lieu du coin nord-est)
+    const sameJoint = (got, want) => {
+      const loc = zeroAlloc(24, 8), nor = zeroAlloc(24, 8);
+      native('railConnLocation')(got, loc.ptr); native('railConnNormal')(got, nor.ptr);
+      const l = readVec(loc.ptr), n = readVec(nor.ptr);
+      return Math.hypot(l.x - want.location.x, l.y - want.location.y, l.z - want.location.z) < 30
+        && n.x * want.normal.x + n.y * want.normal.y + n.z * want.normal.z > 0.99;
+    };
     if (endConn && !snappedRailConnections(holo)[1].equals(endConn.comp)) {
       const got = snappedRailConnections(holo)[1];
-      if (isUObject(got)) throw new Error('accroche a l\'arrivee echouee : ' + compName(got) + ' de ' + pathOrNull(native('railConnTrack')(got)));
+      if (isUObject(got) && !sameJoint(got, endConn)) throw new Error('accroche a l\'arrivee echouee : ' + compName(got) + ' de ' + pathOrNull(native('railConnTrack')(got)));
+    }
+    if (endConn && !snappedRailConnections(holo)[1].equals(endConn.comp) && !isUObject(snappedRailConnections(holo)[1])) {
+      const got = snappedRailConnections(holo)[1];
       // Aucun connecteur trouve : l'arrivee le cherche par collision (FindClosestOverlappingConnection), et loin du joueur
       // le jeu n'a pas les collisions du joint. Meme geometrie qu'une accroche : bout de voie pose exactement sur le
       // connecteur, dans son prolongement (cap = oppose de sa normale, au pas de rotation de 10 deg), puis connecteur ecrit
@@ -990,6 +1121,20 @@ function productivity(actor) {
   }
   const off = productivityOffsets.get(cls.toString());
   return off === null ? null : actor.add(off).readU8() / 255;
+}
+
+// Etiquettes Unreal (AActor::Tags) sauvegardees par le jeu : drapeau CPF_SaveGame pose sur la propriete des le
+// demarrage de l'agent (utilisateur, 23/10/2026 : « je continue a preferer les tags » ; essai : etiquette presente dans
+// la sauvegarde puis relue apres chargement). En memoire seulement : l'agent doit tourner AVANT qu'on charge une partie.
+// Erreur rendue sans bloquer l'installation.
+function enableTagsSaveGame() {
+  try {
+    const at = findProperty(requireStruct('/Script/Engine.Actor'), 'Tags').add(propertyFlagsOffset());
+    at.writeU64(at.readU64().or(CPF_SAVEGAME));
+    return true;
+  } catch (e) {
+    return 'echec : ' + e.message;
+  }
 }
 
 function machineStatus(actor) {
@@ -1192,6 +1337,21 @@ function addItemsOnGameThread(inventoryPath, count, itemPath) {
   return { item: className(itemClass), requested: count, added, now: itemCount(inventory, itemClass) };
 }
 
+// Retire des objets d'une classe d'un inventaire (UFGInventoryComponent::Remove) ; count borne au stock present.
+// Seulement a la demande de l'utilisateur (23/10/2026 : 525 stators d'un ancien quai de chargement, « vire les »)
+function removeItemsOnGameThread(inventoryPath, count, itemPath) {
+  const inventory = requireActor(inventoryPath);
+  const itemClass = loadClass(itemPath);
+  const before = itemCount(inventory, itemClass);
+  const n = Math.min(count, before);
+  if (n > 0) {
+    const classSlot = zeroAlloc(8, 8);
+    classSlot.ptr.writePointer(itemClass);
+    native('inventoryRemove')(inventory, classSlot.ptr, n);
+  }
+  return { item: className(itemClass), requested: count, before, now: itemCount(inventory, itemClass) };
+}
+
 function dismantleOnGameThread(ctx, path, force) {
   if (!builtPaths.has(path) && !force) {
     throw new Error('refuse : ' + path + ' n\'a pas ete construit par cette session (force requis)');
@@ -1201,7 +1361,11 @@ function dismantleOnGameThread(ctx, path, force) {
     builtPaths.delete(path);
     throw new Error('objet introuvable (deja demonte ?) : ' + path);
   }
-  if (!isA(obj, native('buildableStaticClass')())) throw new Error('refuse : ' + path + ' n\'est pas un AFGBuildable');
+  // Batiment, ou vehicule ferroviaire (locomotive, wagon : meme interface de demontage que le pistolet)
+  const vehicle = findFirstObject('FGRailroadVehicle', native('uclassStaticClass')());
+  if (!isA(obj, native('buildableStaticClass')()) && !(!vehicle.isNull() && isA(obj, vehicle))) {
+    throw new Error('refuse : ' + path + ' n\'est ni un AFGBuildable ni un vehicule ferroviaire');
+  }
   // Comme le pistolet : les "enfants" (voie integree d'une gare ou d'un quai) d'abord, sinon ils restent seuls
   // (constate le 18/10/2026 : voies integrees orphelines apres demontage de quais)
   const kids = zeroAlloc(16, 8);
@@ -1212,6 +1376,326 @@ function dismantleOnGameThread(ctx, path, force) {
   native('executeDismantle')(obj);
   builtPaths.delete(path);
   return { dismantled: path, children: childPaths };
+}
+
+// Noms et valeurs d'un enum du jeu (ex. EOutlineColor), lus en jeu : { OC_RED: 250, ... }
+function enumValues(enumName) {
+  const e = findFirstObject(enumName, findFirstObject('Enum', native('uclassStaticClass')()));
+  if (e.isNull()) throw new Error('enum introuvable : ' + enumName);
+  const out = {};
+  for (let i = 0; i < 256; i++) {
+    const s = newFString();
+    native('enumNameStringByIndex')(e, s, i);
+    const name = readFString(s);
+    freeFString(s);
+    if (!name || name === 'None') break;
+    const text = Memory.allocUtf16String(name);
+    const f = Memory.alloc(16);
+    f.writePointer(text);
+    f.add(8).writeS32(name.length + 1);
+    f.add(12).writeS32(name.length + 1);
+    out[name.split('::').pop()] = Number(native('enumValueByNameString')(e, f, 0));
+  }
+  return out;
+}
+
+// Contour (comme le pistolet de demontage) sur des acteurs : couleur = nom d'EOutlineColor (OC_RED...), show false = retire
+function outlineOnGameThread(ctx, paths, color, show) {
+  const pawn = requirePawn(ctx);
+  const comp = pawn.add(propertyOffset(native('getObjectClass')(pawn), 'mOutlineComponent')).readPointer();
+  if (!isUObject(comp)) throw new Error('composant de contour introuvable sur le personnage');
+  const colors = enumValues('EOutlineColor');
+  const value = colors[color || 'OC_RED'];
+  if (show && value === undefined) throw new Error('couleur inconnue : ' + color + ' (connues : ' + Object.keys(colors).join(', ') + ')');
+  let done = 0;
+  const failed = [];
+  for (const path of paths) {
+    const a = findObject(path);
+    if (a.isNull()) { failed.push(path.split('.').pop() + ' : introuvable'); continue; }
+    if (show) native('outlineShow')(comp, a, value, 1, 0);
+    else native('outlineHide')(comp, a);
+    done++;
+  }
+  return { done, failed, colors };
+}
+
+// Bulle de visualisation : deux spheres en materiau d'hologramme du pistolet de construction, sans collision ni ombre.
+// Le materiau n'est dessine que d'un cote : la sphere du moteur se voit du dehors, la voute celeste du jeu (faces vers
+// l'interieur) du dedans. Acteurs de decor (StaticMeshActor) : le jeu ne les sauvegarde pas ; sphereRemove les retire.
+const SPHERE_MESHES = ['/Engine/BasicShapes/Sphere.Sphere', '/Game/FactoryGame/World/Environment/DayNight/StaticMeshes/SM_SkySphere_ExtraUV.SM_SkySphere_ExtraUV'];
+const SPHERE_MATERIAL = '/Game/FactoryGame/Equipment/BuildGun/Material/Hologram_Blue_Inst.Hologram_Blue_Inst';
+
+function loadObject(path) {
+  const o = native('staticLoadObject')(native('uobjectStaticClass')(), NULL, wideString(path), NULL, 0, NULL, 1, NULL);
+  if (!isUObject(o)) throw new Error('objet introuvable : ' + path);
+  return o;
+}
+
+// Une sphere : apparait a l'echelle 1, prend son maillage, puis est mise au rayon voulu d'apres sa boite mesuree en jeu
+function spawnSphere(pawn, center, radius, meshPath, material) {
+  const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+  slot.ptr.writePointer(loadClass('/Script/Engine.StaticMeshActor'));
+  const identity = { x: 0, y: 0, z: 0, w: 1 };
+  const xf = newTransform(center, identity);
+  const spawn = enumValues('ESpawnActorCollisionHandlingMethod').AlwaysSpawn;
+  const scaleMethod = enumValues('ESpawnActorScaleMethod').OverrideRootScale;
+  const a = native('beginDeferredSpawn')(pawn, slot.ptr, xf.ptr, spawn, NULL, scaleMethod);
+  if (!isUObject(a)) throw new Error('apparition refusee');
+  const comp = a.add(propertyOffset(native('getObjectClass')(a), 'StaticMeshComponent')).readPointer();
+  native('sceneSetMobility')(comp, enumValues('EComponentMobility').Movable);
+  native('finishSpawningActor')(a, xf.ptr, scaleMethod);
+  native('setActorEnableCollision')(a, 0);
+  native('primitiveSetCollisionEnabled')(comp, enumValues('ECollisionEnabled').NoCollision);
+  native('primitiveSetCastShadow')(comp, 0);
+  native('staticMeshSetMesh')(comp, loadObject(meshPath));
+  native('meshSetMaterial')(comp, 0, loadObject(material));
+  const box = zeroAlloc(0x40, 8);
+  native('actorLocalBox')(a, box.ptr, 1, 0);
+  const half = (box.ptr.add(24).readDouble() - box.ptr.readDouble()) / 2;
+  if (!(half > 0)) { native('destroyActor')(a, 0, 1); throw new Error('maillage sans taille : ' + meshPath); }
+  const s = radius / half;
+  native('setActorTransform')(a, newTransform(center, identity, { x: s, y: s, z: s }).ptr, 0, NULL, TELEPORT_NONE);
+  return { path: splitFullName(a).path, mesh: meshPath.split('.').pop(), meshRadius: Math.round(half), scale: s };
+}
+
+// --- Fantome de plan : blocs d'hologramme qui suivent la visee du joueur ------------------------------------------
+// Utilisateur, 24/10/2026 : « un hologramme de la gare que je puisse manipuler, un peu comme un blueprint » (un plan du
+// jeu est limite a quelques dizaines de metres). Un acteur de decor par bloc (StaticMeshActor, cube du moteur, materiau
+// d'hologramme, sans collision ; le jeu ne le sauvegarde pas). Repere du plan : u (cap axis), v = u + 90, z vertical, en
+// metres ; bloc = { u, v, z, lu, lv, lz (demi-longueurs), yaw, pitch (degres, relatifs a u) }. En suivi (un tick sur
+// GHOST_PERIOD_MS), le centre du plan (center, en u v) va au point vise et le sens de marche (-u) suit le regard.
+const GHOST_MESH = '/Engine/BasicShapes/Cube.Cube';
+const GHOST_PERIOD_MS = 100;
+const ghost = { actors: [], parts: [], follow: false, frame: null, z: 15000, center: [0, 0], last: 0, half: null };
+const degRad = (d) => (d * Math.PI) / 180;
+
+// FRotator(pitch, yaw, 0).Quaternion() (formule du moteur)
+function ueQuat(pitchDeg, yawDeg) {
+  const sp = Math.sin(degRad(pitchDeg) / 2), cp = Math.cos(degRad(pitchDeg) / 2);
+  const sy = Math.sin(degRad(yawDeg) / 2), cy = Math.cos(degRad(yawDeg) / 2);
+  return { x: sp * sy, y: -sp * cy, z: cp * sy, w: cp * cy };
+}
+
+function ghostSpawnBlock(pawn, material, origin) {
+  const slot = zeroAlloc(8, 8);
+  slot.ptr.writePointer(loadClass('/Script/Engine.StaticMeshActor'));
+  const xf = newTransform(origin, { x: 0, y: 0, z: 0, w: 1 });
+  const scaleMethod = enumValues('ESpawnActorScaleMethod').OverrideRootScale;
+  const a = native('beginDeferredSpawn')(pawn, slot.ptr, xf.ptr, enumValues('ESpawnActorCollisionHandlingMethod').AlwaysSpawn, NULL, scaleMethod);
+  if (!isUObject(a)) throw new Error('apparition refusee');
+  const comp = a.add(propertyOffset(native('getObjectClass')(a), 'StaticMeshComponent')).readPointer();
+  native('sceneSetMobility')(comp, enumValues('EComponentMobility').Movable);
+  native('finishSpawningActor')(a, xf.ptr, scaleMethod);
+  native('setActorEnableCollision')(a, 0);
+  native('primitiveSetCollisionEnabled')(comp, enumValues('ECollisionEnabled').NoCollision);
+  native('primitiveSetCastShadow')(comp, 0);
+  native('staticMeshSetMesh')(comp, loadObject(GHOST_MESH));
+  native('meshSetMaterial')(comp, 0, loadObject(material));
+  return a;
+}
+
+// Demi-cotes du cube a l'echelle 1, mesurees en jeu sur le premier bloc
+function ghostMeasure(a) {
+  const box = zeroAlloc(0x40, 8);
+  native('actorLocalBox')(a, box.ptr, 1, 0);
+  const p = box.ptr;
+  const half = { x: (p.add(24).readDouble() - p.readDouble()) / 2, y: (p.add(32).readDouble() - p.add(8).readDouble()) / 2, z: (p.add(40).readDouble() - p.add(16).readDouble()) / 2 };
+  if (!(half.x > 0 && half.y > 0 && half.z > 0)) throw new Error('cube sans taille : ' + GHOST_MESH);
+  return half;
+}
+
+function ghostPlace(frame) {
+  const a = degRad(frame.axis), b = degRad(frame.axis + 90);
+  ghost.parts.forEach((p, i) => {
+    const du = (p.u - ghost.center[0]) * 100, dv = (p.v - ghost.center[1]) * 100;
+    const loc = { x: frame.x + du * Math.cos(a) + dv * Math.cos(b), y: frame.y + du * Math.sin(a) + dv * Math.sin(b), z: frame.z + p.z * 100 };
+    const s = { x: (p.lu * 100) / ghost.half.x, y: (p.lv * 100) / ghost.half.y, z: (p.lz * 100) / ghost.half.z };
+    native('setActorTransform')(ghost.actors[i], newTransform(loc, ueQuat(p.pitch || 0, frame.axis + (p.yaw || 0)), s).ptr, 0, NULL, TELEPORT_NONE);
+  });
+  ghost.frame = frame;
+}
+
+// Molette et touches du joueur (utilisateur : « je dois pouvoir le faire pivoter finement avec la molette souris ») :
+// APlayerController::WasInputKeyJustPressed / IsInputKeyDown (Engine), noms decores retrouves dans les exports. FKey passe
+// par valeur (MSVC : copie a l'adresse donnee, detruite par l'appele) : copie neuve a chaque appel, avec son seul nom et
+// des details nuls, que le destructeur laisse tels quels ; disposition de FKey lue par reflexion (InputCore.Key).
+const GHOST_KEYS = ['MouseScrollUp', 'MouseScrollDown', 'LeftShift', 'LeftControl', 'LeftMouseButton', 'RightMouseButton'];
+function ghostInputInit() {
+  if (ghost.keys) return ghost.keys;
+  for (const [key, re] of [['pcWasKeyJustPressed', /^\?WasInputKeyJustPressed@APlayerController@@QEBA_NUFKey@@@Z$/],
+    ['pcIsKeyDown', /^\?IsInputKeyDown@APlayerController@@QEBA_NUFKey@@@Z$/]]) {
+    if (NATIVE_SPECS[key]) continue;
+    const names = Process.getModuleByName(MOD.engine).enumerateExports().map((e) => e.name).filter((n) => re.test(n));
+    if (names.length !== 1) throw new Error(key + ' : exports inattendus ' + JSON.stringify(names));
+    NATIVE_SPECS[key] = ['engine', names[0], 'uint8', ['pointer', 'pointer']];
+  }
+  const st = requireStruct('/Script/InputCore.Key');
+  const kn = fieldsOf(st).find((x) => x.name === 'KeyName');
+  if (!kn) throw new Error('InputCore.Key : champ KeyName absent');
+  const name = {};
+  for (const k of GHOST_KEYS) { const b = zeroAlloc(16, 8); native('fnameCtor')(b.ptr, wideString(k), 1); name[k] = b.ptr.readU64(); }
+  ghost.keys = { size: structSize(st), off: kn.offset, name, buf: zeroAlloc(structSize(st), 16) };
+  return ghost.keys;
+}
+function ghostKey(fn, controller, k) {
+  const K = ghost.keys;
+  K.buf.ptr.writeByteArray(new Uint8Array(K.size));
+  K.buf.ptr.add(K.off).writeU64(K.name[k]);
+  return native(fn)(controller, K.buf.ptr) !== 0;
+}
+
+// Tache de tick. Chaque tick : molette = rotation de 1 deg (Maj : 10 deg), Ctrl + molette = altitude de 1 m (un cran
+// n'est vu que pendant son tick) ; clic gauche = fige, clic droit = reprend le suivi (utilisateur, 24/10/2026). En suivi,
+// toutes les GHOST_PERIOD_MS : centre du plan au point vise. Orientation :
+// ghost.axis (cap de u ; le sens de marche dans les quais est axis + 180), fixee au regard a la creation
+function ghostFollow(subsystem) {
+  if (!ghost.actors.length) return;
+  const ctx = gameContext(subsystem);
+  let changed = false;
+  if (ghost.input !== false && !ctx.controller.isNull()) {
+    try {
+      ghostInputInit();
+      if (ghostKey('pcWasKeyJustPressed', ctx.controller, 'LeftMouseButton')) ghost.follow = false;
+      if (ghostKey('pcWasKeyJustPressed', ctx.controller, 'RightMouseButton')) ghost.follow = true;
+      const up = ghostKey('pcWasKeyJustPressed', ctx.controller, 'MouseScrollUp');
+      const down = ghostKey('pcWasKeyJustPressed', ctx.controller, 'MouseScrollDown');
+      if (up || down) {
+        const s = up ? 1 : -1;
+        if (ghostKey('pcIsKeyDown', ctx.controller, 'LeftControl')) ghost.z += 100 * s;
+        else ghost.axis = (((ghost.axis + s * (ghostKey('pcIsKeyDown', ctx.controller, 'LeftShift') ? 10 : 1)) % 360) + 360) % 360;
+        changed = true;
+      }
+    } catch (e) {
+      ghost.input = false;
+      send({ event: 'ghost.input.error', message: e.message });
+    }
+  }
+  const now = Date.now();
+  if (ghost.follow && now - ghost.last >= GHOST_PERIOD_MS) {
+    ghost.last = now;
+    const v = viewPoint(ctx);
+    const p = degRad(v.rotation.pitch), y = degRad(v.rotation.yaw);
+    const to = { x: v.location.x + 300000 * Math.cos(p) * Math.cos(y), y: v.location.y + 300000 * Math.cos(p) * Math.sin(y), z: v.location.z + 300000 * Math.sin(p) };
+    const t = trace(ctx, v.location, to);
+    if (t.blocked) { ghostPlace({ x: t.location.x, y: t.location.y, z: ghost.z, axis: ghost.axis }); return; }
+  }
+  if (changed && ghost.frame) ghostPlace(Object.assign({}, ghost.frame, { z: ghost.z, axis: ghost.axis }));
+}
+
+// --- Pose des plans au pistolet : rotation fine, et rotation en mode verrouille (H) -----------------------------------
+// Utilisateur, 24/10/2026 (plan « G15 gare ») : « la rotation est pas super fine » ; « on devrait pouvoir pivoter la gare
+// quand elle est figee ». Lu dans Ghidra : AFGHologram::Scroll(delta) -> ScrollRotate(delta, 10) ; ScrollRotate ne fait
+// RIEN quand mHologramIsLocked (touche H : position = mHologramLockLocation + mHologramNudgeOffset, fleches et Page haut /
+// bas du jeu pour la translation), sinon mScrollRotation += delta x GetRotationStep().
+//  - AFGBlueprintHologram::GetRotationStep rend bpPlace.step (1 deg ; 10 deg avec Maj), sauf accroche a un autre plan (90) ;
+//  - plan verrouille : a l'entree de ScrollRotate, l'hologramme tourne sur place de delta x pas (lacet de l'acteur) et
+//    mScrollRotation (lu par reflexion) suit, pour qu'il ne saute pas au deverrouillage.
+// Accroches par nom decore, refusees si le corps est partage (ICF).
+const bpPlace = { installed: false, on: false, step: 1 };
+function bpPlaceInstall() {
+  if (bpPlace.installed) return;
+  const rotAddr = hookableGameExport('?GetRotationStep@AFGBlueprintHologram@@UEBAHXZ');
+  const scrollAddr = hookableGameExport('?ScrollRotate@AFGHologram@@UEAAXHH@Z');
+  if (!NATIVE_SPECS.hologramIsLocked) {
+    const names = Process.getModuleByName(MOD.game).enumerateExports().map((e) => e.name).filter((n) => /^\?IsHologramLocked@AFGHologram@@QEBA_NXZ$/.test(n));
+    if (names.length !== 1) throw new Error('IsHologramLocked : exports inattendus ' + JSON.stringify(names));
+    NATIVE_SPECS.hologramIsLocked = ['game', names[0], 'uint8', ['pointer']];
+  }
+  const bpHoloClass = loadClass('/Script/FactoryGame.FGBlueprintHologram');
+  const rotOrig = new NativeFunction(rotAddr, 'int', ['pointer'], { exceptions: 'propagate' });
+  Interceptor.replace(rotAddr, new NativeCallback(function (self) {
+    const s = rotOrig(self);
+    return bpPlace.on && s !== 90 ? bpPlace.step : s;
+  }, 'int', ['pointer']));
+  Interceptor.attach(scrollAddr, {
+    onEnter(args) {
+      if (!bpPlace.on) return;
+      try {
+        const self = args[0], delta = args[1].toInt32();
+        if (!delta || !isA(self, bpHoloClass) || native('hologramIsLocked')(self) === 0) return;
+        const d = delta * bpPlace.step;
+        const at = self.add(propertyOffset(native('getObjectClass')(self), 'mScrollRotation'));
+        let r = at.readS32() + d;
+        while (r > 180) r -= 360;
+        while (r < -180) r += 360;
+        at.writeS32(r);
+        const p = actorPose(self);
+        native('setActorTransform')(self, newTransform(p.location, ueQuat(0, p.rotation.yaw + d)).ptr, 0, NULL, TELEPORT_NONE);
+      } catch (e) { send({ event: 'bpPlace.error', message: e.message }); }
+    },
+  });
+  bpPlace.installed = true;
+}
+// Tache de tick : pas de rotation selon Maj
+function bpPlaceKeys(subsystem) {
+  if (!bpPlace.on) return;
+  const ctx = gameContext(subsystem);
+  if (ctx.controller.isNull()) return;
+  ghostInputInit();
+  bpPlace.step = ghostKey('pcIsKeyDown', ctx.controller, 'LeftShift') ? 10 : 1;
+}
+
+// --- Sources de streaming World Partition -----------------------------------------------------------------------------
+// Utilisateur, 24/10/2026 : « retrouve comment le jeu les charge » (rochers lointains absents des rayons du releve). La
+// carte est en World Partition (FGWorldSettings.WorldPartition_0.FGWorldPartitionRuntimeSpatialHash_0, lu par
+// reflexion) : 6 grilles de cellules (MainGrid : cellules de 128 m chargees a 256 m d'une source ; LandscapeGrid 1 024 m ;
+// HLOD0 1 024 m...), chaque cellule lue sur le disque quand une source de streaming est a portee ; le controleur du
+// joueur en est une. UWorldPartitionStreamingSourceComponent fait d'un acteur une source : ajoute a un StaticMeshActor sans
+// maillage ni collision (invisible ; le jeu ne le sauvegarde pas) pose au point voulu, il fait charger les cellules
+// autour, rochers et collisions compris, sans deplacer le joueur. Retirer l'acteur rend les cellules au streaming normal.
+const streamSources = new Map(); // chemin de l'acteur -> { actor, comp, location }
+function streamingSourceAdd(pawn, location) {
+  const identity = { x: 0, y: 0, z: 0, w: 1 };
+  const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+  slot.ptr.writePointer(loadClass('/Script/Engine.StaticMeshActor'));
+  const xf = newTransform(location, identity);
+  const scaleMethod = enumValues('ESpawnActorScaleMethod').OverrideRootScale;
+  const a = native('beginDeferredSpawn')(pawn, slot.ptr, xf.ptr, enumValues('ESpawnActorCollisionHandlingMethod').AlwaysSpawn, NULL, scaleMethod);
+  if (!isUObject(a)) throw new Error('apparition refusee');
+  native('finishSpawningActor')(a, xf.ptr, scaleMethod);
+  native('setActorEnableCollision')(a, 0);
+  const cslot = zeroAlloc(8, 8);
+  cslot.ptr.writePointer(loadClass('/Script/Engine.WorldPartitionStreamingSourceComponent'));
+  const comp = native('addComponentByClass')(a, cslot.ptr, 1, newTransform({ x: 0, y: 0, z: 0 }, identity).ptr, 0);
+  if (!isUObject(comp)) { native('destroyActor')(a, 0, 1); throw new Error('composant de source de streaming refuse'); }
+  const path = splitFullName(a).path;
+  streamSources.set(path, { actor: a, comp, location });
+  return path;
+}
+// Sources posees par un agent precedent (hote relance en plein releve : le retrait n'a pas pu se faire) : StaticMeshActor
+// portant une source de streaming (AActor::GetComponentByClass ; AddComponentByClass ne la range pas dans
+// InstanceComponents, vu le 24/10/2026) ; reprises dans streamSources
+function streamingSourceAdopt(ctx) {
+  const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+  slot.ptr.writePointer(loadClass('/Script/Engine.WorldPartitionStreamingSourceComponent'));
+  for (const a of actorsOfClass(ctx, loadClass('/Script/Engine.StaticMeshActor'))) {
+    if (!isUObject(a)) continue;
+    const path = splitFullName(a).path;
+    if (streamSources.has(path)) continue;
+    const c = native('actorComponentByClass')(a, slot.ptr);
+    if (isUObject(c)) streamSources.set(path, { actor: a, comp: c, location: actorPose(a).location, adopted: true });
+  }
+}
+function streamingSourceList() {
+  const out = [];
+  for (const [path, s] of streamSources) {
+    if (!isUObject(s.actor) || !isUObject(s.comp)) { streamSources.delete(path); continue; }
+    out.push({ path, location: s.location, completed: native('wpSourceStreamingCompleted')(s.comp) !== 0, adopted: !!s.adopted });
+  }
+  return out;
+}
+
+function ghostRemoveAll() {
+  pump.tickHooks.delete('ghost');
+  const n = ghost.actors.filter((a) => isUObject(a) && native('destroyActor')(a, 0, 1) !== 0).length;
+  ghost.actors = []; ghost.parts = []; ghost.frame = null; ghost.follow = false;
+  return n;
+}
+
+function sphereOnGameThread(ctx, center, radius, material) {
+  const pawn = requirePawn(ctx);
+  const spheres = SPHERE_MESHES.map((m) => spawnSphere(pawn, center, radius, m, material || SPHERE_MATERIAL));
+  return { paths: spheres.map((s) => s.path), spheres, center: r0(center), radius };
 }
 
 // Classe a scanner : categorie, chemin complet, ou nom court d'une classe deja chargee (ex. BP_WAT2_C)
@@ -1377,8 +1861,11 @@ function worldScannablesOnGameThread(ctx, list, opts) {
 function lightweightOf(ctx, classPath) {
   const sub = native('lwSubsystemGet')(ctx.subsystem);
   if (!isUObject(sub)) throw new Error('sous-systeme des pieces legeres introuvable');
+  // Chemin complet, ou nom court d'une classe deja chargee (ex. Build_Foundation_8x4_01_C) : sans instance, pas chargee
+  const cls = classPath.indexOf('/') >= 0 ? loadClass(classPath) : findFirstObject(classPath, native('uclassStaticClass')());
+  if (cls.isNull()) throw new Error('classe non chargee : ' + classPath);
   const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
-  slot.ptr.writePointer(loadClass(classPath));
+  slot.ptr.writePointer(cls);
   const ref = zeroAlloc(0x100, 16), xf = zeroAlloc(0x60, 16);
   native('lwRefCtor')(ref.ptr);
   let n = 0;
@@ -1405,7 +1892,7 @@ Object.assign(rpc.exports, {
   install() {
     const warm = warmUp();
     installPump();
-    return Object.assign(pumpStatus(), warm);
+    return Object.assign(pumpStatus(), warm, { tagsSaveGame: enableTagsSaveGame() });
   },
   status() {
     return Object.assign(pumpStatus(), { build: native('buildVersion')().readUtf16String(), hitLayout, built: Array.from(builtPaths) });
@@ -1483,6 +1970,56 @@ Object.assign(rpc.exports, {
       });
     });
   },
+  // Balayages de boites en lot : [{from, to, half: {x,y,z}, yaw?, pitch?}] -> [{hit, location (centre de la boite au
+  // contact), impact (point touche), normal, component}]. Axe X de la boite le long du trajet sauf yaw / pitch imposes.
+  // Relief et rochers : charges loin du joueur ; batiments : collisions chargees a ~100 m seulement
+  sweeps(items) {
+    return withContext('sweeps', (ctx) => withoutFoliage(ctx, () => {
+      const who = hitComponentOffset();
+      return items.map(({ from, to, half, yaw, pitch }) => {
+        const t = sweepBox(ctx, from, to, half, yaw, pitch);
+        if (!t.blocked) return { hit: false };
+        const comp = native('weakObjectPtrGet')(t.hit.ptr.add(who));
+        return { hit: true, location: r0(t.location), impact: r0(t.impact), normal: t.normal, component: comp.isNull() ? null : splitFullName(comp) };
+      });
+    }));
+  },
+  // Relief naturel sur une grille : nx * ny mailles de `step` uu depuis (x0, y0) ; altitude (uu, arrondie) du relief ou des
+  // rochers, batiments et vegetation traverses (comptes dans skipped), null sans sol entre zTop et zBottom
+  relief(x0, y0, nx, ny, step, zTop, zBottom) {
+    return withContext('relief', (ctx) => withoutFoliage(ctx, () => {
+      const who = hitComponentOffset();
+      const skipped = {};
+      const z = [];
+      for (let j = 0; j < ny; j++) {
+        for (let i = 0; i < nx; i++) {
+          const h = naturalTop(ctx, x0 + i * step, y0 + j * step, zTop, zBottom, who, skipped);
+          z.push(h === null ? null : Math.round(h));
+        }
+      }
+      return { x0, y0, nx, ny, step, z, skipped, foliageIgnored: traceQueryParams.foliageIgnored };
+    }));
+  },
+  // Relief naturel en une liste de points [{x, y}] (meme regle que relief) : releve fin des seules mailles accidentees
+  // d'un releve grossier (tracer.js, releve a deux finesses, 24/10/2026)
+  reliefPoints(points, zTop, zBottom) {
+    return withContext('reliefPoints', (ctx) => withoutFoliage(ctx, () => {
+      const who = hitComponentOffset();
+      const skipped = {};
+      const z = points.map((p) => { const h = naturalTop(ctx, p.x, p.y, zTop, zBottom, who, skipped); return h === null ? null : Math.round(h); });
+      return { z, skipped };
+    }));
+  },
+  // Tests de boites posees en lot : [{center, half, yaw?, pitch?}] -> [true si un obstacle bloquant la touche]
+  overlaps(items) {
+    return withContext('overlaps', (ctx) => items.map(({ center, half, yaw, pitch }) => {
+      const c = newVector(center);
+      const q = newQuat(quatFromRotator(pitch || 0, yaw || 0, 0));
+      const shape = newBoxShape(half);
+      return native('overlapBlockingTestByChannel')(ctx.world, c.ptr, q.ptr, ECC_VISIBILITY, shape.ptr,
+        dataExport('engine', QUERY_PARAMS), dataExport('engine', RESPONSE_PARAMS)) !== 0;
+    }));
+  },
   // opts.machine : ajoute recette / vitesse / pause des machines
   scan(kind, center, radius, limit, opts) {
     return withContext('scan', (ctx) => scanOnGameThread(ctx, kind, center || null, radius || 0, limit || 50,
@@ -1550,6 +2087,31 @@ Object.assign(rpc.exports, {
         }
       }
       return { found: null, visited };
+    });
+  },
+  // Voisins electriques directs (cables, liaisons internes) de chaque acteur : sert a reperer, avant un demontage, les
+  // batiments hors de la zone qui y sont relies
+  powerLinks(paths) {
+    return withContext('powerLinks', () => {
+      const circuitClass = native('circuitConnectionStaticClass')();
+      return paths.map((p) => {
+        const actor = requireActor(p);
+        const links = new Set();
+        const slot = zeroAlloc(8, 8); slot.ptr.writePointer(circuitClass);
+        const arr = zeroAlloc(16, 8);
+        native('getComponentsByClass')(actor, arr.ptr, slot.ptr);
+        for (const comp of takePointerArray(arr.ptr)) {
+          if (!isUObject(comp)) continue;
+          const conns = zeroAlloc(16, 8);
+          native('circuitGetConnections')(comp, conns.ptr);
+          for (const other of takePointerArray(conns.ptr)) {
+            if (!isUObject(other)) continue;
+            const path = splitFullName(other).path;
+            links.add(path.slice(0, path.lastIndexOf('.')));
+          }
+        }
+        return { path: p, links: [...links] };
+      });
     });
   },
   // Circuit electrique par son numero (power().circuitId) : chemin de l'objet, a lire ensuite avec dump
@@ -1652,6 +2214,9 @@ Object.assign(rpc.exports, {
   addItems(inventoryPath, count, itemPath) {
     return withContext('addItems', () => addItemsOnGameThread(inventoryPath, count, itemPath));
   },
+  removeItems(inventoryPath, count, itemPath) {
+    return withContext('removeItems', () => removeItemsOnGameThread(inventoryPath, count, itemPath));
+  },
   // Regles de tri d'un repartiteur intelligent (AFGBuildableSplitterSmart.mSortRules) : sans rules, les lit ; avec rules
   // = [{ item, output }], les remplace. item : 'any' | 'overflow' | 'none' | 'undefined' | chemin de classe d'objet ;
   // output : 0, 1 (centre) ou 2.
@@ -1746,6 +2311,7 @@ Object.assign(rpc.exports, {
       const queue = [];
       const machines = [];
       const platforms = [];
+      const passives = []; // convoyeurs, ascenseurs, raccords, stockages, tuyaux traverses (pour un demontage)
       for (const p of paths) {
         const a = requireActor(p);
         seen.add(a.toString());
@@ -1779,10 +2345,13 @@ Object.assign(rpc.exports, {
             }
             machines.push(m);
             queue.push({ actor: owner, depth: depth + 1 });
-          } else queue.push({ actor: owner, depth });
+          } else {
+            passives.push(short);
+            queue.push({ actor: owner, depth });
+          }
         }
       }
-      return { visited, truncated: queue.length > 0, machines, platforms };
+      return { visited, truncated: queue.length > 0, machines, platforms, passives };
     });
   },
   pause(path, paused) {
@@ -1815,8 +2384,282 @@ Object.assign(rpc.exports, {
   platformLoadMode(path, load) {
     return withContext('platformLoadMode', () => platformLoadModeOnGameThread(path, load));
   },
+  // Etiquettes Unreal d'un acteur (AActor::Tags, TArray<FName>) : sans tags, les lit ; avec tags, remplace la liste
+  // (tableau alloue par FMemory, que le moteur libere avec l'acteur ; noms crees par FNAME_Add). Essai du 23/10/2026 :
+  // l'utilisateur veut savoir si le jeu les sauvegarde (pour noter les matieres attendues sur une gare)
+  tags(path, tags) {
+    return withContext('tags', () => {
+      const actor = requireActor(path);
+      const arr = actor.add(propertyOffset(native('getObjectClass')(actor), 'Tags'));
+      const read = () => {
+        const data = arr.readPointer(), n = arr.add(8).readS32(), out = [];
+        for (let i = 0; i < n; i++) out.push(fnameString(data.add(8 * i)));
+        return out;
+      };
+      if (!tags) return { tags: read() };
+      const old = arr.readPointer();
+      const data = tags.length ? native('memMalloc')(8 * tags.length, 8) : NULL;
+      tags.forEach((t, i) => {
+        const buf = zeroAlloc(16, 8);
+        native('fnameCtor')(buf.ptr, wideString(t), 1); // EFindName::FNAME_Add
+        data.add(8 * i).writeU64(buf.ptr.readU64());
+      });
+      arr.writePointer(data); arr.add(8).writeS32(tags.length); arr.add(12).writeS32(tags.length);
+      if (!old.isNull()) fnFree(old);
+      return { tags: read() };
+    });
+  },
+  // Drapeau « a sauvegarder » (CPF_SaveGame) d'une propriete : struct = chemin d'une classe ou structure (ex.
+  // /Script/Engine.Actor), name = propriete ; on = true / false le pose ou l'enleve, absent le lit. En memoire seulement :
+  // a refaire a chaque lancement du jeu, AVANT tout chargement de partie (sinon la valeur sauvegardee est ignoree, a
+  // verifier). Essai du 23/10/2026 sur AActor.Tags (utilisateur : « je continue a preferer les tags, on essaye »)
+  saveGameFlag(structPath, name, on) {
+    return withContext('saveGameFlag', () => {
+      const prop = findProperty(requireStruct(structPath), name);
+      const at = prop.add(propertyFlagsOffset());
+      const before = at.readU64();
+      if (on === true) at.writeU64(before.or(CPF_SAVEGAME));
+      if (on === false) at.writeU64(before.and(CPF_SAVEGAME.not()));
+      const after = at.readU64();
+      return { property: structPath + '.' + name, flagsOffset: propertyFlagsOffset(), before: '0x' + before.toString(16),
+        after: '0x' + after.toString(16), saveGame: !after.and(CPF_SAVEGAME).equals(0) };
+    });
+  },
+  // Renomme une gare (comme son panneau dans le jeu) : nom passe a l'identifiant de la gare (mStationIdentifier). Le jeu
+  // filtre le texte puis l'applique dans un rappel : relire le nom un peu apres (dump de l'identifiant, mStationName)
+  renameStation(path, name) {
+    return withContext('renameStation', () => {
+      const station = requireActor(path);
+      const id = station.add(propertyOffset(native('getObjectClass')(station), 'mStationIdentifier')).readPointer();
+      if (!isUObject(id)) throw new Error(path + ' : pas d\'identifiant de gare (mStationIdentifier)');
+      const chars = wideString(name);
+      const str = Memory.alloc(16);
+      str.writePointer(chars); str.add(8).writeS32(name.length + 1); str.add(12).writeS32(name.length + 1);
+      const text = zeroAlloc(32, 16);
+      native('textFromString')(text.ptr, str);
+      native('trainStationSetName')(id, text.ptr);
+      return { identifier: splitFullName(id).path, requested: name };
+    });
+  },
   dismantle(path, force) {
     return withContext('dismantle', (ctx) => dismantleOnGameThread(ctx, path, force === true));
+  },
+  // Bulle visible (sphere d'hologramme) de rayon donne (uu) ; materiau = chemin d'un materiau (bleu par defaut)
+  sphere(center, radius, material) {
+    return withContext('sphere', (ctx) => sphereOnGameThread(ctx, center, radius, material));
+  },
+  // Fantome de plan (voir ghostFollow) : parts = blocs du plan ; opts = { center: [u, v] (m), z (uu, altitude des rails),
+  // follow (suivi de la visee, oui par defaut), frame: {x, y, z, axis} (position fixe), material }. Remplace le precedent.
+  ghost(parts, opts) {
+    return withContext('ghost', (ctx) => {
+      const o = opts || {};
+      ghostRemoveAll();
+      const pawn = requirePawn(ctx);
+      const view = viewPoint(ctx), at = view.location;
+      const material = o.material || SPHERE_MATERIAL;
+      for (let i = 0; i < parts.length; i++) {
+        const a = ghostSpawnBlock(pawn, material, at);
+        if (!ghost.half) ghost.half = ghostMeasure(a);
+        ghost.actors.push(a);
+      }
+      ghost.parts = parts;
+      ghost.center = o.center || [0, 0];
+      ghost.z = o.z != null ? o.z : 15000;
+      ghost.follow = o.follow !== false && !o.frame;
+      // orientation initiale : les trains traversent les quais dans le sens du regard ; ensuite, la molette
+      ghost.axis = o.frame ? o.frame.axis : (((view.rotation.yaw + 180) % 360) + 360) % 360;
+      ghost.input = true;
+      ghostPlace(o.frame || { x: at.x, y: at.y, z: ghost.z, axis: ghost.axis });
+      pump.tickHooks.set('ghost', ghostFollow);
+      return { blocks: ghost.actors.length, follow: ghost.follow, frame: ghost.frame };
+    });
+  },
+  // Reglages du fantome : { follow, z (uu), frame: {x, y, z, axis} } ; rend l'etat
+  ghostSet(opts) {
+    return withContext('ghostSet', () => {
+      const o = opts || {};
+      if (!ghost.actors.length) throw new Error('aucun fantome');
+      if (o.follow != null) ghost.follow = !!o.follow;
+      if (o.z != null) ghost.z = o.z;
+      if (o.axis != null) ghost.axis = ((o.axis % 360) + 360) % 360;
+      if (o.frame) { ghost.follow = false; ghost.z = o.frame.z; ghost.axis = o.frame.axis; }
+      if (ghost.frame) ghostPlace(Object.assign({}, o.frame || ghost.frame, { z: ghost.z, axis: ghost.axis }));
+      return { blocks: ghost.actors.length, follow: ghost.follow, z: ghost.z, axis: ghost.axis, center: ghost.center, frame: ghost.frame, input: ghost.input };
+    });
+  },
+  ghostGet() {
+    return withContext('ghostGet', () => ({ blocks: ghost.actors.length, follow: ghost.follow, z: ghost.z, axis: ghost.axis, center: ghost.center, frame: ghost.frame, input: ghost.input }));
+  },
+  ghostRemove() {
+    return withContext('ghostRemove', () => ({ removed: ghostRemoveAll() }));
+  },
+  // Plan du jeu fait d'une liste de batiments, sans le gabarit du concepteur (utilisateur, 24/10/2026 : « c'est une limite
+  // du concepteur, pas de la restitution ») : UFGCheatManager::Server_SaveDismantleSelectionToBlueprint_Implementation
+  // (commande de developpeur qui fait un plan de la selection du pistolet de demontage : gabarit calcule sur l'encombrement
+  // des batiments, ecriture du .sbp, RefreshBlueprintsAndDescriptors, puis au tick suivant Client_GotoBlueprintBuildMode =
+  // le plan en main dans le pistolet ; lu dans Ghidra). Appelee sur un gestionnaire cree a part par
+  // UGameplayStatics::SpawnObject (classe CheatClass du controleur, proprietaire = controleur : GetWorld et le personnage
+  // passent par lui), sans l'installer comme CheatManager du controleur : les triches restent desactivees.
+  blueprintFromActors(name, paths) {
+    return withContext('blueprintFromActors', (ctx) => {
+      if (ctx.controller.isNull()) throw new Error('aucun controleur joueur');
+      for (const [key, mod, re, ret, args] of [
+        ['spawnObject', 'engine', /^\?SpawnObject@UGameplayStatics@@SAPEAVUObject@@V\?\$TSubclassOf@VUObject@@@@PEAV2@@Z$/, 'pointer', ['pointer', 'pointer']],
+        ['cheatSaveSelectionToBlueprint', 'game', /^\?Server_SaveDismantleSelectionToBlueprint_Implementation@UFGCheatManager@@/, 'void', ['pointer', 'pointer', 'pointer', 'pointer']],
+      ]) {
+        if (NATIVE_SPECS[key]) continue;
+        const names = Process.getModuleByName(MOD[mod]).enumerateExports().map((e) => e.name).filter((n) => re.test(n));
+        if (names.length !== 1) throw new Error(key + ' : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS[key] = [mod, names[0], ret, args];
+      }
+      const cheatClass = ctx.controller.add(propertyOffset(native('getObjectClass')(ctx.controller), 'CheatClass')).readPointer();
+      if (!isUObject(cheatClass)) throw new Error('classe du gestionnaire de triche introuvable (CheatClass)');
+      const slot = zeroAlloc(8, 8); // TSubclassOf passe par adresse
+      slot.ptr.writePointer(cheatClass);
+      const cm = native('spawnObject')(slot.ptr, ctx.controller);
+      if (!isUObject(cm)) throw new Error('gestionnaire de triche non cree');
+      const actors = paths.map((p) => { const a = requireActor(p); if (!isA(a, native('buildableStaticClass')())) throw new Error(p + ' : pas un batiment'); return a; });
+      const data = Memory.alloc(8 * Math.max(1, actors.length));
+      actors.forEach((a, i) => data.add(8 * i).writePointer(a));
+      const list = zeroAlloc(16, 8);
+      list.ptr.writePointer(data); list.ptr.add(8).writeS32(actors.length); list.ptr.add(12).writeS32(actors.length);
+      const none = zeroAlloc(16, 8);
+      const chars = wideString(name);
+      const str = zeroAlloc(16, 8);
+      str.ptr.writePointer(chars); str.ptr.add(8).writeS32(name.length + 1); str.ptr.add(12).writeS32(name.length + 1);
+      native('cheatSaveSelectionToBlueprint')(cm, str.ptr, list.ptr, none.ptr);
+      return { name, actors: actors.length, cheatManager: splitFullName(cm).path, cheatClass: splitFullName(cheatClass).path };
+    });
+  },
+  // Relecture des plans par le jeu (AFGBlueprintSubsystem::RefreshBlueprintsAndDescriptors), par exemple apres une
+  // retouche du fichier .sbp, puis descripteur du plan `name` (GetBlueprintDescriptorByNameString) : chemin pour dump
+  blueprintRefresh(subsystemPath, name) {
+    return withContext('blueprintRefresh', () => {
+      const sub = requireActor(subsystemPath);
+      for (const [key, re, ret, args] of [['bpRefresh', /^\?RefreshBlueprintsAndDescriptors@AFGBlueprintSubsystem@@QEAAXXZ$/, 'void', ['pointer']],
+        ['bpDescriptorByName', /^\?GetBlueprintDescriptorByNameString@AFGBlueprintSubsystem@@QEAAPEAVUFGBlueprintDescriptor@@AEBVFString@@@Z$/, 'pointer', ['pointer', 'pointer']]]) {
+        if (NATIVE_SPECS[key]) continue;
+        const names = Process.getModuleByName(MOD.game).enumerateExports().map((e) => e.name).filter((n) => re.test(n));
+        if (names.length !== 1) throw new Error(key + ' : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS[key] = ['game', names[0], ret, args];
+      }
+      native('bpRefresh')(sub);
+      if (!name) return { refreshed: true };
+      // (le descripteur deja charge garde ses dimensions : voir blueprintDimensions)
+      const chars = wideString(name), str = zeroAlloc(16, 8);
+      str.ptr.writePointer(chars); str.ptr.add(8).writeS32(name.length + 1); str.ptr.add(12).writeS32(name.length + 1);
+      const d = native('bpDescriptorByName')(sub, str.ptr);
+      return { refreshed: true, descriptor: isUObject(d) ? splitFullName(d).path : null };
+    });
+  },
+  // Sources de streaming (voir streamSources) : en pose une a chaque point {x, y, z} ; rend leurs chemins
+  streamingSourceAdd(points) {
+    return withContext('streamingSourceAdd', (ctx) => {
+      if (ctx.pawn.isNull()) throw new Error('pas de joueur (requis pour faire apparaitre un acteur)');
+      return points.map((p) => streamingSourceAdd(ctx.pawn, p));
+    });
+  },
+  // Sources de streaming posees et chargement fini ou non (UWorldPartitionStreamingSourceComponent::IsStreamingCompleted)
+  streamingSources(opts) {
+    return withContext('streamingSources', (ctx) => {
+      if (opts && opts.adopter) streamingSourceAdopt(ctx); // sources laissees par un agent precedent
+      return streamingSourceList();
+    });
+  },
+  // Retire des sources de streaming (chemins, ou toutes sans argument)
+  streamingSourceRemove(paths) {
+    return withContext('streamingSourceRemove', () => {
+      const out = [];
+      for (const [path, s] of streamSources) {
+        if (paths && paths.length && !paths.includes(path)) continue;
+        out.push({ path, removed: isUObject(s.actor) && native('destroyActor')(s.actor, 0, 1) !== 0 });
+        streamSources.delete(path);
+      }
+      return out;
+    });
+  },
+  // Reglage de la pose des plans au pistolet (voir bpPlace) : { on (oui par defaut) } ; rend l'etat
+  blueprintPlacement(opts) {
+    return withContext('blueprintPlacement', () => {
+      const o = opts || {};
+      bpPlaceInstall();
+      bpPlace.on = o.on !== false;
+      if (bpPlace.on) pump.tickHooks.set('bpPlace', bpPlaceKeys); else pump.tickHooks.delete('bpPlace');
+      return { on: bpPlace.on, step: bpPlace.step };
+    });
+  },
+  // Gabarit d'un plan deja charge (UFGBlueprintDescriptor::mDimensions, FIntVector en cases de 8 m, emplacement lu par
+  // reflexion) : la relecture des plans ne le met pas a jour apres une retouche de l'en-tete du .sbp (constate le 24/10/2026)
+  blueprintDimensions(descriptorPath, dims) {
+    return withContext('blueprintDimensions', () => {
+      const d = findObject(descriptorPath);
+      if (!isUObject(d)) throw new Error('descripteur introuvable : ' + descriptorPath);
+      const f = fieldsOf(native('getObjectClass')(d)).find((x) => x.name === 'mDimensions');
+      if (!f || f.type !== 'StructProperty' || f.size !== 12) throw new Error('mDimensions : ' + (f ? f.type + ' de ' + f.size + ' octets' : 'absent') + ', attendu FIntVector de 12 octets');
+      const p = d.add(f.offset);
+      const before = [p.readS32(), p.add(4).readS32(), p.add(8).readS32()];
+      p.writeS32(dims.X); p.add(4).writeS32(dims.Y); p.add(8).writeS32(dims.Z);
+      return { before, after: [p.readS32(), p.add(4).readS32(), p.add(8).readS32()] };
+    });
+  },
+  sphereRemove(paths) {
+    return withContext('sphereRemove', () => [].concat(paths).map((path) => {
+      const a = findObject(path);
+      if (a.isNull()) return { path, removed: false, reason: 'introuvable' };
+      if (splitFullName(a).cls !== 'StaticMeshActor') throw new Error('refuse : ' + path + ' n\'est pas une bulle (StaticMeshActor)');
+      return { path, removed: native('destroyActor')(a, 0, 1) !== 0 };
+    }));
+  },
+  // Surbrillance (contour du pistolet de demontage) d'une liste d'acteurs ; show false la retire
+  outline(paths, color, show) {
+    return withContext('outline', (ctx) => outlineOnGameThread(ctx, paths, color, show !== false));
+  },
+  // Demontage en serie dans un seul appel (memes regles que dismantle) ; l'appelant fixe l'ordre et la taille des lots
+  dismantleMany(paths, force) {
+    return withContext('dismantleMany', (ctx) => {
+      let done = 0, gone = 0;
+      const failed = [];
+      for (const path of paths) {
+        try {
+          dismantleOnGameThread(ctx, path, force === true);
+          done++;
+        } catch (e) {
+          if (/introuvable/.test(e.message)) gone++;
+          else failed.push(path.split('.').pop() + ' : ' + e.message);
+        }
+      }
+      return { done, gone, failed };
+    });
+  },
+  // Tout ce qui est dans une bulle (distance 3D au centre) : batiments et vehicules ferroviaires (acteurs), et pieces
+  // legeres (fondations, murs...) des classes donnees (noms courts ; une classe sans instance n'est pas chargee)
+  bubble(center, radius, lwClasses) {
+    return withContext('bubble', (ctx) => {
+      const inside = (l) => Math.hypot(l.x - center.x, l.y - center.y, l.z - center.z) <= radius;
+      const actors = [];
+      const vehicle = findFirstObject('FGRailroadVehicle', native('uclassStaticClass')());
+      for (const cls of [native('buildableStaticClass')(), vehicle]) {
+        if (cls.isNull()) continue;
+        for (const a of actorsOfClass(ctx, cls)) {
+          if (!isUObject(a)) continue;
+          const l = actorPose(a).location;
+          if (!inside(l)) continue;
+          const n = splitFullName(a);
+          actors.push({ path: n.path, class: n.cls, location: r0(l) });
+        }
+      }
+      const lightweight = [];
+      for (const c of lwClasses || []) {
+        let lw;
+        try { lw = lightweightOf(ctx, c); } catch (e) { continue; }
+        for (let i = 0; ; i++) {
+          const st = lw.at(i);
+          if (st === null) break;
+          if (st.valid && inside(st.location)) lightweight.push({ class: c, index: i, location: r0(st.location) });
+        }
+      }
+      return { actors, lightweight };
+    });
   },
   // Relie deux connecteurs de rail sans recherche par collision (UFGRailroadTrackConnectionComponent::AddConnection, comme
   // ConfigureComponents a la construction), puis reinscrit le rail A dans le systeme ferroviaire (RemoveTrack + AddTrack,
@@ -1832,6 +2675,85 @@ Object.assign(rpc.exports, {
       native('railSubsystemRemoveTrack')(sub, ta);
       native('railSubsystemAddTrack')(sub, ta);
       return { graphsBefore: before, graphsAfter: graphs() };
+    });
+  },
+  // Noms decores des exports du module du jeu qui correspondent a un motif (recherche d'une fonction par son nom, sans
+  // adresse ecrite en dur)
+  // module : game (defaut), core, coreUObject, engine
+  exportsMatching(pattern, max, module) {
+    const re = new RegExp(pattern), out = [];
+    for (const e of Process.getModuleByName(MOD[module || 'game']).enumerateExports()) {
+      if (re.test(e.name)) out.push(e.name);
+      if (out.length >= (max || 50)) break;
+    }
+    return out;
+  },
+  // Vide un reseau de tuyaux, comme le bouton « Purger » du jeu : AFGPipeSubsystem::FlushPipeNetwork(int32 networkID), nom
+  // decore retrouve dans les exports (24/10/2026 : eau rejetee par le melangeur d'uranium non fissile du site sud bloquee
+  // dans un reseau plein, dechets des centrales plus evacues)
+  flushPipeNetwork(subsystemPath, networkId) {
+    return withContext('flushPipeNetwork', () => {
+      const sub = requireActor(subsystemPath);
+      if (!NATIVE_SPECS.pipeFlushNetwork) {
+        const names = Process.getModuleByName(MOD.game).enumerateExports().map((e) => e.name).filter((n) => /^\?FlushPipeNetwork@AFGPipeSubsystem@@/.test(n));
+        if (names.length !== 1 || !/XH@Z$/.test(names[0])) throw new Error('FlushPipeNetwork : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS.pipeFlushNetwork = ['game', names[0], 'void', ['pointer', 'int']];
+      }
+      native('pipeFlushNetwork')(sub, networkId);
+      return { flushed: networkId, fn: NATIVE_SPECS.pipeFlushNetwork[1] };
+    });
+  },
+  // Vide le contenu d'un batiment fluide (reservoir, tampon...), comme son bouton « Purger » : la purge du reseau ne vide
+  // que les tuyaux (utilisateur, 24/10/2026 : « flusher le network c'est pas comme flusher le reservoir »).
+  // AFGPipeSubsystem::FlushIntegrant(AActor*), nom decore retrouve dans les exports
+  flushIntegrant(subsystemPath, actorPath) {
+    return withContext('flushIntegrant', () => {
+      const sub = requireActor(subsystemPath), a = requireActor(actorPath);
+      if (!NATIVE_SPECS.pipeFlushIntegrant) {
+        const names = Process.getModuleByName(MOD.game).enumerateExports().map((e) => e.name).filter((n) => /^\?FlushIntegrant@AFGPipeSubsystem@@/.test(n));
+        if (names.length !== 1 || !/PEAVAActor@@@Z$/.test(names[0])) throw new Error('FlushIntegrant : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS.pipeFlushIntegrant = ['game', names[0], 'void', ['pointer', 'pointer']];
+      }
+      native('pipeFlushIntegrant')(sub, a);
+      return { flushed: actorPath };
+    });
+  },
+  // Contenu d'un reservoir ou d'un tampon (m3) : AFGBuildablePipeReservoir::GetFluidContent / GetFluidContentMax (mFluidBox
+  // n'expose aucun champ a la reflexion), noms decores retrouves dans les exports
+  fluidContent(path) {
+    return withContext('fluidContent', () => {
+      const a = requireActor(path);
+      for (const [key, fn] of [['reservoirContent', 'GetFluidContent'], ['reservoirContentMax', 'GetFluidContentMax']]) {
+        if (NATIVE_SPECS[key]) continue;
+        const names = Process.getModuleByName(MOD.game).enumerateExports().map((e) => e.name).filter((n) => n.startsWith('?' + fn + '@AFGBuildablePipeReservoir@@QEBAMXZ'));
+        if (names.length !== 1) throw new Error(fn + ' : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS[key] = ['game', names[0], 'float', ['pointer']];
+      }
+      return { content: native('reservoirContent')(a), max: native('reservoirContentMax')(a) };
+    });
+  },
+  // Nom que le jeu donnerait a une nouvelle gare : AFGRailroadSubsystem::GenerateStationName (const, FText rendu par
+  // valeur : this puis tampon de retour), lu par FText::ToString (Core) ; n appels pour voir si le choix varie. Noms
+  // decores retrouves dans les exports. Les FText rendus ne sont pas liberes (destructeur non exporte, quelques octets)
+  generateStationName(subsystemPath, n) {
+    return withContext('generateStationName', () => {
+      const sub = requireActor(subsystemPath);
+      for (const [key, mod, re] of [['railGenerateStationName', MOD.game, /^\?GenerateStationName@AFGRailroadSubsystem@@QEBA\?AVFText@@XZ$/],
+        ['textToString', MOD.core, /^\?ToString@FText@@QEBAAEBVFString@@XZ$/]]) {
+        if (NATIVE_SPECS[key]) continue;
+        const names = Process.getModuleByName(mod).enumerateExports().map((e) => e.name).filter((x) => re.test(x));
+        if (names.length !== 1) throw new Error(key + ' : exports inattendus ' + JSON.stringify(names));
+        NATIVE_SPECS[key] = [key === 'textToString' ? 'core' : 'game', names[0], 'pointer', key === 'textToString' ? ['pointer'] : ['pointer', 'pointer']];
+      }
+      const out = [];
+      for (let i = 0; i < (n || 1); i++) {
+        const text = zeroAlloc(32, 16);
+        native('railGenerateStationName')(sub, text.ptr);
+        const str = native('textToString')(text.ptr);
+        const data = str.readPointer(), num = str.add(8).readS32();
+        out.push(data.isNull() || num <= 0 ? '' : data.readUtf16String(num - 1));
+      }
+      return out;
     });
   },
   // Sauvegarde nommee de la partie (UFGSaveSession::SaveGame, comme le menu du jeu), sans delegue de fin : elle est ecrite

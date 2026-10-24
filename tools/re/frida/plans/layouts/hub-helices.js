@@ -50,14 +50,21 @@ const TURN = [[0, 0], [0, G], [G, G], [G, 0]]; // un tour
 const QUARTS = FIRST.concat(TURN);
 const FLOOR = { 1: FIRST.length, 2: QUARTS.length }; // numero du joint d'etage sur chaque helice
 
-function geometry() {
+// du : decalage en u de la paire d'helices depuis l'anneau 0 (anneau A : utilisateur, 23/10/2026, balise « Helice » au
+// centre de l'anneau A, « fais les helices » : meme montage que l'anneau 0, decale de son cote est a celui de l'anneau)
+function geometry(du = 0) {
+  const s = (x) => x + du;
   return {
-    R, ETAGE, EXTRA, NORTH, SOUTH, UE0, UW, CV, U_LEG, D_LEG, U_DIV, D_MRG, U_W, D_E, U_MRG, D_DIV, FLOOR,
-    U: { u: UC, v: CV }, D: { u: DC, v: CV },
+    R, ETAGE, EXTRA, NORTH, SOUTH, UE0: s(UE0), UW: s(UW), CV, U_LEG: s(U_LEG), D_LEG: s(D_LEG), U_DIV: s(U_DIV),
+    D_MRG: s(D_MRG), U_W: s(U_W), D_E: s(D_E), U_MRG: s(U_MRG), D_DIV: s(D_DIV), FLOOR,
+    U: { u: s(UC), v: CV }, D: { u: s(DC), v: CV },
   };
 }
 
-function plan() {
+// o.du : decalage (voir geometry) ; o.prefix : prefixe des joints, rails et signaux (vide pour l'anneau 0, 'A' pour
+// l'anneau A : AU0..AU10, AUq1.., AsU5...)
+function plan(o = {}) {
+  const du = o.du || 0, p = o.prefix || '';
   const joints = {}, rails = [], signals = [];
   const sig = (id, type, r, end) => signals.push({ id, type, rail: r, end });
   // helice : joints k = 0..10, posee du bas vers le haut ; phi = angle dans le repere (u, v) ; s = +1 pose dans le sens
@@ -73,17 +80,17 @@ function plan() {
       phi = next;
     });
   };
-  helix('U', { u: UC, v: CV }, 180, 1); // depart au point est de U, cap sud
-  helix('D', { u: DC, v: CV }, 0, -1); // arrivee au point ouest de D, cap nord (posee cap sud)
+  helix(p + 'U', { u: UC + du, v: CV }, 180, 1); // depart au point est de U, cap sud
+  helix(p + 'D', { u: DC + du, v: CV }, 0, -1); // arrivee au point ouest de D, cap nord (posee cap sud)
   // signaux de U : les trains montent dans le sens de la pose (sortie d'un rail par son bout 'to') ; la sortie de
   // l'anneau du bas est sur la bretelle (plan de l'anneau)
-  sig('sU5', 'block', 'Uq5', 'to'); // entree de l'aiguillage de l'etage 1 (rampe Uq6, aiguillage U6, palier Uq7)
-  sig('sU7', 'block', 'Uq7', 'to'); // sortie de l'aiguillage, vers le haut
+  sig(p + 'sU5', 'block', p + 'Uq5', 'to'); // entree de l'aiguillage de l'etage 1 (rampe Uq6, aiguillage U6, palier Uq7)
+  sig(p + 'sU7', 'block', p + 'Uq7', 'to'); // sortie de l'aiguillage, vers le haut
   // signaux de D : les trains descendent ; sur l'helice, sortie d'un rail par son bout 'from'
-  sig('sD7', 'path', 'Dq8', 'from'); // entree de la convergence de l'etage 1 (palier Dq7)
-  sig('sD6', 'block', 'Dq7', 'from'); // sortie de la convergence, au point de convergence D6
+  sig(p + 'sD7', 'path', p + 'Dq8', 'from'); // entree de la convergence de l'etage 1 (palier Dq7)
+  sig(p + 'sD6', 'block', p + 'Dq7', 'from'); // sortie de la convergence, au point de convergence D6
   return { joints, rails, signals, signalsLeftHanded: true };
 }
 
-module.exports = () => plan();
+module.exports = (o) => plan(o);
 module.exports.geometry = geometry;

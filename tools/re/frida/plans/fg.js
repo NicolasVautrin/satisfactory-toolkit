@@ -26,6 +26,13 @@
 //   ports <acteur>                    connecteurs convoyeur / tuyau / electricite d'un batiment
 //   signals <signal...>               etat : validation du bloc (1 ok, 2 sans sortie, 3 boucle) et aspect
 //   load-mode <quai...> [load|unload] lit ou regle le mode des quais de fret
+//   rename <gare> <nom>               renomme une gare (noms par coordonnees : "N279 E331 -> N211 O96" au chargement,
+//                                     "N211 O96 <- N279 E331" au dechargement ; regle dans references/commandes.md)
+//   nom-gare <gare> [--vers <partenaire> | --depuis <partenaire>] [--appliquer]
+//                                     nom d'une gare par ses coordonnees (--vers : gare de chargement, --depuis : gare de
+//                                     dechargement) ; --appliquer renomme et relit, sinon le nom est seulement affiche
+//   tags <acteur> [etiquette...]      lit ou remplace les etiquettes Unreal d'un acteur (sauvegardees : l'agent pose le
+//                                     drapeau au demarrage ; --vider pour tout enlever)
 //   dismantle <acteur...>             demonte (avec la voie integree des gares et quais)
 'use strict';
 
@@ -68,6 +75,22 @@ async function point(s) {
   }
   const [x, y, z] = s.split(',').map(Number);
   return { x, y, z };
+}
+
+// Code d'une gare (regle de l'utilisateur, 24/10/2026) : N/S puis |y|, E/O puis |x|, en dizaines de metres, a la position
+// du batiment de la gare (nord = -Y, est = +X) ; « h<altitude en dizaines de metres> » si une autre gare a le meme code
+// (gares superposees de la gare de triage)
+const xyCode = (p) => (p.y <= 0 ? 'N' : 'S') + Math.round(Math.abs(p.y) / 1000) + ' ' + (p.x >= 0 ? 'E' : 'O') + Math.round(Math.abs(p.x) / 1000);
+async function stationCodes() {
+  const items = (await call('scan', 'Build_TrainStation_C', null, 0, 1000, {})).items;
+  const shared = {};
+  for (const s of items) shared[xyCode(s.location)] = (shared[xyCode(s.location)] || 0) + 1;
+  const codes = new Map();
+  for (const s of items) {
+    const c = xyCode(s.location);
+    codes.set(s.path, shared[c] > 1 ? c + ' h' + Math.round(s.location.z / 1000) : c);
+  }
+  return codes;
 }
 
 const isPoint = (s) => /^@?-?[\d.]+,-?[\d.]+,-?[\d.]+$/.test(s);
@@ -296,6 +319,42 @@ const COMMANDS = {
     const set = mode === 'load' ? true : mode === 'unload' ? false : null;
     const names = set === null ? args : args.slice(0, -1);
     return each(names, async (n) => call('platformLoadMode', await actor(n), set));
+  },
+  async tags(name, ...list) {
+    const path = await actor(name);
+    const vider = argv.indexOf('--vider') >= 0;
+    const tags = list.filter((t) => t !== '--vider');
+    return call('tags', path, vider ? [] : tags.length ? tags : undefined);
+  },
+  // Le jeu filtre le texte puis applique le nom dans un rappel : relecture une seconde apres
+  async rename(name, ...words) {
+    const path = await actor(name);
+    const res = await call('renameStation', path, words.join(' '));
+    await new Promise((r) => setTimeout(r, 1000));
+    return Object.assign(res, { name: (await call('dump', path, 1, 1, ['mStationName'])).mStationName });
+  },
+  async 'nom-gare'(name, ...rest) {
+    if (!name) throw new Error('nom-gare <gare> [--vers <partenaire> | --depuis <partenaire>] [--appliquer]');
+    const flag = (f) => { const i = rest.indexOf(f); return i < 0 ? null : rest[i + 1]; };
+    const vers = flag('--vers'), depuis = flag('--depuis');
+    if (vers && depuis) throw new Error('--vers ou --depuis, pas les deux');
+    const codes = await stationCodes();
+    const code = async (n) => {
+      const p = await actor(n);
+      if (!codes.has(p)) throw new Error(n + ' : gare introuvable');
+      return codes.get(p);
+    };
+    const path = await actor(name);
+    const own = await code(name);
+    const same = [...codes.entries()].filter(([p, c]) => c === own && p !== path);
+    if (same.length) throw new Error('code ' + own + ' deja porte par ' + same.map(([p]) => p.split('.').pop()).join(', '));
+    const wanted = vers ? own + ' -> ' + (await code(vers)) : depuis ? own + ' <- ' + (await code(depuis)) : own;
+    const current = (await call('dump', path, 1, 1, ['mStationName'])).mStationName;
+    if (rest.indexOf('--appliquer') < 0) return { gare: path, actuel: current, nom: wanted };
+    await call('renameStation', path, wanted);
+    await new Promise((r) => setTimeout(r, 1000));
+    const after = (await call('dump', path, 1, 1, ['mStationName'])).mStationName;
+    return { gare: path, avant: current, nom: after, conforme: after === wanted };
   },
   async dismantle(...names) {
     return each(names, async (n) => call('dismantle', await actor(n), true));

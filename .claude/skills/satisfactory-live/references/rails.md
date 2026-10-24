@@ -1,6 +1,7 @@
 # Voies ferrées : `plans/railplan.js`
 
 ## Sommaire
+- Tracé automatique : `plans/tracer.js`
 - Plans de voies (repère, commandes, `check`, greffe sur une ligne existante)
 - Raccords et distance du joueur, `railLink`
 - Blocs fusionnés, relief, pose par zones
@@ -8,6 +9,44 @@
 - Modèle de gare validé
 - Hélices
 - Pièges propres aux rails (aiguillages, quais, démontage, points libres)
+
+## Tracé automatique : `plans/tracer.js`
+
+Une ligne entre deux poses se calcule, elle ne se dessine pas à la main. L'utilisateur demande un outil déterministe, « capable de se faufiler à travers des mesh » (22/10/2026). Il ne veut pas voir le tracé avant la pose : « pas besoin de me montrer le tracé, réalise-le ».
+
+```bash
+node tracer.js rail --de x,y,z@cap --a x,y,z@cap --nom <nom> [--double] [--aller-de <rail>.<connecteur>] [--retour-a <rail>.<connecteur>]
+node tracer.js valider <nom>          # balayage du gabarit avec la collision réelle du jeu
+node railplan.js layouts/trace.js check|build --origin 0,0,0 --axis 0 --nom <nom> --trace <nom>
+node verif-plan.js --plan layouts/trace --origin 0,0,0 --axis 0 --nom <nom> --trace <nom>
+```
+
+- **Monde** :
+  - Relief et rochers : grille de 4 m relevée par la RPC `relief`, qui traverse bâtiments et végétation.
+  - Bâtiments : boîtes d'encombrement, connues à toute distance.
+  - Câbles et poteaux électriques : ignorés, transparents comme la végétation (utilisateur, 23/10/2026 ; pas de collision en jeu pour les câbles).
+  - Surplombs (arches de roche) : sous une maille plus haute de 8 m que ses voisines, un rayon descendant jusqu'au relief puis un rayon montant cherchent le dessous de la roche. La maille prend l'altitude du sol, et la roche reste un obstacle à sa hauteur seulement. Les bâtiments sous la roche sont traversés.
+  - Rails, convoyeurs et tuyaux : courbes échantillonnées.
+- **Tracé dessiné à la main** : quand le traceur zigzague ou finit par un S d'un seul rail (les deux voies d'une double voie s'y rapprochent sous 6,2 m), écrire les joints dans `traces/<nom>.json` par un script : caps multiples de 10°, 20° de virage au plus par rail, 12 à 90 m. Le contrôler avec `node tracer.js controler <nom>`, qui utilise le modèle de la recherche (relief, surplombs, bâtiments sous le gabarit, rayon) et le voit à toute distance, puis faire `railplan check`. Exemple : ligne ouest du 24/10/2026, contournement d'un bloc de raffineries et d'une île.
+- **Accroche à l'arrivée** : `--arrivee-a <rail>.<connecteur>` (voie simple) fait accrocher le dernier rail à un connecteur existant.
+  - Le relevé et les obstacles sont mis en cache dans `plans/cache/` (ignoré par git). Les obstacles sont relus après une heure, ou avec `--frais`.
+- **Recherche** : A* en plan, sur la position et le cap par pas de 10°. Elle avance par pas de 16 m et tourne de 10, 20 ou 30° par pas.
+  - L'altitude suit un profil imposé : départ à plat, raccord de 64 m, pente régulière, puis à plat à l'altitude d'arrivée.
+  - La pente vaut 10 % ; si rien ne passe, la plus douce trouvée par dichotomie jusqu'à 20 %. L'utilisateur : « pour la pente on est pas dogmatique ».
+  - Mêmes entrées, même tracé.
+- **Gabarit** : 6 m de large pour une voie, 12,5 m pour deux voies à 6,5 m ; il va de 0,5 m sous le rail à 7,5 m au-dessus.
+- **Tronçons** : 90 m au plus, avec 20° de virage au plus. Au-delà, les deux voies d'une double voie se rapprochent au milieu du tronçon : 5,9 m sur 79 m tournant de 30°, et le jeu fusionne les blocs.
+- **Le jeu ne refuse pas un rail ni une gare qui traverse le relief** (essai à blanc du 22/10/2026). Seuls `tracer.js` et `valider` le voient.
+- **Rectitude** : chaque tracé affiche sa sinuosité (longueur sur corde, 1 = droit), son virage en trop (somme des virages moins l'écart des caps de départ et d'arrivée), ses changements de sens de virage et son écart à la corde. Elle est aussi écrite dans `traces/<nom>.json` (`rectitude`). Un S ou un détour se voit au virage en trop et aux changements de sens.
+- **Surplombs** : depuis le 23/10/2026, le relevé les sonde (voir Monde). Avant, la grille ne gardait que le dessus de chaque maille, et une arche de roche était vue comme un mur plein jusqu'à son sommet, que le tracé contournait par un bout.
+  - Exemple (23/10/2026), ligne des mines : une arche barre la vallée vers y = -103 600, dessous à 137-139 m, dessus à 140,5 m. Avec une gare à 115 m, le tracé faisait 358 m pour 218 m de corde, 260° de virage en trop. Avec la gare à 138 m (8 %), il passe dessus en une courbe : 223 m, aucun virage en trop.
+  - Un S sans raison visible reste à vérifier sur la carte (`tracer.js carte`) : `^` pour un surplomb, une rangée de chiffres hauts pour un mur.
+- **Un tronçon déjà posé est un obstacle** pour le tracé suivant. Pour comparer des variantes avant de démonter, le passer en `--ignore`.
+- **Câbles** : ils ne sont plus des obstacles (voir Monde ci-dessus).
+- **Première ligne** (22/10/2026), de la ligne sud de l'anneau 1 au plateau de la balise ICI :
+  - 828 m à 10 %, 20 tronçons par voie, tracé trouvé en 1 min (relevé du relief 2 min la première fois) ;
+  - joints conformes, aucun contact ;
+  - le premier essai, qui cherchait aussi l'altitude et la pente, a été abandonné après 5 min.
 
 ## Plans de voies
 
@@ -58,6 +97,8 @@ Prolonger un plan existant : ajouter au plan les nouveaux rails, avec des identi
 1. appelle `UFGRailroadTrackConnectionComponent::AddConnection`, qui relie les deux connecteurs dans les deux sens ;
 2. appelle `AFGRailroadSubsystem::RemoveTrack` puis `AddTrack` sur le rail A, pour réinscrire ses graphes (itinéraires des trains, courant des rails).
 
+**Un signal posé sur un joint fait par `railLink` ne coupe pas les blocs** (constaté le 24/10/2026 à l'anneau de Lund). Les connecteurs connaissent pourtant le signal (`mFacingSignal` / `mTrailingSignal`), mais le jeu fusionne les blocs des deux côtés. Le signal passe en erreur 3, le bloc contenant alors une boucle, et les trains s'arrêtent. Pour réparer, reposer le rail près du joueur (moins de 140 m environ), pour que le jeu fasse le raccord lui-même, puis reposer le signal. Ensuite, vérifier les blocs avec `railsignals.js` (« le jeu n'en fait qu'UN ») ou `mSignalBlockID` des rails. Un joint fait par `railLink` sans signal fonctionne pour la circulation.
+
 Le 21/10/2026, à 1,2 km du joueur, `railLink` a relié XSc6 à XSu1, et `verif-plan` est revenu propre. Les rails étaient déjà dans le même graphe : la fusion de deux graphes séparés n'est **pas encore vérifiée**.
 
 Une arrivée sur un aiguillage loin du joueur prend le mauvais connecteur du joint : poser plutôt le rail depuis le joint.
@@ -75,6 +116,13 @@ Avec beaucoup de rails dans un plan, `build` ne relit que les rails du plan qui 
 - bâtiment.
 
 Un relevé du sol tous les 5 à 25 m suffit pour placer un tracé ou des poteaux.
+
+**Signaux des grandes lignes** (`plans/signaux-ligne.js`, règle de l'utilisateur du 24/10/2026 : un signal de bloc tous les 2 rails, blocs de 200 m au moins) :
+- `plan|pose --signal <signal de départ>` suit la voie depuis le connecteur observé de ce signal, dans le sens de marche, jusqu'au signal suivant. Il pose les signaux à gauche, puis vérifie avec `mSignalBlockID` que chaque signal coupe le bloc. Si le joint a été fait par `railLink`, il retire le signal et essaie le rail suivant.
+- `retirer --signal <…>` enlève les signaux posés sur cette ligne (état `plans/signaux-lignes-state.json`).
+- Fait le 24/10/2026 sur 12 voies, avec 61 signaux tous validés par le jeu : Lund-Tilburg, voie basse entre l'anneau 4 et Lund, voie basse entre le hub et l'anneau 1, ligne « ici », ligne du terminus à 41 m, ligne des mines. L'audit a donné 175 blocs du jeu, identiques au calcul.
+
+**`build --forcer <regex>`** : un rail visé refusé pour le seul gabarit (`FGCDEncroachingSoftClearance`) est reposé de force. C'est le cas des branches emboîtées d'un embranchement qui se frôlent près de leur aiguillage. Tout autre refus (pente, rayon, longueur) reste bloquant.
 
 **`build --rails <regex>`** ne pose que les rails choisis, sans les signaux, qui viennent au lancement complet. C'est utile quand les aiguillages sont trop éloignés pour une seule position du joueur. À la gare de triage des hélices (21/10/2026), les rails ont été posés en trois positions par chantier : 66 rails à l'étage 1, 65 rails pour le second module de l'étage bas.
 - Un départ depuis la voie intégrée d'une gare à 172 m du joueur a échoué (« accroche au départ échouée : aucun bout de voie »), alors qu'il passait à 70 m.
@@ -140,6 +188,21 @@ Pour des étages, il faut deux hélices à voie unique côte à côte :
 - **Signaux** :
   - **hélice montante** : un signal de bloc au point de séparation de chaque aiguillage d'étage, et un au bout du premier quart de montée. La branche de l'hélice monte dès l'aiguillage, donc le bloc n'est pas de niveau ; avec une seule entrée, un signal de bloc suffit.
   - **hélice descendante** : la zone de chaque convergence se limite au palier et au dernier rail de la voie d'étage, qui sont de niveau. Elle a deux signaux de chemin en entrée, et un signal de bloc posé au point de convergence, qui garde la descente.
+- **Plusieurs anneaux à hélices** (23/10/2026, anneau A du Hub nord) : `hub-helices.js` prend un décalage en u et un préfixe de noms (`geometry(du)`, `plan({ du, prefix })`). Dans `hub.js`, un anneau reçoit `helices: { du, prefix }`. L'anneau A a la même paire que l'anneau 0, à la même distance de son côté est, avec les noms `AU*` et `AD*`. La ligne externe est des étages reste propre à l'anneau 0 (`extEst`).
+- **Greffer des hélices sur un anneau déjà posé** :
+  1. démonter sa droite nord (`remove RAn1 RAn2`) à chaque étage ;
+  2. poser l'étage 0 (hélices complètes et raccord du bas), puis les étages 1 et 2.
+  - **Ordre aux convergences** : à un point où deux rails arrivent dans le même sens, poser d'abord le rail qui en repart (`build --rails "^RAnC$"`, `"^RAnB1$"`). Sinon le second arrivant ne trouve que l'autre arrivée, de même normale (« aucun connecteur de normale attendue »).
+  - **Aiguillage existant** : le jeu peut accrocher une arrivée à une autre branche du même aiguillage (même point, même sens). L'agent l'accepte, et `railplan` relie ensuite la branche voulue par `railLink`. Vérifier les deux branches avec `fg.js rails`.
+  - **Ordre aux aiguillages** : à un point de séparation, la voie qui arrive doit exister avant qu'une des branches soit posée, si l'autre branche existe déjà. Exemple : `RZnB1` posé en premier, puis `RZUb1` refusé à `RZUDV` ; poser `RZnA` d'abord.
+- **Anneau sur une double voie quelconque** (`layouts/anneau-voie-basse.js`, ligne ouest du 24/10/2026) :
+  - `--axis` quelconque, origine sur la voie qui va dans le sens +u, au centre. Axe 0 sur une voie est-ouest : ligne externe au nord. L'anneau est symétrique, il n'y a pas d'autre modèle.
+  - `--keep` accepte un fichier JSON (`plans/<nom>-keep.json`). Un côté sans rails gardés (`ES`/`EN` ou `WS`/`WN`) a ses raccords libres et n'a pas de signaux ; on les ajoute quand le côté est prolongé.
+  - `keep.Y` raccorde une gare en boucle de retournement (une seule voie d'accès) au point P de cette voie, dans l'axe u. La ligne externe y descend en pente régulière, au besoin jusqu'à 30 % (raccord de gare), en deux quarts de cercle emboîtés qui se rejoignent en P sans croisement. P peut être d'un côté ou de l'autre (`s = ±1`).
+  - Coupures des quarts : intérieur à 40° de P, extérieur à 50°. Ainsi, aucun rail ne fait moins de 12 m (`FGCDTrackTooShort`) et les deux bouts libres sont à 8,5 m : à 2 m, le jeu accrochait le rail suivant au mauvais bout (`FGCDTrackTrunToSharp`).
+  - `Yd2` et `Ya1` touchent P. Ils se posent une fois P libéré de l'ancienne voie : avant, le jeu les refuse (`FGCDEncroachingSoftClearance`).
+  - Blocs : la zone d'embranchement, la voie d'accès et la gare forment un seul bloc. Il a une entrée (`xXo`, bloc) et une sortie (`eXi`, chemin), donc un train à la fois par gare et aucun signal en P.
+- **Élargir un anneau** (anneau Z, 23/10/2026, refait comme l'anneau A avec ligne externe et hélices) : le côté est reste, car il porte les gares. Démonter aux trois étages ce qui bouge (côtés nord, sud et ouest, coins ouest, raccords ouest, voies vers l'ouest et leurs signaux), puis poser. Les bouts des voies vers l'ouest (`SEND`, `NEND`) restent fixes, car le prolongement de l'étage du bas y est accroché.
 
 ### Limites du jeu
 
@@ -152,6 +215,8 @@ Mesurées à blanc le 21/10/2026 sur un quart de tour :
 ## Pièges propres aux rails
 
 - **Aiguillages** : pour accrocher la bonne branche, on vise 10 cm à l'extérieur du connecteur voulu.
+- **Bout libre au-dessus de la végétation** : la visée descend sous le point et traverse la végétation en repartant 5 cm sous chaque contact. Avant le correctif du 23/10/2026, elle repartait 1 m plus bas. Un buisson posé au sol envoyait alors le rayon sous le relief, puis sur le repli sous le joueur, qui touchait le toit d'un quai : `FGCDInvalidAimLocation` à la pose, alors que la vérification à blanc passait. Le repli sous le joueur traverse aussi les bâtiments, car le joueur peut voler au-dessus d'une gare.
+- **Terminus en l'air** (`layouts/terminus-ici.js`, 23/10/2026) : modèle du terminus du complexe d'acide. La gare est reculée pour que la voie retour s'écarte à 22 m. La boucle compte trois arcs de R = 22 / (4 cos 40° − 2) = 20,7 m, avec des caps de joints multiples de 10°.
 - **Quais** :
   - la rotation à 180° est relative au bâtiment auquel le quai s'accroche ;
   - un quai ne s'accroche pas à un bout de gare déjà raccordé à un rail.

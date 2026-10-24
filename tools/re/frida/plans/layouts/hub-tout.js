@@ -6,7 +6,9 @@ const hub = require('./hub.js');
 const helices = require('./hub-helices.js');
 
 module.exports = (o = {}) => {
-  const hel = helices();
+  // helices de tous les anneaux qui en ont (anneau 0, anneau A depuis le 23/10/2026), partagees entre les etages
+  const sets = hub.layout({ etage: 0 }).rings.filter((r) => r.helices).map((r) => helices({ du: r.helices.du, prefix: r.helices.prefix }));
+  const hel = { joints: Object.assign({}, ...sets.map((s) => s.joints)), rails: [].concat(...sets.map((s) => s.rails)), signals: [].concat(...sets.map((s) => s.signals)) };
   const sharedJ = new Set(Object.keys(hel.joints));
   const helRails = new Set(hel.rails.map((r) => r.id));
   const helSig = new Set(hel.signals.map((s) => s.id));

@@ -2,6 +2,8 @@
 
 Règles de l'utilisateur : on empile verticalement quand il n'y a pas de fluide, jamais de pile sans plateforme, et on place l'atelier pour que les convoyeurs soient les plus courts. Seuls les consommateurs d'eau restent au niveau de l'eau.
 
+Exception (22/10/2026) : dans les complexes sur l'eau (métallurgie, nucléaire), pas de fondations, les piles sont posées en l'air à l'étage 2 (voir les étages dans `SKILL.md`). La plateforme est alors donnée dans la configuration (`origine`, `cap`, `dessus`) au lieu d'être retrouvée par ses fondations, avec `"enLAir": true` : la machine du pied et les poteaux sont posés en ignorant `FGCDInvalidFloor`. Exemple : `plans/module-stators.js` (phase `piles`), qui écrit les configurations et lance `pile.js`.
+
 ```bash
 node pile.js plan|machines|raccords|branches|ascenseurs|arrivees|collecteur|courant|recettes|verifie|tout|demonte --config <fichier.json> [--dry]
 ```

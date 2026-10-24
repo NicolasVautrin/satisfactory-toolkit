@@ -4,7 +4,7 @@
 // hub-helices.js, posees avec l'etage du bas (rails Uq*, Dq* de ce plan a l'etage 0, existants aux etages 1 et 2).
 //
 // Suite d'est en ouest, a chaque etage : anneau 0 (helices a l'interieur, ligne externe au sud) - paire 1 - anneau A
-// (ligne externe au sud) - paire 2 - anneau Z - voies vers l'ouest (bouts libres).
+// (meme montage) - paire 2 - anneau Z (meme montage) - voies vers l'ouest (bouts libres).
 // Anneau (modele anneaux.js) : sens horaire vu du dessus, de niveau, un seul bloc de chemin ; raccords par l'exterieur,
 // aiguillage puis convergence, virages a gauche ; voies principales en quarts de cercle de 18 m aux cotes est et ouest ;
 // gares aux coins, dans l'alignement des cotes nord et sud ; ligne externe au sud.
@@ -47,15 +47,21 @@ function layout(o = {}) {
   const VN = 6.491; // voie nord
   const EXTRA = HG.EXTRA; // cote nord des anneaux releve, a tous les etages (ecart des helices de l'anneau 0)
   const VNR = VN + 2 * R + EXTRA, VSR = -2 * R; // cotes nord et sud des anneaux
+  // helices : { du, prefix } (hub-helices.js) ; extEst : ligne externe des etages sur le cote est (anneau 0 seulement)
   const rings = [
-    { id: 'R0', ue: HG.UE0, uw: HG.UW, slot: true, xoff: 13, helices: true },
+    { id: 'R0', ue: HG.UE0, uw: HG.UW, slot: true, xoff: 13, helices: { du: 0, prefix: '' }, extEst: true },
     { id: 'RA', slot: true },
-    { id: 'RZ', slot: false },
+    { id: 'RZ', slot: true },
   ];
   for (let i = 1; i < rings.length; i++) {
     rings[i].ue = rings[i - 1].uw + PAIR;
     rings[i].uw = rings[i].ue + 2 * R + (rings[i].slot ? 2 * SIDE + EXT : SIDE);
   }
+  // anneaux A et Z : paire d'helices comme dans l'anneau 0, a la meme distance de leur cote est (utilisateur, 23/10/2026 :
+  // balise « Helice » au centre de l'anneau A, « fais les helices » ; puis, au centre de l'anneau Z, « il faut redesigner
+  // l'anneau comme l'anneau A » : ligne externe au sud, cote ouest recule de 68,5 m)
+  rings[1].helices = { du: rings[1].ue - HG.UE0, prefix: 'A' };
+  rings[2].helices = { du: rings[2].ue - HG.UE0, prefix: 'Z' };
   const prefix = 'hub' + etage;
   const stations = {};
   for (let k = 1; k < rings.length; k++) {
@@ -74,7 +80,8 @@ function plan(o) {
   const joints = {}, rails = [], signals = [];
   const J = (name, u, v) => { joints[name] = [u, v, L.Z]; return name; };
   const rail = (id, from, fromCap, to, toCap, extra) => rails.push(Object.assign({ id, from, fromCap, to, toCap }, extra || {}));
-  const sig = (id, type, r, end) => signals.push({ id, type, rail: r, end });
+  // left : cote du signal impose (sinon signalsLeftHanded du plan)
+  const sig = (id, type, r, end, left) => signals.push(Object.assign({ id, type, rail: r, end }, left != null ? { left } : {}));
   // droite de `a` a `b` (cap c) en rails d'au plus 60 m, au moins `min` (2 entre deux aiguillages)
   const straight = (id, a, b, c, min = 2) => {
     const [ua, va] = joints[a], [ub, vb] = joints[b];
@@ -115,13 +122,15 @@ function plan(o) {
     if (!o.ebauche && (!tracks || tracks.length !== 5)) throw new Error('gare ' + st[key].nom + ' : 5 voies integrees attendues');
     return tracks;
   };
-  const HEL = helices(), HJ = HEL.joints;
-  // helices : posees avec l'etage du bas
-  if (L.etage === 0) { Object.assign(joints, HJ); rails.push(...HEL.rails); signals.push(...HEL.signals); }
+  // helices de chaque anneau qui en a : posees avec l'etage du bas
+  const helOf = (r) => ({ G: helices.geometry(r.helices.du), P: helices({ du: r.helices.du, prefix: r.helices.prefix }), p: r.helices.prefix });
+  if (L.etage === 0) for (const r of RINGS) if (r.helices) { const { P } = helOf(r); Object.assign(joints, P.joints); rails.push(...P.rails); signals.push(...P.signals); }
 
   for (const r of RINGS) {
     const { id, ue, uw } = r;
     const n = (x) => id + x;
+    const { G: HG, P: HEL, p: hp } = r.helices ? helOf(r) : { G: null, P: null, p: '' };
+    const HJ = HEL ? HEL.joints : null;
     J(n('NW'), uw - R, VNR); J(n('NE'), ue + R, VNR); J(n('E0'), ue, VN + R); J(n('E1'), ue, -R);
     const NEc = EXTRA ? J(n('NEc'), ue, VNR - R) : n('E0'); // bout du coin NE
     J(n('SE'), ue + R, VSR); J(n('SW'), uw - R, VSR); J(n('W0'), uw, -R); J(n('W1'), uw, VN + R);
@@ -130,15 +139,18 @@ function plan(o) {
       // bretelles des helices vers l'interieur : aiguillage vers U en UDV (quart de cercle a droite, 13 m de droite
       // jusqu'au depart de U), puis convergence de D en DMG (13 m de droite depuis l'arrivee de D, quart de cercle)
       J(n('UDV'), HG.U_DIV, VNR); J(n('DMG'), HG.D_MRG, VNR); J(n('Ubq'), HG.U_LEG, VNR - R); J(n('Dbq'), HG.D_LEG, VNR - R);
-      quarter(n('Ub'), n('UDV'), 180, 1, n('Ubq')); sig(n('xUb'), 'block', n('Ub2'), 'to'); // sortie de l'anneau vers U
-      rail(n('Ubd'), n('Ubq'), 270, 'U0', 270);
-      rail(n('Dbd'), 'D0', 90, n('Dbq'), 90); sig(n('eDb'), 'path', n('Dbd'), 'to'); // entree de l'anneau depuis D
+      // signaux du bas a DROITE du sens de marche : la double voie entre les helices roule a droite, la gauche les mettait
+      // dos a dos entre les deux voies (utilisateur, 23/10/2026 : « ca serait pas mieux d'avoir les signaux sur les bords
+      // externes »)
+      quarter(n('Ub'), n('UDV'), 180, 1, n('Ubq')); sig(n('xUb'), 'block', n('Ub2'), 'to', false); // sortie de l'anneau vers U
+      rail(n('Ubd'), n('Ubq'), 270, hp + 'U0', 270);
+      rail(n('Dbd'), hp + 'D0', 90, n('Dbq'), 90); sig(n('eDb'), 'path', n('Dbd'), 'to', false); // entree de l'anneau depuis D
       quarter(n('Db'), n('Dbq'), 90, 1, n('DMG'));
       straight(n('nA'), n('NW'), n('UDV'), 180); straight(n('nB'), n('UDV'), n('DMG'), 180); straight(n('nC'), n('DMG'), n('NE'), 180, 1);
     } else if (r.helices) {
       // etages : bretelles des cotes exterieurs des helices ; convergence de U en UMG (13 m de droite depuis le point
       // ouest de U, quart de cercle), puis aiguillage vers D en DDV (quart de cercle, 13 m jusqu'au point est de D)
-      const kU = 'U' + HG.FLOOR[L.etage], kD = 'D' + HG.FLOOR[L.etage];
+      const kU = hp + 'U' + HG.FLOOR[L.etage], kD = hp + 'D' + HG.FLOOR[L.etage];
       for (const hr of HEL.rails.filter((x) => [kU, kD].includes(x.from) || [kU, kD].includes(x.to))) {
         const e = hel(hr.id);
         if (!e) continue;
@@ -159,7 +171,7 @@ function plan(o) {
     }
     // coin NE puis cote est ; aux etages, 13 m de droite entre la fin du coin et la voie nord (E0)
     corner(n('ne'), n('NE'), 180, [ue + R, VNR - R], 90, NEc, 270);
-    if (r.helices && L.etage > 0) {
+    if (r.extEst && L.etage > 0) {
       // ligne externe des etages sur le cote est (vers le sud) : depart au bout du coin NE, quart de cercle a gauche vers
       // l'est, 18,5 m de droite, quart de cercle a droite vers le sud, 40 m ; retour 6,5 m plus a l'ouest : 40 m vers le
       // nord, quart de cercle a gauche vers l'ouest, 12 m de droite, quart de cercle a gauche, convergence en YI (sans
@@ -226,7 +238,10 @@ function plan(o) {
     rail('MN' + k, b + 'NO', 180, a + 'NI', 180); sig('e' + a + 'Ni', 'path', 'MN' + k, 'to');
   }
   const z = RINGS[RINGS.length - 1];
-  J('SEND', z.uw + R + TAIL, 0); J('NEND', z.uw + R + TAIL, VN);
+  // bout des voies vers l'ouest fixe : celui de l'anneau Z sans ligne externe, d'ou partent les rails XS / XN de l'etage
+  // bas (21/10/2026) ; l'anneau Z elargi (23/10) raccourcit MS3 / MN3 a 12,5 m
+  const uEnd = z.ue + 2 * R + SIDE + R + TAIL;
+  J('SEND', uEnd, 0); J('NEND', uEnd, VN);
   rail('MS' + RINGS.length, z.id + 'SO', 0, 'SEND', 0);
   rail('MN' + RINGS.length, 'NEND', 180, z.id + 'NI', 180); sig('e' + z.id + 'Ni', 'path', 'MN' + RINGS.length, 'to');
   // Prolongement de l'etage bas vers l'ouest jusqu'a u = --ouest (m), en droite, bouts libres (utilisateur, 21/10/2026 :

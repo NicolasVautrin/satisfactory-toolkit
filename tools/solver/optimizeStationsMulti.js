@@ -23,6 +23,8 @@
  *                 fixe="bauxite@60000,50000@Bx nord;copper,iron@-100000,20000@Fe ouest"
  *   fixeJson=<fichier> : gares imposées lues dans un fichier (garesImposees.js : balises de la partie, gares du jeu et
  *                 leurs gisements exploités) ; leurs gisements leur sont affectés d'office
+ *   exploitesJson=<fichier> : gisements déjà exploités, ignorés (gisementsExploites.js lister : gisements étiquetés
+ *                 « exploite » dans la partie, désignés par l'utilisateur) ; rapprochés des gisements de la carte à 1 m près
  *   rt=non      : capacité des gares indépendante du temps de trajet (4 quais × 2 convoyeurs Mk6 = 9 600/min) ;
  *                 règle de l'utilisateur : un trajet trop long se compense en ajoutant des trains
  *   out=<nom>   : sorties data/stations_multi_<nom>.svg et .json (défaut : data/stations_multi.svg, sans JSON)
@@ -131,16 +133,22 @@ function gameToPixel(gx, gy) {
   };
 }
 
+// Gisements déjà exploités (exploitesJson=) : positions en jeu, comparées à celles de la carte
+const EXPLOITED = ARGS.exploitesJson ? JSON.parse(fs.readFileSync(path.resolve(ARGS.exploitesJson), 'utf8')) : [];
+const isExploited = (m) => EXPLOITED.some((e) => Math.hypot(e.x - m.x, e.y - m.y) < 100);
+
 // ─── Chargement de tous les nodes ───────────────────────────────────────────
 function loadAllNodes() {
   const data     = JSON.parse(fs.readFileSync(MAP_DATA_PATH, 'utf8'));
   const resNodes = data.options.find(o => o.tabId === 'resource_nodes');
   const allNodes = [];
+  let skipped = 0;
   for (const resDef of RESOURCES) {
     const res = resNodes.options.find(o => o.type === resDef.type);
     if (!res) continue;
     for (const pg of res.options) {
       for (const m of pg.markers) {
+        if (isExploited(m)) { skipped++; continue; }
         allNodes.push({
           x:          m.x,
           y:          m.y,
@@ -151,6 +159,7 @@ function loadAllNodes() {
       }
     }
   }
+  if (EXPLOITED.length) console.log(`gisements déjà exploités ignorés : ${skipped} (sur ${EXPLOITED.length} étiquetés)`);
   return allNodes;
 }
 

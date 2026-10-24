@@ -17,6 +17,9 @@ const pump = {
   subsystem: NULL,
   executed: 0,
   queue: [],
+  // Taches executees a chaque tick du jeu, apres la file (ex. fantome qui suit la visee du joueur) : fn(subsystem) ;
+  // une tache qui leve une erreur est retiree
+  tickHooks: new Map(),
 };
 
 // Execute fn(subsystem) au prochain tick. Le timeout n'annule qu'une commande pas encore demarree :
@@ -67,6 +70,14 @@ function installPump() {
       if (pump.queue.length > 0) drainQueue(self);
     } catch (e) {
       send({ event: 'pump.error', message: e.message, stack: e.stack });
+    }
+    for (const [name, hook] of pump.tickHooks) {
+      try {
+        hook(self);
+      } catch (e) {
+        pump.tickHooks.delete(name);
+        send({ event: 'pump.hook.error', name, message: e.message, stack: e.stack });
+      }
     }
     // Appel de l'original INCONDITIONNEL : une erreur de notre cote ne doit jamais sauter un tick du jeu
     original(self, dt, tickType);

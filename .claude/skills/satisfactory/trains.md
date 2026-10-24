@@ -162,6 +162,12 @@ Les stubs sont les tracks de liaison entre les docks/station et le réseau :
 - **Les temps de trajet des tournées ne comptent pas** : si une desserte est trop lente, on y ajoute des trains. La capacité d'un wagon et son temps de remplissage ne sont pas des critères de conception, et une seule plateforme par produit suffit en général (exemple : un seul quai fluide d'acide nitrique au terminus du complexe).
 - **Tous les quais en entrée (chargement) sont bufférisés** : la ligne arrive dans un stockage tampon qui alimente le quai, pour encaisser le temps de chargement du train (voir Buffering ci-dessous).
 
+### Règles de l'utilisateur (22/10/2026)
+
+- **Tous les quais d'une gare sont dans le même mode** : une gare charge, ou une gare décharge, jamais les deux. Un train qui apporte du minerai et repart avec des produits s'arrête à deux gares.
+- **Tout quai de chargement est bufférisé** (règle ci-dessus).
+- **Tout quai de déchargement sort par un trieur** (répartiteur intelligent) : l'objet attendu part vers sa ligne, le reste est écarté. Un wagon qui arrive avec le mauvais objet ne pollue jamais une ligne de production.
+
 ### Composition d'une station
 - 1 **Train Station** (toujours en premier)
 - N **Freight Platforms** (1 par wagon) — configurer en "load" ou "unload"

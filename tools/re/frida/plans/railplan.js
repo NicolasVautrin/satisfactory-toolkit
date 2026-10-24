@@ -14,6 +14,8 @@
 // signaux (poses au lancement complet). Sert quand les aiguillages sont trop loin les uns des autres pour un seul
 // emplacement du joueur (un depart sur un joint deja raccorde ne s'y raccorde qu'a moins d'environ 140 m).
 // build --signaux <regex> : ne pose que ces signaux (avec ou sans --rails ; leurs rails doivent etre poses).
+// build --forcer <regex> : ces rails, s'ils ne sont refuses que pour le gabarit (FGCDEncroachingSoftClearance), sont poses
+// de force (branches d'un aiguillage qui se frolent).
 // Options communes : --nom <gare construite> (nom de l'etat ; defaut : nom du fichier de plan) ; un plan modele
 // (fonction) recoit toutes les options (ex. layouts/gare-contournement.js : --quais 4 --chargement oui).
 //
@@ -428,12 +430,19 @@ async function buildPlatforms(plan, frame, state) {
 async function buildRails(plan, frame, state) {
   for (const r of plan.rails) if (r.existing) state.rails[r.id] = r.existing; // jamais dans state.built
   const only = arg('rails') ? new RegExp('^(' + arg('rails') + ')$') : null;
+  const forced = arg('forcer') ? new RegExp('^(' + arg('forcer') + ')$') : null;
   for (const r of plan.rails) {
     if (state.rails[r.id]) continue;
     if (only && !only.test(r.id)) continue; // --rails : ce lancement ne pose que ces rails (joueur pres de leurs joints)
     const from = await endpoint(state, frame, plan, r.from, r.fromCap, r.fromCap, r.fromGrade); // connecteur partenaire : normale = cap de depart
     const to = await endpoint(state, frame, plan, r.to, r.toCap, r.toCap + 180, r.toGrade, r.toAuto); // a l'arrivee : normale opposee au cap
-    const res = await callAiming('rail', RECIPES.rail, from, to, {});
+    let res = await callAiming('rail', RECIPES.rail, from, to, {});
+    // --forcer <regex> : rail refuse pour le seul gabarit (branches emboitees d'un embranchement qui se frolent pres de leur
+    // aiguillage, ligne ouest du 24/10/2026) repose de force ; tout autre refus (pente, rayon, longueur) reste bloquant
+    if (!res.built && forced && forced.test(r.id) && res.blocking.length && res.blocking.every((b) => b === 'FGCDEncroachingSoftClearance')) {
+      console.log('rail ' + r.id + ' : gabarit seul (' + res.blocking.join(',') + '), pose forcee');
+      res = await callAiming('rail', RECIPES.rail, from, to, { force: true });
+    }
     if (!res.built) throw new Error('rail ' + r.id + ' refuse : ' + res.blocking.join(','));
     state.rails[r.id] = res.actor;
     state.built.push(res.actor);

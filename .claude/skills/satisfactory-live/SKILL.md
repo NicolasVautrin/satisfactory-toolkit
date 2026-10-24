@@ -16,6 +16,7 @@ curl -s -X POST http://127.0.0.1:8766/shutdown      # arrêt (retire proprement 
 ```
 
 - L'agent est formé de `ue.js`, `pump.js` et `game.js`, concaténés. Relancer l'hôte après toute modification de ces fichiers.
+- À son démarrage, l'agent fait sauvegarder les étiquettes Unreal des acteurs (`tagsSaveGame: true` dans le log), qui notent ce qu'une gare charge ou reçoit. **Lancer l'agent avant de charger une partie**, sinon ces étiquettes sont perdues : voir `references/commandes.md`, section Étiquettes.
 - L'hôte ne traite qu'**un appel à la fois** : les appels simultanés échouent. Lancer les commandes l'une après l'autre.
 - Les fonctions appelables sont listées dans `host.py` (`ALLOWED`). Une nouvelle RPC doit y être ajoutée.
 - « timeout : … non exécuté (jeu en pause ou partie non chargée ?) » veut dire que le jeu ne tourne pas. L'agent travaille dans la boucle du jeu (`TickFactory`), qui s'arrête en pause : demander à l'utilisateur de reprendre la partie.
@@ -34,13 +35,25 @@ Ces règles viennent de l'utilisateur ou d'incidents réels. La raison suit chaq
 - **Pas de capture d'écran** sans demande de l'utilisateur.
 
 Règles de jeu de l'utilisateur, détaillées dans la mémoire du projet :
-- foreuses, extracteurs et générateurs toujours à 250 % ;
+- foreuses, pressuriseurs et générateurs toujours à 250 % ; extracteurs d'eau à 100 % (120 m³/min) ;
 - ne jamais arrêter la chaîne d'approvisionnement des centrales ;
 - pas de convoyeur sous l'eau ;
 - voies à 10 % de pente au plus, sauf raccords de gare et hélices ;
 - double voie à 6,5 m d'axe en axe, circulation à gauche ;
 - gares sur le modèle validé ;
 - ne jamais raccorder après coup un convoyeur déjà construit (`SetConnection` fait planter le jeu).
+
+Étages des complexes sur l'eau (métallurgie et nucléaire, mer du nord), mêmes hauteurs partout. Pas de fondations : les machines sont posées en l'air (refus `FGCDInvalidFloor` ignoré). C'est la machine la plus haute d'un étage, mesurée en jeu (`fg.js bounds`), qui fixe la base de l'étage du dessus, avec 2 m de marge :
+- étage 0, plan d'eau (-17,3 m) : extracteurs d'eau (sommet -2,4 m), et les machines à fluide basses, mélangeurs (15 m) ou conditionneurs (12 m), posés à -17 m entre eux ;
+- étage 1, base 0 m : machines à fluide, dont les raffineries (cheminée à 30 m) et les centrales nucléaires ; une pompe de relevage (20 m) par colonne d'eau ;
+- étage 1 bis, base +32 m : machines à fluide (raffineries de la métallurgie) ;
+- étage 2, base +64 m : ce qui ne consomme pas de fluide, en piles verticales.
+
+Nucléaire :
+- rien ne se construit au-dessus des centrales (27 m de haut) : leurs piles vont à côté ;
+- matières radioactives en flux tendu, par convoyeur direct, sans stockage ni train ;
+- répartition du radioactif par arbre équilibré de répartiteurs (1, 2, 4, 8, 16), jamais par ligne de répartiteurs ;
+- déchets en sortie de centrale : alerter dès une dizaine d'unités en attente.
 
 ## Commandes de base : `plans/fg.js`
 
@@ -63,13 +76,22 @@ Pour les scripts, `require('./plans/client.js').call(<rpc>, ...args)` appelle l'
 |---|---|
 | Commandes `fg.js` en détail : repères `@u,v,z`, `bounds`, répartiteur intelligent, sauvegarde, RPC utiles | `references/commandes.md` |
 | Voies ferrées : `railplan.js`, raccords à distance et `railLink`, blocs et écarts, gare de triage, modèle de gare, hélices | `references/rails.md` |
-| Convoyeurs, ascenseurs, répartiteurs, pompes, hauteur des poteaux : `beltline.js` | `references/convoyeurs.md` |
+| Convoyeurs, ascenseurs, répartiteurs, pompes, hauteur des poteaux : `beltline.js` ; chantier de foreuses autour d'une gare, dans l'ordre : carte du relief (`tracer.js carte`), foreuses orientées (`foreuses.js`), plan groupé des lignes (`lignes-gare.js`), courant après les convoyeurs (`courant.js`) | `references/convoyeurs.md` |
 | Piles de machines : `pile.js` | `references/piles.md` |
 | Distance au joueur, téléportation, relief, électricité, tours radar | `references/pieges.md` |
 
 Les règles du jeu sur les trains (signaux, blocs, débit) sont dans le skill `satisfactory`, fichier `trains.md`.
 
 Autres scripts de `plans/` :
+- `tampons-quais.js` : tampons des quais de chargement d'une gare (montage validé, toutes gares) : fondations, conteneur à 3 m des entrées, deux convoyeurs Mk6 de 3 m, puis vérification. Les quais sont lus dans l'état de la gare : `node tampons-quais.js <etat> fondations|conteneurs|raccords|verifie --noms a,b,c,d` ;
+- `tracer.js` : tracé automatique et déterministe d'une ligne entre deux poses. Il se faufile entre le relief, les rochers, les bâtiments et les câbles, puis le valide avec la collision réelle du jeu. Voir `references/rails.md`. L'utilisateur le veut posé directement, sans lui montrer le tracé ;
+- `bulle.js` : démolition d'une zone en bulle (sphère centrée sur le joueur, une balise ou un point). Étapes :
+  1. `inventaire` : tout ce qui est dans la bulle, fondations comprises, en un appel (8 s pour 1 000 bâtiments) ;
+  2. `surligner` : contour rouge du pistolet de démontage sur les bâtiments ; les fondations ne peuvent pas l'être ;
+  3. `voir` / `cacher` : sphère d'hologramme qui montre la bulle ;
+  4. `demolir` : par lots de 150, en 16 s pour 860 bâtiments et 790 fondations.
+
+  Foreuses et réseau électrique (pylônes, poteaux, câbles) sont laissés d'office (consigne de l'utilisateur, 22/10/2026) ; `--tout` les inclut. Montrer la bulle et attendre son feu vert avant `demolir`. Un train garé hors de la bulle n'y est pas : le chercher (`scan FGRailroadVehicle`) avant de retirer les voies d'une gare ;
 - `railmap.js` : tracé autour d'une gare ;
 - `railsignals.js` : audit des blocs, comparé à ceux du jeu ;
 - `verif-plan.js` : joints construits comparés au plan ;

@@ -1,6 +1,7 @@
 // Controle d'une gare de triage construite, compare au plan : a chaque joint, chaque bout de rail doit etre raccorde a
 // tous les bouts du cote oppose (et a eux seuls) ; contacts du jeu (mOverlappingTracks) hors joint commun.
-// node verif-plan.js --plan layouts/hub [options du plan : --nom hub1 --etage 1]
+// node verif-plan.js --plan layouts/hub [options du plan : --nom hub1 --etage 1] [--origin x,y,z : origine du plan, axe 180
+// (u vers l ouest) ; defaut : origine de la gare de triage] [--axis <cap de u>, 180 par defaut]
 const fs = require('fs');
 const { call, short } = require('./client.js');
 const o = {};
@@ -8,8 +9,10 @@ for (let i = 2; i < process.argv.length; i++) if (process.argv[i].startsWith('--
 if (!o.plan) throw new Error('--plan <plan sans .js>');
 const plan = require('./' + o.plan + '.js')(o);
 const st = JSON.parse(fs.readFileSync(__dirname + '/' + o.nom + '-state.json'));
-const H = { x: 141339, y: -261512, z: 349 };
-const local = (p) => [-(p.x - H.x) / 100, -(p.y - H.y) / 100, (p.z - H.z) / 100];
+const [hx, hy, hz] = (o.origin || '141339,-261512,349').split(',').map(Number);
+const H = { x: hx, y: hy, z: hz };
+// repere du plan : --axis (cap monde de +u), 180 par defaut (reperes de la gare de triage et des anneaux)
+const local = require('./frame').makeFrame(H, Number(o.axis == null ? 180 : o.axis)).local;
 const norm = (a) => ((Math.round(a) % 360) + 360) % 360;
 const gap = (j, at) => Math.hypot(...plan.joints[j].map((v, i) => v - at[i]));
 (async () => {
