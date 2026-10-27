@@ -15,6 +15,7 @@ Leçons de la gare des mines (23/10/2026) : le relief découvert en échouant, d
    - Pour chaque croisement inévitable, une des deux lignes passe au-dessus sur poteaux de 6 m. L'outil choisit le plus petit côté du graphe des croisements, et trace les lignes surélevées d'abord.
    - Sur la gare des mines, il retrouve sans rien poser l'affectation obtenue après deux démontages : 3 croisements, cuivre surélevé.
 5. **Courant, après les convoyeurs** : `node courant.js --source <acteur> --cibles a,b,... --nom <chantier> [--portee 70] [--cable-max 90] [--suivre lignes.json] [--dry]`.
+   - Réseau déjà présent près des cibles (`fg.js scan Build_PowerPoleMk1_C --near ...`, puis `fg.js call power <poteau>` pour son circuit et ses câbles libres) : un passage par groupe de cibles, avec pour source le poteau existant le plus proche. Exemple : cuivre et fer de S13 E101 (25/10/2026), trois passages sur la ligne Mk1 du plateau, quatre câbles directs et un seul poteau neuf.
    - `--cable-max` borne la longueur réelle d'un câble ; la portée ne borne que l'horizontale. Sans elle, l'outil tirait des câbles de 128 à 163 m entre un fond de vallée et des poteaux posés sur un massif.
    - `--suivre traces/<ligne>-ligne.json,...` pose d'abord une chaîne de poteaux le long de lignes de convoyeurs. Le premier poteau est raccordé au réseau par la recherche de chemin. Ensuite, de chaque poteau, l'outil va au point le plus loin de la ligne joignable par un câble dégagé, à 5 m de côté et au niveau de la ligne. C'est la route des chantiers lointains : à vol d'oiseau, des falaises de 100 m séparaient la gare S13 E101 de sa cuvette.
    - Un poteau inséré pour dégager un câble ne monte pas à plus de 12 m au-dessus du sol des deux bouts, et deux poteaux sont toujours à 3 m au moins l'un de l'autre.
@@ -58,7 +59,8 @@ node beltline.js traces/<nom>-ligne.json build --nom <nom>-sol
   - pas de poteau sur un sol raide (bord de colline) : beltline le décale de 3 à 6 m, hors de l'axe, et le tronçon suivant tourne trop. Le premier point praticable de l'axe est pris à 4, 8, 12 ou 16 m ;
   - **le jeu donne un poteau 1 m plus court que demandé** : `tracer.js` demande 1 m de plus ;
   - le pied d'un ascenseur se règle 1 m au-dessus du plus haut des deux sols : sous lui, et à son point d'approche ;
-  - le tracé peut franchir un convoyeur existant par-dessus, sur des poteaux 4 m plus hauts, avec un coût qui limite ces franchissements.
+  - le tracé peut franchir un convoyeur existant par-dessus, sur des poteaux 4 m plus hauts, avec un coût qui limite ces franchissements ;
+  - **sol exact sous chaque poteau** : `tracer.js` le relit à la fin et affiche `ATTENTION` quand il s'écarte de plus de 1,5 m du sol prévu. Le relevé en mailles lisse le bord d'une marche, alors que beltline cherche le sol à la verticale du point. Ligne du caterium 169 de S13 E101 (25/10/2026) : un poteau prévu à 126 m a été posé à 115 m, au pied d'une marche de 11 m, et le tronçon suivant a été refusé (`FGCDInvalidPlacement`). Correction : démonter le tronçon et son poteau, retirer le dernier tronçon de l'état, déplacer le point dans `traces/<nom>-ligne.json` sur le sol prévu, puis `beltline ... check` et `build`.
 - **beltline** compare les sommets de poteaux, et non plus les sols, pour sa vérification de pente entre deux bouts. Avant cela, il refusait un poteau haut sous une sortie en surplomb, comme une foreuse à flanc de colline.
 
 ```bash
@@ -71,6 +73,36 @@ node beltline.js <ligne.json> check|build [--nom <nom>] [--pas <m>] [--jusqua <n
 - Le premier point du tracé sert de point de départ et n'est pas posé. Avec un raccord final, le dernier point est remplacé par ce raccord : le dernier tronçon part de l'avant-dernier point. Pour imposer un poteau d'approche, ajouter un point après lui.
 - Le sol de chaque bout est cherché dans une fenêtre autour du z du point. Sous une gare ou des quais posés en l'air, prendre ce z sur le relief et non par `ground`, qui touche les bâtiments : sinon le poteau se pose sur le quai.
 - Tracé : grandes lignes droites sans escaliers, mais en suivant les vallées ; jamais sous l'eau (règles de l'utilisateur).
+
+## Piles de convoyeurs : `plans/pile-convoyeurs.js`
+
+Plusieurs lignes qui vont dans la même direction passent en pile, sur des poteaux empilables, plutôt que côte à côte au sol. L'utilisateur, le 24/10/2026 : « il faut vraiment que tu apprennes à utiliser les stack de convoyeur ». Chaque ligne garde son étage : il n'y a ni croisement à gérer, ni ordre des arrivées à respecter.
+
+```bash
+node pile-convoyeurs.js layouts/<plan>.json axe|colonnes|convoyeurs|verifie [--dry] [--ligne <id>]
+```
+
+- **Plan** :
+  - `colonnes` : liste de `{ x, y, socle? }` dans le sens de marche ;
+  - `lignes` : liste de `{ id, etage, de: "<acteur>.<connecteur>", entree, sortie, a: "<acteur>.<connecteur>" }`. Une ligne entre dans la pile à la colonne `entree` et en sort à la colonne `sortie`.
+  - `socle` : poteaux vides sous l'étage 1, pour passer au-dessus d'une ligne existante.
+  - Exemples : `layouts/pile-s13e101-plateau.json`, `layouts/pile-s13e101-cuvette.json`.
+- **Phases** :
+  - `axe` contrôle l'axe hors du jeu, sur le relief et les bâtiments relevés par `tracer.js` : portée de 56 m au plus, pente sous 0,55, étage le plus bas à 30 cm au moins au-dessus du relief, colonnes et convoyeurs de tous les étages libres de bâtiments et de surplombs. Il contrôle aussi chaque entrée et chaque sortie, comme une courbe d'Hermite entre le connecteur et l'accroche : longueur, pente, relief et bâtiments (ceux des deux bouts exceptés). Le relevé à 4 m retient la plus haute des mailles voisines : contre une paroi, il signale du relief qui n'y est pas. Vérifier alors la courbe sur le sol relevé au point près (RPC `reliefPoints`, de chaque côté à 1,5 m) ;
+  - `colonnes` pose les poteaux de chaque colonne, du sol jusqu'à son étage le plus haut ;
+  - `convoyeurs` pose les tronçons de chaque ligne, du connecteur de départ à celui d'arrivée ;
+  - `verifie` contrôle les raccords de chaque ligne, bout à bout.
+- **Faits du jeu**, établis lors de l'essai du 25/10/2026 :
+  - un poteau empilable monte de 2 m par étage ; son point d'accroche (`SnapOnly0`) est 3 m au-dessus de sa base, tourné dans le sens de marche ;
+  - deux convoyeurs se raccordent l'un à l'autre au point d'accroche ; le poteau ne fait que porter ;
+  - **empiler** : il faut un point touché fabriqué sur le poteau du dessous (`AFGStackablePoleHologram::TrySnapToActor` pose le nouveau à sa position + 2 m, au même cap). Loin du joueur, un vrai rayon ne touche pas le poteau, qui n'a pas de collision : le poteau se posait alors debout sur le sommet du premier, au cap 0 ;
+  - **accrocher un convoyeur à un étage** : point touché fabriqué sur le poteau de l'étage, 30 cm avant l'accroche, du côté d'arrivée ;
+  - **dégagement souple** (`FGCDEncroachingSoftClearance`) : un convoyeur ne fait ignorer que les bâtiments de ses deux accroches (`AFGConveyorBeltHologram::GetIgnoredClearanceActors`), donc ni le poteau d'où il part (il s'accroche au bout du tronçon précédent), ni l'étage au-dessus de son arrivée. Ce refus est accepté s'il est seul, après vérification à blanc ;
+  - les poteaux se posent sans attendre de démontage, mais un ascenseur reposé juste après en avoir démonté un autre voit encore le précédent : attendre 1,5 s.
+- **Entrées et sorties de pile** : chacune est un seul convoyeur, de 56 m au plus. Il faut le sol à peu près au même niveau, ou une portée assez longue pour la montée.
+  - Un ascenseur qui alimente une pile s'arrête à la hauteur de son étage, en l'air : son convoyeur jusqu'à la colonne reste à plat. C'est l'option `falaise.pile` de `convoyeurs-s13e101.js` : au sol, ces convoyeurs montaient de 7 à 11 m en 10 m.
+  - Une sortie vers une entrée basse descend d'une colonne surélevée par un `socle` : sans lui, l'étage passait sous le relief qui remonte vers les pieds des quais.
+  - Une colonne de sortie se place dans l'axe d'approche du connecteur d'arrivée. Un pied d'ascenseur tourné contre une paroi n'a pas d'approche : à S13 E101, q4-b est à 2 m du pied de la banquette. Une sortie de foreuse tournée à l'opposé de la pile donne un crochet : la 515 sort au nord-est et la pile repart vers l'ouest-nord-ouest, d'où un crochet de 110° sur 19 m, au rayon le plus serré de 1,9 m (le minimum du jeu est de 1,8 m). Tourner la foreuse vers la pile quand c'est possible.
 
 ## Raccords
 
@@ -92,6 +124,9 @@ Orientation :
 - un ascenseur MONTANT accroché au bout (sortie) d'un convoyeur se pose à l'envers, colonne par-dessus les 2 derniers mètres du convoyeur. Ni la molette ni le rayon de visée n'y changent rien : construire alors la chaîne depuis le haut, en partant d'une entrée ;
 - `endScroll` 90 / 270 tourne le bras du bout libre d'un quart de tour par rapport à l'autre bout ;
 - accroché sous un autre ascenseur, le second se décale de 4 m, mais il s'est une fois empilé sur la même colonne : vérifier la position obtenue.
+- Entre deux fusionneurs face à face à 4 m l'un de l'autre (sortie du haut vers l'entrée arrière du bas), l'ascenseur descend ou monte en ligne droite, sans demi-tour : c'est le montage des lignes de la côte du bloc EM (`barres-em.js`, 25/10/2026), comme répartiteur → raffinerie du bloc cuivre. Règle de l'utilisateur : pour les grandes hauteurs, lignes à plat et ascenseurs plutôt que de longues rampes.
+
+**Le jeu ne vérifie pas les convoyeurs ni les ascenseurs contre la roche.** Une construction acceptée peut traverser un rocher (capture de l'utilisateur, 25/10/2026 : tunnel sous une arche, sondé seulement au sol et au plafond dans l'axe de la ligne, sans les parois). Dans un relief fermé (grotte, arche), demander le chemin à l'utilisateur ou le relever sur les côtés, pas seulement dans l'axe.
 
 ## Fusionneurs, répartiteurs, pompes
 

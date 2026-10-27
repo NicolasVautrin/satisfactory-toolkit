@@ -17,7 +17,9 @@ curl -s -X POST http://127.0.0.1:8766/shutdown      # arrêt (retire proprement 
 
 - L'agent est formé de `ue.js`, `pump.js` et `game.js`, concaténés. Relancer l'hôte après toute modification de ces fichiers.
 - À son démarrage, l'agent fait sauvegarder les étiquettes Unreal des acteurs (`tagsSaveGame: true` dans le log), qui notent ce qu'une gare charge ou reçoit. **Lancer l'agent avant de charger une partie**, sinon ces étiquettes sont perdues : voir `references/commandes.md`, section Étiquettes.
+- À son démarrage aussi, l'agent lance le **régulateur des tournées** : celles d'une gare étiquetée `regulation`, avec le diagnostic de charge des quais. Voir `references/rails.md` et `plans/regulateur.js`. Il s'arrête avec l'hôte et repart avec lui.
 - L'hôte ne traite qu'**un appel à la fois** : les appels simultanés échouent. Lancer les commandes l'une après l'autre.
+- **Ne jamais couper la sortie d'un script qui agit** avec `| Select-Object -First N` (ou `head`) : PowerShell arrête le processus dès qu'il a reçu N lignes, sans erreur, et la suite des réglages n'est jamais faite. Le 25/10/2026, les recettes de 22 raffineries du module alu et de 11 du bloc de coke manquaient ainsi. `-Last N` ne coupe rien.
 - Les fonctions appelables sont listées dans `host.py` (`ALLOWED`). Une nouvelle RPC doit y être ajoutée.
 - « timeout : … non exécuté (jeu en pause ou partie non chargée ?) » veut dire que le jeu ne tourne pas. L'agent travaille dans la boucle du jeu (`TickFactory`), qui s'arrête en pause : demander à l'utilisateur de reprendre la partie.
 
@@ -27,8 +29,17 @@ Ces règles viennent de l'utilisateur ou d'incidents réels. La raison suit chaq
 
 - **Sauvegarder avant tout changement important** : `node plans/fg.js save <etiquette>` avant une démolition, une grande construction ou des réglages en série. L'utilisateur veut pouvoir revenir en arrière facilement. Citer le nom de la sauvegarde dans la réponse : c'est lui qui la recharge.
 - **Ne toucher que ce que la demande vise.** Une nouvelle consigne porte sur la tâche suivante, pas sur ce qui vient d'être fait. Le 21/10/2026, j'ai démonté 14 rails que l'utilisateur ne visait pas (« ma requête concernait uniquement la prochaine tâche »).
-- **Ne téléporter le joueur qu'avec son accord.** L'accord vaut pour la tournée demandée, pas pour la suite. Arriver « sur du dur », à côté d'un poteau ou d'une fondation existante, attendre que le terrain charge, puis ramener le joueur à son point de départ, même en cas d'échec : voir `references/pieges.md`.
-- **Contrôler après chaque pose, puis dire ce qui est vérifié et ce qui est déduit.** Le jeu peut construire sans raccorder, sans erreur. Contrôles : `verif-plan.js` pour les voies, `fg.js rails` et `fg.js power`, recensement des bâtiments.
+- **Ne téléporter le joueur qu'avec son accord.** L'accord vaut pour la tournée demandée, pas pour la suite. Deux cas :
+  - **« amène-moi en … »** : `node fg.js goto <x,y> [m]`. Le joueur est posé à 3 m du poteau raccordé le plus proche, à sa hauteur : il vole et a besoin du courant, le sol ne compte pas. Les coordonnées données par l'utilisateur sont en mètres (`goto -1621,-1489 m`). Il n'y a pas de retour, sauf demande (`fg.js retour`). Utilisateur, 27/10/2026 : « comment faire en sorte que tu n'aies plus à chercher comment me téléporter ».
+  - **Mes propres tournées** (chantier qui exige le joueur sur place) : arriver « sur du dur », attendre que le terrain charge, puis ramener le joueur à son point de départ, même en cas d'échec. Voir `references/pieges.md`. Pour un simple relevé, ne pas déplacer le joueur : poser des sources de streaming (règle suivante).
+- **Charger la zone avant tout relevé loin du joueur.** Les rochers, falaises et arches ne sont chargés qu'à moins de 256 m du joueur (World Partition). Avant un relevé (`relief`, `rays`, `sweeps`, `overlaps`, essais de pose) à plus de 250 m :
+  1. poser des sources de streaming (`streamingSourceAdd`, tous les 250 à 300 m sur la zone) ;
+  2. attendre la fin du chargement (`streamingSources`) ;
+  3. relever ;
+  4. retirer les sources (`streamingSourceRemove`).
+
+  `tracer.js` le fait seul. Un relevé loin du joueur sans streaming ne voit pas les rochers : il ne prouve jamais l'absence d'obstacle. Le 27/10/2026, j'ai conclu « rien au-dessus de l'eau » dans un chenal traversé par des arches. L'utilisateur : « pour ça tu as le streaming, je devrais pas avoir à te le rappeler ».
+- **Contrôler après chaque pose, puis dire ce qui est vérifié et ce qui est déduit.** Le jeu peut construire sans raccorder, sans erreur. Contrôles : `verif-plan.js` pour les voies, `fg.js rails`, `fg.js call power <acteur>` pour le courant, recensement des bâtiments.
 - **Aucune adresse ni décalage du binaire écrit en dur** : l'agent doit survivre à une mise à jour du jeu. Ghidra (serveur MCP sur le port 13338, projet `C:\Users\nicolasv\ghidra-projects\satisfactory_cl513885`) sert à **lire** le code du jeu, jamais à fournir une adresse.
 - **Lire en jeu** ce qui s'y lit (recettes, positions, connecteurs, gisements), plutôt que `gameData.json` ou `mapObjects.json`.
 - **Les constructions sont gratuites**, par choix de l'utilisateur : le coût n'est pas prélevé.
@@ -39,7 +50,7 @@ Règles de jeu de l'utilisateur, détaillées dans la mémoire du projet :
 - ne jamais arrêter la chaîne d'approvisionnement des centrales ;
 - pas de convoyeur sous l'eau ;
 - voies à 10 % de pente au plus, sauf raccords de gare et hélices ;
-- double voie à 6,5 m d'axe en axe, circulation à gauche ;
+- double voie à 7 m d'axe en axe (6,5 m avant le 26/10/2026 : trop juste pour les bouts d'anneau et les hélices), circulation à gauche ;
 - gares sur le modèle validé ;
 - ne jamais raccorder après coup un convoyeur déjà construit (`SetConnection` fait planter le jeu).
 
@@ -61,6 +72,8 @@ Une commande correspond à une lecture ou à une action, avec un résultat en JS
 
 ```bash
 node fg.js player | teleport <point> [cap] | save [etiquette]
+node fg.js goto <x,y[,z]> [m] [--dry] | retour                 # « amene-moi » (voir Regles de travail)
+node fg.js selection                                           # ce que vise / a selectionne le pistolet de demontage du joueur
 node fg.js scan <classe> [--near <point|acteur>] [--radius m] [--limit n]
 node fg.js pose|bounds|dump|rails|ports|signals <acteur...>     # dump <acteur> [champ...] ; fields <classe> [motif]
 node fg.js markers [motif] | markers-add <nom> <point> | markers-remove <motif>
@@ -75,10 +88,11 @@ Pour les scripts, `require('./plans/client.js').call(<rpc>, ...args)` appelle l'
 | Sujet | Fichier |
 |---|---|
 | Commandes `fg.js` en détail : repères `@u,v,z`, `bounds`, répartiteur intelligent, sauvegarde, RPC utiles | `references/commandes.md` |
-| Voies ferrées : `railplan.js`, raccords à distance et `railLink`, blocs et écarts, gare de triage, modèle de gare, hélices | `references/rails.md` |
+| Voies ferrées : `railplan.js`, raccords à distance et `railLink`, blocs et écarts, gare de triage, modèle de gare, hélices ; trains, horaires et tournées (`trains.js`) | `references/rails.md` |
 | Convoyeurs, ascenseurs, répartiteurs, pompes, hauteur des poteaux : `beltline.js` ; chantier de foreuses autour d'une gare, dans l'ordre : carte du relief (`tracer.js carte`), foreuses orientées (`foreuses.js`), plan groupé des lignes (`lignes-gare.js`), courant après les convoyeurs (`courant.js`) | `references/convoyeurs.md` |
 | Piles de machines : `pile.js` | `references/piles.md` |
 | Distance au joueur, téléportation, relief, électricité, tours radar | `references/pieges.md` |
+| Scripts de chantier (complexes, modules, gares, eau, tours) et outils annexes | `references/chantiers.md` |
 
 Les règles du jeu sur les trains (signaux, blocs, débit) sont dans le skill `satisfactory`, fichier `trains.md`.
 

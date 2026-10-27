@@ -22,7 +22,14 @@
 
 ## Téléportation
 
-Seulement avec l'accord de l'utilisateur, pour la tournée demandée. Méthode éprouvée (tours radar, 21/10/2026) :
+Seulement avec l'accord de l'utilisateur, pour la tournée demandée.
+
+**Le joueur lui-même** : l'amener à 3 m d'un poteau électrique alimenté (circuit principal), à la hauteur du poteau. Il se déplace en vol et a besoin du courant du réseau proche ; le sol ne compte pas. L'utilisateur, 25/10/2026 : « on s'en fout du sol, je vole », « d'une façon générale amène-moi près d'une source de courant ».
+- C'est ce que fait `node fg.js goto <x,y> [m]` (27/10/2026) : poteau raccordé (au moins un câble) le plus proche du point, dans 300 m puis 1 km. Le joueur est posé à 3 m de lui, 2 m au-dessus de son pied, et son point de départ est gardé dans `plans/goto-retour.json`.
+- `node fg.js retour` ramène le joueur à ce départ ; `--dry` montre le poteau choisi sans déplacer le joueur.
+- Les coordonnées de l'utilisateur sont en mètres : `goto -1621,-1489 m`.
+
+Pour un point au sol visé par un chantier, méthode éprouvée (tours radar, 21/10/2026) :
 1. noter la position de départ (`player`) dans un fichier, pour pouvoir le ramener même si le script échoue ;
 2. arriver « sur du dur », 3 m à côté d'un poteau ou d'une fondation existante, 2 m au-dessus. Le moteur décale la destination si elle est obstruée, et la refuse parfois : essayer alors l'autre côté, puis plus haut ;
 3. attendre que le relief charge (`ground` non nul au point visé), puis quelques secondes pour les collisions des bâtiments ;
@@ -72,6 +79,7 @@ Relevé en jeu le 21/10/2026 :
 - **Ce qu'elle ne détecte pas** : les geysers, les puits satellites, les dépôts `BP_ResourceDeposit`.
 - **Sans courant**, une tour ne détecte rien.
 - `mScannedResourceNodes` liste ce que chaque tour détecte. 13 tours couvrent les 476 gisements détectables.
+- **Gisement visible sur la carte** : `mServerMapReveals` > 0 sur le gisement, avec une `mResourceNodeRepresentation`. Le scanner à main ne le montre qu'un instant. Le 25/10/2026, l'utilisateur ne voyait pas les gisements autour de S13 E101 : la ligne de la tour 2144819391 avait été coupée du réseau (63 poteaux sur un circuit isolé, `fg.js call power` sur la tour). Un câble de 11 m vers le réseau principal a suffi, et les 459 gisements sont révélés. Contrôler le courant des 13 tours après une démolition.
 
 ## Sauvegardes
 

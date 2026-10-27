@@ -4,8 +4,12 @@ Une commande correspond à une lecture ou à une action. Le résultat est en JSO
 
 ```bash
 node fg.js player | teleport <point> [cap] | markers [motif]     # markers : balises de la carte du jeu
+node fg.js goto <x,y[,z]> [m] [--dry] | retour             # « amene-moi » : 3 m du poteau raccorde le plus proche, a sa
+                                                         # hauteur (m : metres) ; retour : depart du dernier goto
 node fg.js markers-add <nom> <point> [icone] | markers-remove <motif>   # pose / supprime des balises (AFGMapManager)
 node fg.js save [etiquette]                              # sauvegarde nommee agent_<jjmmaa>_<hhmmss>[_<etiquette>], attend le .sav
+                                                         # (demandee pendant une sauvegarde automatique, elle est perdue :
+                                                         # « non ecrite apres 60 s », relancer, 26/10/2026)
 node fg.js scan <classe> [--near <point|acteur>] [--radius m] [--limit n]
 node fg.js pose|bounds|dump|rails|ports|signals <acteur...>   # dump <acteur> [champ...] ; fields <classe> [motif]
 node fg.js load-mode <quai...> [load|unload]  |  dismantle <acteur...>
@@ -112,3 +116,21 @@ La limite de taille est celle du concepteur, pas de la pose : un plan de 218 m s
 | `saveGameFlag(struct, propriété, on)` | lit, pose ou enlève le drapeau « à sauvegarder » (`CPF_SaveGame`) d'une propriété, en mémoire seulement |
 | `addMapMarkers` / `removeMapMarkers` | balises (préférer `markers-add` / `markers-remove`) |
 | `smartRules`, `setClock`, `pauseMany`, `addItems` | réglages des machines ; `addItems` fabrique des objets : seulement avec l'accord de l'utilisateur |
+| `setRecipe(machine, recette)` | règle la recette (nom court `Recipe_IronPlate_C` ou chemin), parmi les recettes débloquées de la machine |
+| `addShards(machine, n, objet?)` | insère des éclats de puissance (foreuses, pressuriseurs, générateurs à 250 % : accord donné par l'utilisateur) |
+| `recipe(nom)` | recette lue dans le jeu : durée, ingrédients et produits (quantité et débit/min à 100 %), bâtiments producteurs. À lire avant tout dimensionnement, plutôt que `gameData.json` |
+| `recipes(bâtiment?)` | recettes débloquées, filtrées par bâtiment producteur (ex. `Build_AssemblerMk1_C`) |
+| `stackSize([classes d'objets])` | taille de pile réelle (`UFGItemDescriptor::GetStackSize`) |
+| `props(objet, {champ: type})` | propriétés typées par réflexion, par exemple sur un objet par défaut (`Default__Build_MinerMk3_C`, `{ mExtractCycleTime: 'float' }`) |
+| `removeItems(inventaire, n, objet)` | retire des objets d'un inventaire, au plus le stock présent ; seulement à la demande de l'utilisateur |
+| `connections(acteur)` | connecteurs convoyeur et tuyau d'un bâtiment (préférer `fg.js ports`) |
+| `platformLoadMode(quai, load?)` | mode d'un quai de fret (préférer `fg.js load-mode`) |
+| `buildInFront(recette, distance)` | construit au sol, `distance` uu devant la caméra, orienté comme le regard |
+| `pickup(objet, près)` | ramasse un objet comme la touche E ; l'objet doit être chargé, donc le joueur à proximité (`collect.js`) |
+| `railEnds(centre, rayon, n)` | bouts de voie libres (aucun rail raccordé) autour d'un point, les plus proches d'abord |
+| `railRebuild(RailroadSubsystem, [rails])` | recalcul complet du réseau ferré des rails donnés (graphe, blocs, signaux), comme après une pose ou un démontage (« reset des signaux ») |
+| `resetFuse(CircuitSubsystem, n° de circuit)` | réarme le disjoncteur d'un circuit, comme le bouton du jeu |
+| `trainRecorder([trains], opts)` / `trainRecorderGet(opts)` / `trainRecorderStop()` | enregistreur des positions, caps, vitesses et états des trains suivis (100 ms, tampon de 15 s, figé 1,5 s après un passage au déraillement) |
+| `lineRegulatorStatus(opts)` / `lineRegulatorStart()` / `lineRegulatorStop()` | régulateur des tournées et charge des quais (voir `rails.md`) ; préférer `plans/regulateur.js` |
+| `stationHoldDock(gare, s)` | retient le train à quai quelques secondes de plus (voir `rails.md`) |
+| `status()` / `ping()` | état de la pompe (version du jeu, bâtiments construits par cet agent) ; `ping` passe par la boucle du jeu : un délai dépassé veut dire jeu en pause ou partie non chargée |
