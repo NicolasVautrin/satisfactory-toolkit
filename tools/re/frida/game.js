@@ -499,9 +499,116 @@ function buildAimOnGameThread(ctx, recipePath, from, to, opts) {
   return placeValidateConstruct(ctx, recipePath, aim.location, (holo) => {
     if (opts && opts.scrollRotation != null) writeFields(holo, { mScrollRotation: Math.round(opts.scrollRotation) });
     const update = virtualMethod(holo, 'updateHologramPlacement');
+    // opts.vehicleScroll [delta, step] : AFGRailroadVehicleHologram::ScrollRotate (touche R du pistolet : sens d'un
+    // vehicule ferroviaire ; ecrire mScrollRotation ne le change pas, constate le 26/10/2026), visee refaite apres
+    if (opts && opts.vehicleScroll) {
+      update.fn(holo, aim.hit.ptr);
+      exportByPattern('vehicleHoloScroll', 'game', /^\?ScrollRotate@AFGRailroadVehicleHologram@@UEAAXHH@Z$/, 'void', ['pointer', 'int', 'int']);
+      native('vehicleHoloScroll')(holo, opts.vehicleScroll[0], opts.vehicleScroll[1]);
+    }
     update.fn(holo, aim.hit.ptr);
-    return { mode: 'aim', aimHit: r0(aim.location), placement: update.label };
+    const vehicleSnap = repairFarVehicleSnap(holo, aim);
+    return Object.assign({ mode: 'aim', aimHit: r0(aim.location), placement: update.label }, vehicleSnap ? { vehicleSnap } : {});
   }, opts || {});
+}
+
+// Vehicule ferroviaire accroche a un autre loin du joueur (utilisateur, 26/10/2026 : « corrige l'agent »). Le jeu cale
+// l'hologramme contre le vehicule touche (AFGRailroadVehicleHologram::SetHologramLocationAndRotation), mais retrouve le
+// rail sous ce vehicule par une collision (ApproximateTrackPositionForVehicle : SphereOverlapActors de 1 m, fonction non
+// exportee). Loin du joueur, les rails n'ont pas de collision : position invalide, hologramme en (0, 0, 0),
+// FGCDMustHaveRailRoadTrack et FGCDNotEnoughSpaceOnTrack. On refait le meme calcul avec le rail que le vehicule connait
+// (GetTrackPosition), puis les deux controles du jeu (place sur la voie, empietement) ; la construction attelle ensuite
+// au vehicule accroche (ConstructVehicle -> CoupleTrains). Lu dans Ghidra le 26/10/2026.
+const VEHICLE_SNAP_NATIVES = [
+  ['trackPosMove', 'game', /^\?MoveTrackPosition@AFGRailroadSubsystem@@SA_NAEAUFRailroadTrackPosition@@MAEAMM@Z$/, 'uint8', ['pointer', 'float', 'pointer', 'float']],
+  ['trackPosWorld', 'game', /^\?GetWorldLocationAndDirection@FRailroadTrackPosition@@QEBAXAEAU\?\$TVector@N@Math@UE@@0@Z$/, 'void', ['pointer', 'pointer', 'pointer']],
+  ['trackPosIsValid', 'game', /^\?IsValid@FRailroadTrackPosition@@QEBA_NXZ$/, 'uint8', ['pointer']],
+  // FRailroadTrackPosition rendu par valeur : adresse du resultat en 2e argument, apres this
+  ['trackClosestPos', 'game', /^\?FindTrackPositionClosestToWorldLocation@AFGBuildableRailroadTrack@@QEAA\?AUFRailroadTrackPosition@@AEBU\?\$TVector@N@Math@UE@@@Z$/, 'pointer', ['pointer', 'pointer', 'pointer']],
+  ['vehicleTrackPos', 'game', /^\?GetTrackPosition@AFGRailroadVehicle@@QEBAAEBUFRailroadTrackPosition@@XZ$/, 'pointer', ['pointer']],
+  ['vehicleHoloOverlap', 'game', /^\?OverlapRailroadVehicle@AFGRailroadVehicleHologram@@AEBAPEAVAFGRailroadVehicle@@AEBU\?\$TTransform@N@Math@UE@@AEBU\?\$TVector@N@45@@Z$/, 'pointer', ['pointer', 'pointer', 'pointer']],
+  // TSubclassOf passe par adresse
+  ['addConstructDisqualifier', 'game', /^\?AddConstructDisqualifier@AFGHologram@@QEAAXV\?\$TSubclassOf@VUFGConstructDisqualifier@@@@@Z$/, 'void', ['pointer', 'pointer']],
+  ['FGCDEncroachingVehicle', 'game', /^\?StaticClass@UFGCDEncroachingVehicle@@SAPEAVUClass@@XZ$/, 'pointer', []],
+  ['FGCDNotEnoughSpaceOnTrack', 'game', /^\?StaticClass@UFGCDNotEnoughSpaceOnTrack@@SAPEAVUClass@@XZ$/, 'pointer', []],
+];
+
+let vehicleSnapFields = null;
+function vehicleSnapLayout() {
+  if (vehicleSnapFields) return vehicleSnapFields;
+  for (const spec of VEHICLE_SNAP_NATIVES) exportByPattern(...spec);
+  const cls = (n) => { const c = findFirstObject(n, native('uclassStaticClass')()); if (c.isNull()) throw new Error('classe introuvable : ' + n); return c; };
+  const holo = cls('FGRailroadVehicleHologram'), vehicle = cls('FGRailroadVehicle');
+  const pos = requireStruct('/Script/FactoryGame.RailroadTrackPosition');
+  const field = (s, n) => { const f = fieldsOf(s).find((x) => x.name === n); if (!f) throw new Error('champ introuvable : ' + n); return f.offset; };
+  vehicleSnapFields = {
+    holoClass: holo,
+    holo: { length: propertyOffset(holo, 'mLength'), trackPos: propertyOffset(holo, 'mTrackPosition'), snapped: propertyOffset(holo, 'mSnappedVehicle') },
+    vehicle: { length: propertyOffset(vehicle, 'mLength'), front: propertyOffset(vehicle, 'mCoupledVehicleFront'), back: propertyOffset(vehicle, 'mCoupledVehicleBack') },
+    pos: { size: structSize(pos), track: field(pos, 'Track'), forward: field(pos, 'Forward') },
+  };
+  return vehicleSnapFields;
+}
+
+// null si rien a reprendre (pas un vehicule, pas d'accroche, ou le jeu a trouve le rail : joueur proche)
+function repairFarVehicleSnap(holo, aim) {
+  const L = vehicleSnapLayout();
+  if (!isA(holo, L.holoClass)) return null;
+  const neighbor = holo.add(L.holo.snapped).readPointer();
+  const holoPos = holo.add(L.holo.trackPos);
+  if (!isUObject(neighbor) || native('trackPosIsValid')(holoPos) !== 0) return null;
+  const who = splitFullName(neighbor).path;
+  // Sens du vehicule : le jeu le tire de la visee (perpendiculaire au rayon, signe selon mScrollTrackDirection, champ non
+  // expose). Rayon vertical : sens nul, le vehicule suit le sens du rail. Seul ce cas est refait.
+  const ts = readVec(aim.hit.ptr.add(hitLayout.traceStart)), hl = readVec(aim.hit.ptr.add(hitLayout.location));
+  if ((hl.x - ts.x) ** 2 + (hl.y - ts.y) ** 2 >= 1e-8) return { repaired: false, neighbor: who, reason: 'visee non verticale' };
+  // Cote d'accroche : l'attelage libre ; les deux libres (ou pris), celui du cote de la visee
+  const pose = actorPose(neighbor);
+  const p = (pose.rotation.pitch * Math.PI) / 180, y = (pose.rotation.yaw * Math.PI) / 180;
+  const fwd = { x: Math.cos(p) * Math.cos(y), y: Math.cos(p) * Math.sin(y), z: Math.sin(p) };
+  const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const front = isUObject(neighbor.add(L.vehicle.front).readPointer()), back = isUObject(neighbor.add(L.vehicle.back).readPointer());
+  const toAim = { x: aim.location.x - pose.location.x, y: aim.location.y - pose.location.y, z: aim.location.z - pose.location.z };
+  const behind = front === back ? dot(fwd, toAim) <= 0 : front;
+  if (behind ? back : front) return { repaired: false, neighbor: who, reason: 'attelage deja pris' };
+  // ApproximateTrackPositionForVehicle avec le rail du vehicule : point le plus proche du vehicule, sens du vehicule
+  const track = native('weakObjectPtrGet')(native('vehicleTrackPos')(neighbor).add(L.pos.track));
+  if (!isUObject(track)) return { repaired: false, neighbor: who, reason: 'vehicule voisin sans rail' };
+  const pos = zeroAlloc(L.pos.size, 8), at = newVector(pose.location);
+  const loc = zeroAlloc(24, 8), dir = zeroAlloc(24, 8), moved = zeroAlloc(4, 4);
+  native('trackClosestPos')(track, pos.ptr, at.ptr);
+  native('trackPosWorld')(pos.ptr, loc.ptr, dir.ptr);
+  pos.ptr.add(L.pos.forward).writeFloat(dot(readVec(dir.ptr), fwd) < 0 ? -1 : 1);
+  // Centre du nouveau vehicule a une demi-longueur de chacun, du cote choisi ; puis sens du rail (visee verticale)
+  const length = holo.add(L.holo.length).readFloat();
+  native('trackPosMove')(pos.ptr, (length + neighbor.add(L.vehicle.length).readFloat()) * (behind ? -0.5 : 0.5), moved.ptr, 0);
+  pos.ptr.add(L.pos.forward).writeFloat(1);
+  native('trackPosWorld')(pos.ptr, loc.ptr, dir.ptr);
+  Memory.copy(holoPos, pos.ptr, L.pos.size);
+  const l = readVec(loc.ptr), d = readVec(dir.ptr);
+  const rot = quatFromRotator((Math.atan2(d.z, Math.hypot(d.x, d.y)) * 180) / Math.PI, (Math.atan2(d.y, d.x) * 180) / Math.PI, 0);
+  native('setActorTransform')(holo, newTransform(l, rot).ptr, 0, NULL, TELEPORT_NONE);
+  // Controles du jeu, refaits sur la position reprise (ceux de la visee portaient sur la position invalide) :
+  // empietement sur un autre vehicule que le voisin (boite de mLength/2 x 2 m x 2 m, 2 m au-dessus du rail), et place sur
+  // la voie a une demi-longueur de chaque cote (a 1 uu pres)
+  native('resetConstructDisqualifiers')(holo);
+  const disqualifiers = [];
+  const box = newTransform({ x: l.x, y: l.y, z: l.z + 200 }, rot), extents = newVector({ x: length * 0.5, y: 200, z: 200 });
+  const other = native('vehicleHoloOverlap')(holo, box.ptr, extents.ptr);
+  if (isUObject(other) && !other.equals(neighbor)) disqualifiers.push('FGCDEncroachingVehicle');
+  for (const s of [1, -1]) {
+    const probe = zeroAlloc(L.pos.size, 8);
+    Memory.copy(probe.ptr, holoPos, L.pos.size);
+    moved.ptr.writeFloat(0);
+    native('trackPosMove')(probe.ptr, length * 0.5 * s, moved.ptr, 0);
+    if (Math.abs(moved.ptr.readFloat()) + 1 < Math.abs(length * 0.5) && disqualifiers.indexOf('FGCDNotEnoughSpaceOnTrack') < 0) disqualifiers.push('FGCDNotEnoughSpaceOnTrack');
+  }
+  for (const k of disqualifiers) {
+    const slot = zeroAlloc(8, 8);
+    slot.ptr.writePointer(native(k)());
+    native('addConstructDisqualifier')(holo, slot.ptr);
+  }
+  return { repaired: true, neighbor: who, side: behind ? 'arriere' : 'avant', location: r0(l), yaw: Math.round((Math.atan2(d.y, d.x) * 180) / Math.PI), disqualifiers };
 }
 
 function actorsOfClass(ctx, cls) {
@@ -1884,6 +1991,618 @@ function lightweightOf(ctx, classPath) {
   };
 }
 
+// --- Trafic ferroviaire ---------------------------------------------------------------------------
+// Trains (AFGTrain), horaires (AFGRailroadTimeTable) et conduite automatique (utilisateur, 26/10/2026 : « il va falloir
+// que tu te dotes des outils capables de controler tout le trafic ferroviaire »). Fonctions du jeu retrouvees par leur
+// nom decore dans les exports ; champs des trains et dispositions de FTimeTableStop / FTrainDockingRuleSet lus par
+// reflexion : aucun decalage ecrit en dur.
+
+// Fonction exportee retrouvee par motif (une seule correspondance exigee), inscrite dans NATIVE_SPECS au premier usage
+function exportByPattern(key, mod, re, ret, args) {
+  if (NATIVE_SPECS[key]) return;
+  const names = Process.getModuleByName(MOD[mod]).enumerateExports().map((e) => e.name).filter((n) => re.test(n));
+  if (names.length !== 1) throw new Error(key + ' : exports inattendus ' + JSON.stringify(names));
+  NATIVE_SPECS[key] = [mod, names[0], ret, args];
+}
+
+const RAIL_TRAFFIC_NATIVES = [
+  ['trainGetTimeTable', 'game', /^\?GetTimeTable@AFGTrain@@QEBAPEAVAFGRailroadTimeTable@@XZ$/, 'pointer', ['pointer']],
+  ['trainNewTimeTable', 'game', /^\?NewTimeTable@AFGTrain@@QEAAPEAVAFGRailroadTimeTable@@XZ$/, 'pointer', ['pointer']],
+  ['trainIsSelfDriving', 'game', /^\?IsSelfDrivingEnabled@AFGTrain@@QEBA_NXZ$/, 'uint8', ['pointer']],
+  ['trainSetSelfDriving', 'game', /^\?SetSelfDrivingEnabled@AFGTrain@@QEAAX_N@Z$/, 'void', ['pointer', 'bool']],
+  ['timeTableSetStops', 'game', /^\?SetStops@AFGRailroadTimeTable@@QEAA_NAEBV\?\$TArray@UFTimeTableStop@@/, 'uint8', ['pointer', 'pointer']],
+  ['timeTableSetCurrentStop', 'game', /^\?SetCurrentStop@AFGRailroadTimeTable@@QEAAXH@Z$/, 'void', ['pointer', 'int']],
+  ['stationGetIdentifier', 'game', /^\?GetStationIdentifier@AFGBuildableRailroadStation@@QEBAPEAVAFGTrainStationIdentifier@@XZ$/, 'pointer', ['pointer']],
+  ['textToString', 'core', /^\?ToString@FText@@QEBAAEBVFString@@XZ$/, 'pointer', ['pointer']],
+];
+
+// Classes, decalages des champs et valeurs des enums, lus une fois
+let railTraffic = null;
+function railTrafficLayout() {
+  if (railTraffic) return railTraffic;
+  for (const spec of RAIL_TRAFFIC_NATIVES) exportByPattern(...spec);
+  const cls = (n) => { const c = findFirstObject(n, native('uclassStaticClass')()); if (c.isNull()) throw new Error('classe introuvable : ' + n); return c; };
+  const C = { train: cls('FGTrain'), timeTable: cls('FGRailroadTimeTable'), vehicle: cls('FGRailroadVehicle'),
+    ident: cls('FGTrainStationIdentifier'), station: cls('FGBuildableRailroadStation') };
+  const field = (struct, name) => { const f = fieldsOf(struct).find((x) => x.name === name); if (!f) throw new Error('champ introuvable : ' + name); return f.offset; };
+  const stop = requireStruct('/Script/FactoryGame.TimeTableStop'), rules = requireStruct('/Script/FactoryGame.TrainDockingRuleSet');
+  const sim = requireStruct('/Script/FactoryGame.TrainSimulationData');
+  const byValue = (e) => { const out = {}; for (const [k, v] of Object.entries(enumValues(e))) out[v] = k; return out; };
+  railTraffic = {
+    C,
+    train: { name: propertyOffset(C.train, 'mTrainName'), timeTable: propertyOffset(C.train, 'TimeTable'),
+      status: propertyOffset(C.train, 'mTrainStatus'), error: propertyOffset(C.train, 'mSelfDrivingError'),
+      docking: propertyOffset(C.train, 'mDockingState'), dockedAt: propertyOffset(C.train, 'mDockedAtStation'),
+      derailed: propertyOffset(C.train, 'mIsDerailed'), sim: propertyOffset(C.train, 'mSimulationData') },
+    sim: { vehicles: field(sim, 'SimulatedVehicles'), velocity: field(sim, 'Velocity') },
+    vehicle: { reversed: propertyOffset(C.vehicle, 'mIsOrientationReversed'), length: propertyOffset(C.vehicle, 'mLength') },
+    timeTable: { stops: propertyOffset(C.timeTable, 'mStops'), current: propertyOffset(C.timeTable, 'mCurrentStop') },
+    ident: { name: propertyOffset(C.ident, 'mStationName'), station: propertyOffset(C.ident, 'mStation') },
+    stop: { size: structSize(stop), station: field(stop, 'Station'), rules: field(stop, 'DockingRuleSet') },
+    rules: { definition: field(rules, 'DockingDefinition'), duration: field(rules, 'DockForDuration'),
+      durationAndRule: field(rules, 'IsDurationAndRule'), ignoreFilters: field(rules, 'IgnoreFullLoadUnloadIfTransferBlockedByFilters'),
+      load: field(rules, 'LoadFilterDescriptors'), unload: field(rules, 'UnloadFilterDescriptors') },
+    enums: { status: byValue('ETrainStatus'), error: byValue('ESelfDrivingLocomotiveError'), docking: byValue('ETrainDockingState'),
+      definition: byValue('ETrainDockingDefinition'), definitionByName: enumValues('ETrainDockingDefinition') },
+  };
+  if (railTraffic.stop.size < railTraffic.stop.rules + structSize(rules)) throw new Error('taille de FTimeTableStop incoherente : ' + railTraffic.stop.size);
+  return railTraffic;
+}
+
+function textString(p) {
+  const s = native('textToString')(p);
+  const data = s.readPointer(), num = s.add(8).readS32();
+  return data.isNull() || num <= 1 ? '' : data.readUtf16String(num - 1);
+}
+
+// TArray de pointeurs appartenant a un objet du jeu : lu sans etre libere (contrairement a takePointerArray)
+function readPointerArray(p) {
+  const data = p.readPointer(), num = p.add(8).readS32(), out = [];
+  for (let i = 0; i < num; i++) out.push(data.add(i * 8).readPointer());
+  return out;
+}
+
+// Identifiant de gare (AFGTrainStationIdentifier) d'une gare, d'un identifiant, ou d'un nom de gare (mStationName exact)
+function stationIdentifierOf(ctx, ref) {
+  const L = railTrafficLayout();
+  if (ref.indexOf('/') >= 0 || ref.indexOf(':') >= 0) {
+    const o = requireActor(ref);
+    if (isA(o, L.C.ident)) return o;
+    if (isA(o, L.C.station)) return native('stationGetIdentifier')(o);
+    throw new Error(ref + ' : ni gare ni identifiant de gare');
+  }
+  const found = actorsOfClass(ctx, L.C.ident).filter((i) => isUObject(i) && textString(i.add(L.ident.name)) === ref);
+  if (found.length !== 1) throw new Error('gare « ' + ref + ' » : ' + found.length + ' identifiants portent ce nom');
+  return found[0];
+}
+
+function stationLabel(ident) {
+  const L = railTrafficLayout();
+  if (!isUObject(ident)) return null;
+  const st = ident.add(L.ident.station).readPointer();
+  return { name: textString(ident.add(L.ident.name)), station: isUObject(st) ? splitFullName(st).path : null };
+}
+
+function readDockingRules(p) {
+  const L = railTrafficLayout();
+  const classes = (arr) => readPointerArray(arr).map((c) => (isUObject(c) ? splitFullName(c).path.split('.').pop() : null));
+  return { definition: L.enums.definition[p.add(L.rules.definition).readU8()] || p.add(L.rules.definition).readU8(),
+    duration: p.add(L.rules.duration).readFloat(), durationAndRule: p.add(L.rules.durationAndRule).readU8() !== 0,
+    ignoreFilters: p.add(L.rules.ignoreFilters).readU8() !== 0,
+    load: classes(p.add(L.rules.load)), unload: classes(p.add(L.rules.unload)) };
+}
+
+function readTimeTable(tt) {
+  const L = railTrafficLayout();
+  if (!isUObject(tt)) return null;
+  const arr = tt.add(L.timeTable.stops), data = arr.readPointer(), num = arr.add(8).readS32();
+  const stops = [];
+  for (let i = 0; i < num; i++) {
+    const s = data.add(i * L.stop.size);
+    stops.push(Object.assign({ station: stationLabel(s.add(L.stop.station).readPointer()) }, readDockingRules(s.add(L.stop.rules))));
+  }
+  return { path: splitFullName(tt).path, current: tt.add(L.timeTable.current).readS32(), stops };
+}
+
+function trainInfo(train) {
+  const L = railTrafficLayout();
+  const sim = train.add(L.train.sim);
+  const vehicles = readPointerArray(sim.add(L.sim.vehicles)).filter(isUObject).map((v) => {
+    const n = splitFullName(v);
+    return { path: n.path, class: n.cls, location: r0(actorPose(v).location), reversed: v.add(L.vehicle.reversed).readU8() !== 0,
+      length: Math.round(v.add(L.vehicle.length).readFloat()) };
+  });
+  const docked = train.add(L.train.dockedAt).readPointer();
+  return {
+    path: splitFullName(train).path,
+    name: textString(train.add(L.train.name)),
+    vehicles,
+    selfDriving: native('trainIsSelfDriving')(train) !== 0,
+    status: L.enums.status[train.add(L.train.status).readU8()],
+    error: L.enums.error[train.add(L.train.error).readU8()],
+    docking: L.enums.docking[train.add(L.train.docking).readU8()],
+    dockedAt: isUObject(docked) ? (isA(docked, L.C.station) ? stationLabel(native('stationGetIdentifier')(docked)) : splitFullName(docked).path) : null,
+    derailed: train.add(L.train.derailed).readU8() !== 0,
+    speed: Math.round(sim.add(L.sim.velocity).readFloat() * 0.036), // uu/s -> km/h
+    timetable: readTimeTable(native('trainGetTimeTable')(train)),
+  };
+}
+
+// Horaire d'un train : stops = [{ station (chemin d'une gare / d'un identifiant, ou nom exact de la gare), definition
+// (nom d'ETrainDockingDefinition, avec ou sans prefixe TDD_), duration (s), durationAndRule, ignoreFilters }] ; current :
+// arret suivant (index). Filtres de chargement / dechargement vides. AFGRailroadTimeTable::SetStops copie le tableau.
+function trainTimetableSet(ctx, trainPath, stops, current) {
+  const L = railTrafficLayout();
+  const train = requireActor(trainPath);
+  if (!isA(train, L.C.train)) throw new Error(trainPath + ' : pas un train (AFGTrain)');
+  let tt = native('trainGetTimeTable')(train);
+  if (!isUObject(tt)) tt = native('trainNewTimeTable')(train);
+  if (!isUObject(tt)) throw new Error('horaire non cree');
+  const buf = zeroAlloc(L.stop.size * Math.max(1, stops.length), 16);
+  stops.forEach((s, i) => {
+    const p = buf.ptr.add(i * L.stop.size), r = p.add(L.stop.rules);
+    const ident = stationIdentifierOf(ctx, s.station);
+    if (!isUObject(ident)) throw new Error('arret ' + i + ' : identifiant de gare introuvable');
+    const defName = s.definition ? (s.definition.startsWith('TDD_') ? s.definition : 'TDD_' + s.definition) : null;
+    const def = defName === null ? 0 : L.enums.definitionByName[defName];
+    if (def === undefined) throw new Error('arret ' + i + ' : regle inconnue ' + s.definition + ' (' + Object.keys(L.enums.definitionByName).join(', ') + ')');
+    p.add(L.stop.station).writePointer(ident);
+    r.add(L.rules.definition).writeU8(def);
+    r.add(L.rules.duration).writeFloat(s.duration || 0);
+    r.add(L.rules.durationAndRule).writeU8(s.durationAndRule ? 1 : 0);
+    r.add(L.rules.ignoreFilters).writeU8(s.ignoreFilters ? 1 : 0);
+  });
+  const arr = zeroAlloc(16, 8);
+  arr.ptr.writePointer(buf.ptr); arr.ptr.add(8).writeS32(stops.length); arr.ptr.add(12).writeS32(stops.length);
+  if (native('timeTableSetStops')(tt, arr.ptr) === 0) throw new Error('horaire refuse par le jeu (SetStops)');
+  native('timeTableSetCurrentStop')(tt, current || 0);
+  return readTimeTable(tt);
+}
+
+// Enregistreur de trains (utilisateur, 26/10/2026 : « il faudra une boucle rapide pour tester la position des trains
+// avant deraillement ») : a chaque tick du jeu, position, cap et vitesse de chaque vehicule des trains suivis et etat de
+// ces trains, dans un tampon des keepMs dernieres millisecondes ; fige afterMs apres qu'un train suivi passe derailee.
+// Un releve toutes les periodMs (100 ms par defaut ; utilisateur : « a chaque image c'est trop »).
+const trainRec = { trains: [], buf: [], keepMs: 15000, afterMs: 1500, periodMs: 100, last: 0, t0: 0, ticks: 0, frozenAt: null, derailed: null, derailedValue: null };
+
+function trainRecTick() {
+  const now = Date.now();
+  if (trainRec.frozenAt !== null && now - trainRec.frozenAt > trainRec.afterMs) { pump.tickHooks.delete('trainRec'); return; }
+  if (now - trainRec.last < trainRec.periodMs) return;
+  trainRec.last = now;
+  const L = railTrafficLayout();
+  const sample = { t: now - trainRec.t0, trains: [] };
+  for (const tr of trainRec.trains) {
+    if (!isUObject(tr.train)) continue;
+    const status = tr.train.add(L.train.status).readU8();
+    const sim = tr.train.add(L.train.sim);
+    sample.trains.push({ n: tr.name, s: status, v: Math.round(sim.add(L.sim.velocity).readFloat() * 0.036),
+      veh: tr.vehicles.map((v) => { const p = actorPose(v); return [Math.round(p.location.x), Math.round(p.location.y), Math.round(p.location.z), Math.round(p.rotation.yaw * 10) / 10]; }) });
+    // fige sur un PASSAGE au deraillement : un train deja deraille au lancement (remis sur rails sans mise a jour du statut)
+    // figeait l'enregistreur des le premier releve (26/10/2026)
+    if (status === trainRec.derailedValue && tr.lastStatus !== undefined && tr.lastStatus !== status && trainRec.frozenAt === null) {
+      trainRec.frozenAt = now; trainRec.derailed = tr.name;
+    }
+    tr.lastStatus = status;
+  }
+  trainRec.buf.push(sample);
+  while (trainRec.buf.length && sample.t - trainRec.buf[0].t > trainRec.keepMs) trainRec.buf.shift();
+  trainRec.ticks++;
+}
+
+// Regulateur des tournees (utilisateur, 26/10/2026 : « on passe a la regulation de la ligne n279 » ; « il faut que tu
+// maintiennes un temps moyen par boucle » ; « on s'en fout du temps d'arret » ; « est-ce qu'on peut taguer ca [...]
+// pour ne pas avoir a le refaire ? ») : les trains d'une meme tournee sont espaces d'un intervalle = boucle / nombre de
+// trains.
+// - Tournee regulee : celle d'une gare portant l'etiquette « regulation » (AActor::Tags, sauvegardees avec la partie,
+//   cf. enableTagsSaveGame). Tous les trains dont l'horaire passe par elle, groupes par horaire (une tournee par suite de
+//   gares), relus toutes les 10 s : demarrage de l'hote, chargement d'une partie, train ajoute ou refait.
+// - Boucle = somme des trajets moyens (depart -> arrivee, moyenne des lineRegs.window dernieres mesures), sans les arrets.
+//   Mesures gardees en etiquette sur la gare de depart : « trajet > <gare suivante> : <mesures en s> ».
+// - A chaque arrivee (accroche de AFGTrain::OnDocked : un arret sans rien a transferer dure 0,1 s, un releve par seconde
+//   ne le voyait pas), un train arrive moins d'un intervalle apres le depart du precedent de cette gare y est retenu
+//   jusqu'a cet intervalle (stationHold), au plus un intervalle. Departs releves a chaque image, trains a quai seulement.
+// Installe avec l'agent (install) ; tourne dans la boucle du jeu, n'occupe pas l'hote.
+const REG_TAG = 'regulation';
+const LEG_TAG_RE = /^trajet > (.+) : ([\d. ]+)$/i;
+const lineRegs = { lines: new Map(), hook: null, on: false, ticks: 0, scans: 0, lastScan: 0, scanMs: 10000, error: null,
+  window: 10, minHoldS: 5, maxHoldFactor: 1 };
+
+// Retenue d'un train a quai pendant holdS secondes de plus. La gare garde une copie de la regle de l'arret
+// (mCurrentDockedWithRuleSet) et compte le temps a quai (mCurrentDockForDuration, AFGBuildableRailroadStation::Factory_Tick) ;
+// chaque quai de marchandises relit les deux a chaque mise a jour (AFGBuildableTrainPlatformCargo::EvaluateRuleSet) et
+// ne laisse partir le train qu'une fois la duree depassee (UpdateDockingSequence ; lu avec Ghidra le 26/10/2026). Duree
+// exigee = temps deja passe a quai + retenue, « duree ET regle » : la retenue tombe d'elle-meme si l'agent s'arrete.
+// Rend la duree exigee (temps a quai de la gare).
+function stationHold(st, holdS) {
+  const L = railTrafficLayout();
+  const elapsed = st.add(propertyOffset(L.C.station, 'mCurrentDockForDuration')).readFloat();
+  return stationHoldSet(st, elapsed + holdS);
+}
+
+function stationHoldSet(st, total) {
+  const L = railTrafficLayout();
+  const rules = st.add(propertyOffset(L.C.station, 'mCurrentDockedWithRuleSet'));
+  rules.add(L.rules.duration).writeFloat(total);
+  rules.add(L.rules.durationAndRule).writeU8(1);
+  return total;
+}
+
+// Etiquettes Unreal d'un acteur (AActor::Tags, TArray<FName>)
+function actorTagsArray(actor) {
+  return actor.add(propertyOffset(native('getObjectClass')(actor), 'Tags'));
+}
+
+function actorTags(actor) {
+  const arr = actorTagsArray(actor), data = arr.readPointer(), n = arr.add(8).readS32(), out = [];
+  for (let i = 0; i < n; i++) out.push(fnameString(data.add(8 * i)));
+  return out;
+}
+
+// Remplace la liste (tableau alloue par FMemory, que le moteur libere avec l'acteur ; noms crees par FNAME_Add)
+function actorTagsSet(actor, tags) {
+  const arr = actorTagsArray(actor), old = arr.readPointer();
+  const data = tags.length ? native('memMalloc')(8 * tags.length, 8) : NULL;
+  tags.forEach((t, i) => {
+    const buf = zeroAlloc(16, 8);
+    native('fnameCtor')(buf.ptr, wideString(t), 1); // EFindName::FNAME_Add
+    data.add(8 * i).writeU64(buf.ptr.readU64());
+  });
+  arr.writePointer(data); arr.add(8).writeS32(tags.length); arr.add(12).writeS32(tags.length);
+  if (!old.isNull()) fnFree(old);
+}
+
+function stationName(st) {
+  const L = railTrafficLayout();
+  return textString(native('stationGetIdentifier')(st).add(L.ident.name));
+}
+
+// --- Charge des tournees regulees (utilisateur, 26/10/2026 : « est-ce que tu es capable de determiner si une tournee
+// necessite un train supplementaire et a contrario si une ligne n'est pas consommee ? ») : a chaque arrivee et a chaque
+// depart, remplissage de chaque quai (son stock) et du wagon en face. La gare ne liste ses quais que pendant l'arret
+// (mDockedPlatformList, rempli par AFGBuildableRailroadStation::DockVehiclesToPlatforms juste avant AFGTrain::OnDocked) :
+// quai et wagon sont gardes de l'arrivee au depart. Diagnostic par quai : lineRegCargoDiagnosis.
+let invLayout = null;
+function inventoryLayout() {
+  if (invLayout) return invLayout;
+  exportByPattern('invSizeLinear', 'game', /^\?GetSizeLinear@UFGInventoryComponent@@QEBAHXZ$/, 'int', ['pointer']);
+  exportByPattern('invSlotSize', 'game', /^\?GetSlotSize@UFGInventoryComponent@@QEBAHHV\?\$TSubclassOf@VUFGItemDescriptor@@@@@Z$/, 'int', ['pointer', 'int', 'pointer']);
+  const cls = (n) => { const c = findFirstObject(n, native('uclassStaticClass')()); if (c.isNull()) throw new Error('classe introuvable : ' + n); return c; };
+  const field = (struct, name) => { const f = fieldsOf(struct).find((x) => x.name === name); if (!f) throw new Error('champ introuvable : ' + name); return f.offset; };
+  const stack = requireStruct('/Script/FactoryGame.InventoryStack'), item = requireStruct('/Script/FactoryGame.InventoryItem');
+  const C = { inv: cls('FGInventoryComponent'), cargo: native('cargoPlatformStaticClass')(), wagon: cls('FGFreightWagon') };
+  invLayout = {
+    C, stacks: propertyOffset(C.inv, 'mInventoryStacks'), stackSize: structSize(stack), num: field(stack, 'NumItems'),
+    itemClass: field(stack, 'Item') + field(item, 'ItemClass'), platInv: propertyOffset(C.cargo, 'mInventory'),
+    platVehicle: propertyOffset(C.cargo, 'mDockedRailroadVehicle'), wagonInv: propertyOffset(C.wagon, 'mStorageInventory'),
+    docked: propertyOffset(railTrafficLayout().C.station, 'mDockedPlatformList'),
+  };
+  return invLayout;
+}
+
+// Remplissage d'un inventaire : objets / capacite des cases pour l'objet present (GetSlotSize, fluides compris) ; null
+// sans inventaire
+function inventoryFill(inv) {
+  const I = inventoryLayout();
+  if (!isUObject(inv)) return null;
+  const arr = inv.add(I.stacks), data = arr.readPointer(), n = arr.add(8).readS32();
+  let items = 0, cls = NULL;
+  for (let i = 0; i < n; i++) {
+    const s = data.add(i * I.stackSize), num = s.add(I.num).readS32();
+    if (num > 0) { items += num; if (cls.isNull()) cls = s.add(I.itemClass).readPointer(); }
+  }
+  if (cls.isNull()) return { fill: 0, items: 0, item: null };
+  let cap = 0;
+  const slots = native('invSizeLinear')(inv);
+  for (let i = 0; i < slots; i++) cap += native('invSlotSize')(inv, i, cls);
+  return { fill: cap > 0 ? items / cap : 0, items, item: isUObject(cls) ? splitFullName(cls).path.split('.').pop() : null };
+}
+
+// A l'arrivee : chaque quai de fret de la gare (q = rang dans la liste, quais vides compris), son stock et le wagon en face
+function lineRegCargoArrive(st) {
+  const I = inventoryLayout();
+  return readPointerArray(st.add(I.docked)).map((plat, i) => {
+    if (!isUObject(plat) || !isA(plat, I.C.cargo)) return null;
+    const wagon = plat.add(I.platVehicle).readPointer();
+    const wagonInv = isUObject(wagon) && isA(wagon, I.C.wagon) ? wagon.add(I.wagonInv).readPointer() : NULL;
+    const quai = inventoryFill(plat.add(I.platInv).readPointer()), w = inventoryFill(wagonInv);
+    return { q: i + 1, plat, wagonInv, load: native('cargoPlatformIsInLoadMode')(plat) !== 0,
+      quaiIn: quai && quai.fill, wagonIn: w && w.fill, item: (w && w.item) || (quai && quai.item) };
+  }).filter(Boolean);
+}
+
+function lineRegCargoDepart(line, station, recs) {
+  const I = inventoryLayout();
+  const st = line.cargo[station] || (line.cargo[station] = {});
+  for (const r of recs) {
+    const quai = isUObject(r.plat) ? inventoryFill(r.plat.add(I.platInv).readPointer()) : null, w = inventoryFill(r.wagonInv);
+    const q = st[r.q] || (st[r.q] = { load: r.load, item: null, samples: [] });
+    q.load = r.load;
+    q.item = (w && w.item) || (quai && quai.item) || r.item || q.item;
+    q.samples.push({ wagonIn: r.wagonIn, wagonOut: w && w.fill, quaiIn: r.quaiIn, quaiOut: quai && quai.fill });
+    if (q.samples.length > lineRegs.window) q.samples.shift();
+  }
+}
+
+// Diagnostic d'un quai sur ses derniers passages (au moins 3). Seuils de depart, choix de conception a ajuster sur les
+// constats : 10 % = vide, 90 % = plein, 25 % = stock qui reste au quai apres le depart d'un train plein
+function lineRegCargoDiagnosis(q) {
+  const mean = (k) => { const v = q.samples.map((s) => s[k]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const m = { wagonIn: mean('wagonIn'), wagonOut: mean('wagonOut'), quaiIn: mean('quaiIn'), quaiOut: mean('quaiOut') };
+  let diag = 'en observation';
+  if (m.wagonIn === null || m.wagonOut === null) diag = 'pas de wagon en face';
+  else if (q.samples.length >= 3 && q.load) {
+    // trains deja pleins en arrivant : ils n'ont pas pu decharger, ce n'est pas un manque de trains (N279, 26/10/2026 :
+    // arrets de 0,1 s aux deux bouts, l'utilisateur : « ca devrait etre ligne pas consommee »)
+    diag = m.wagonIn >= 0.9 ? 'trains arrives deja pleins : ligne pas consommee au dechargement'
+      : m.wagonOut <= 0.1 ? 'ligne pas alimentee : trains partis vides'
+      : m.wagonOut >= 0.9 && m.quaiOut >= 0.25 ? 'il manque un train : trains arrives vides partis pleins, du stock reste au quai' : 'ok';
+  } else if (q.samples.length >= 3) {
+    diag = m.wagonIn <= 0.1 ? 'rien n\'arrive : trains vides a l\'arrivee'
+      : m.wagonOut >= 0.1 || m.quaiIn >= 0.9 ? 'ligne pas consommee : quai plein ou trains repartis charges' : 'ok';
+  }
+  const first = q.samples[0], last = q.samples[q.samples.length - 1];
+  return { m, diag, trend: first && last && first.quaiIn != null && last.quaiIn != null ? last.quaiIn - first.quaiIn : null };
+}
+
+function lineRegCargoState(line) {
+  const pct = (x) => (x == null ? null : Math.round(x * 100));
+  const out = {};
+  for (const [station, quais] of Object.entries(line.cargo)) {
+    out[station] = Object.entries(quais).map(([q, d]) => {
+      const x = lineRegCargoDiagnosis(d);
+      return { q: Number(q), item: d.item, load: d.load, n: d.samples.length, wagonIn: pct(x.m.wagonIn), wagonOut: pct(x.m.wagonOut),
+        quaiIn: pct(x.m.quaiIn), quaiOut: pct(x.m.quaiOut), trend: pct(x.trend), diag: x.diag };
+    });
+  }
+  return out;
+}
+
+// Mesure ajoutee a la moyenne glissante holder[key] = { v (moyenne des lineRegs.window dernieres), n (mesures), s }
+function lineRegAdd(holder, key, v) {
+  const e = holder[key] || (holder[key] = { v: null, n: 0, s: [] });
+  e.s.push(v);
+  if (e.s.length > lineRegs.window) e.s.shift();
+  e.n++;
+  e.v = e.s.reduce((a, b) => a + b, 0) / e.s.length;
+}
+
+function lineRegEvent(line, e) {
+  line.events.push(Object.assign({ t: Math.round((Date.now() - line.t0) / 100) / 10 }, e));
+  if (line.events.length > 200) line.events.shift();
+}
+
+// Boucle (s) : trajets moyens dans l'ordre de l'horaire, sans les arrets ; null tant qu'un trajet manque
+function lineRegCycle(line) {
+  let T = 0;
+  for (let i = 0; i < line.order.length; i++) {
+    const leg = line.legs[line.order[i] + ' > ' + line.order[(i + 1) % line.order.length]];
+    if (!leg) return null;
+    T += leg.v;
+  }
+  return T;
+}
+
+function lineRegHeadway(line) {
+  const T = lineRegCycle(line);
+  return T === null || !line.trains.length ? null : T / line.trains.length;
+}
+
+// Mesures d'un trajet gardees en etiquette sur sa gare de depart (remplace l'etiquette du meme trajet)
+function lineRegSaveLeg(st, next, m) {
+  const tags = actorTags(st).filter((t) => { const x = LEG_TAG_RE.exec(t); return !x || x[1].toLowerCase() !== next.toLowerCase(); });
+  tags.push('trajet > ' + next + ' : ' + m.s.map((v) => v.toFixed(1)).join(' '));
+  actorTagsSet(st, tags);
+}
+
+function lineRegNew(key, order, stationsByName) {
+  const line = { key, order, trains: [], stations: {}, legs: {}, cargo: {}, events: [], t0: Date.now() };
+  for (let i = 0; i < order.length; i++) {
+    line.stations[order[i]] = { lastDep: null, lastTrain: null, lastPath: null };
+    const st = stationsByName[order[i]], next = order[(i + 1) % order.length];
+    if (!st) continue;
+    for (const t of actorTags(st)) {
+      const x = LEG_TAG_RE.exec(t);
+      if (!x || x[1].toLowerCase() !== next.toLowerCase()) continue;
+      for (const v of x[2].trim().split(/\s+/).map(Number).filter((n) => n > 0)) lineRegAdd(line.legs, order[i] + ' > ' + next, v);
+    }
+  }
+  lineRegEvent(line, { start: order.join(' -> '), cycle: lineRegCycle(line) });
+  return line;
+}
+
+// Train ajoute a une tournee ; deja a quai : heure d'arrivee inconnue, pas de retenue a cet arret (partial)
+function lineRegTrain(train, now) {
+  const L = railTrafficLayout();
+  const tr = { train, path: splitFullName(train).path, name: textString(train.add(L.train.name)), at: null, from: null };
+  const d = train.add(L.train.dockedAt).readPointer();
+  if (isUObject(d) && isA(d, L.C.station)) tr.at = { name: stationName(d), station: d, t: now, hold: 0, partial: true };
+  return tr;
+}
+
+// Leve les retenues en cours d'une tournee (AFGBuildableRailroadStation::ClearRuleSetTimeRequirement)
+function lineRegRelease(line) {
+  exportByPattern('stationClearRuleSetTime', 'game', /^\?ClearRuleSetTimeRequirement@AFGBuildableRailroadStation@@QEAAXXZ$/, 'void', ['pointer']);
+  const out = [];
+  for (const t of line.trains) {
+    if (t.at && t.at.hold && isUObject(t.at.station)) { native('stationClearRuleSetTime')(t.at.station); out.push(t.name + ' @ ' + t.at.name); }
+  }
+  return out;
+}
+
+// Tournees regulees : trains dont l'horaire passe par une gare etiquetee, groupes par suite de gares (commencee a la
+// premiere gare etiquetee, par ordre alphabetique, pour que la cle ne depende pas de l'arret suivant)
+function lineRegScan(subsystem) {
+  const L = railTrafficLayout(), ctx = { subsystem };
+  const regulated = new Set(), stationsByName = {};
+  for (const id of actorsOfClass(ctx, L.C.ident)) {
+    if (!isUObject(id)) continue;
+    const st = id.add(L.ident.station).readPointer();
+    if (!isUObject(st)) continue;
+    const name = textString(id.add(L.ident.name));
+    stationsByName[name] = st;
+    if (actorTags(st).some((t) => t.toLowerCase() === REG_TAG)) regulated.add(name);
+  }
+  const groups = new Map();
+  if (regulated.size) {
+    for (const t of actorsOfClass(ctx, L.C.train)) {
+      if (!isUObject(t)) continue;
+      const tt = native('trainGetTimeTable')(t);
+      if (!isUObject(tt)) continue;
+      const order = readTimeTable(tt).stops.map((s) => s.station && s.station.name);
+      if (order.length < 2 || order.some((n) => !n)) continue;
+      const anchor = order.filter((n) => regulated.has(n)).sort()[0];
+      if (!anchor) continue;
+      const i = order.indexOf(anchor), rot = order.slice(i).concat(order.slice(0, i)), key = rot.join(' | ');
+      if (!groups.has(key)) groups.set(key, { order: rot, trains: [] });
+      groups.get(key).trains.push(t);
+    }
+  }
+  for (const [key, line] of lineRegs.lines) if (!groups.has(key)) { lineRegRelease(line); lineRegs.lines.delete(key); }
+  const now = Date.now();
+  for (const [key, g] of groups) {
+    let line = lineRegs.lines.get(key);
+    if (!line) { line = lineRegNew(key, g.order, stationsByName); lineRegs.lines.set(key, line); }
+    const before = line.trains.length;
+    line.trains = line.trains.filter((tr) => g.trains.some((p) => p.equals(tr.train)));
+    for (const p of g.trains) if (!line.trains.some((tr) => tr.train.equals(p))) line.trains.push(lineRegTrain(p, now));
+    if (line.trains.length !== before) lineRegEvent(line, { trains: line.trains.map((t) => t.name), headway: lineRegHeadway(line) });
+  }
+}
+
+function lineRegArrive(line, tr, st, now) {
+  const name = stationName(st);
+  tr.at = { name, station: st, t: now, hold: 0 };
+  try { tr.at.cargo = lineRegCargoArrive(st); } catch (e) { lineRegs.error = 'charge a l\'arrivee : ' + e.message; }
+  if (tr.from) {
+    const key = tr.from.name + ' > ' + name;
+    lineRegAdd(line.legs, key, (now - tr.from.t) / 1000);
+    if (isUObject(tr.from.station)) lineRegSaveLeg(tr.from.station, name, line.legs[key]);
+  }
+  const s = line.stations[name] || (line.stations[name] = { lastDep: null, lastTrain: null, lastPath: null });
+  const h = lineRegHeadway(line);
+  const ev = { train: tr.name, arrive: name, headway: h === null ? null : Math.round(h) };
+  if (h !== null && s.lastDep !== null && s.lastPath !== tr.path) {
+    const target = s.lastDep + h * 1000; // depart vise : un intervalle apres le train precedent
+    ev.sincePrev = Math.round((now - s.lastDep) / 1000);
+    if ((target - now) / 1000 >= lineRegs.minHoldS) {
+      tr.at.hold = Math.min(h * lineRegs.maxHoldFactor, (target - now) / 1000);
+      // appele depuis AFGTrain::OnDocked : la gare vient de remettre son compteur a zero et de recopier la regle de
+      // l'horaire (AFGBuildableRailroadStation::StartDocking) ; la retenue ecrite ici n'est plus ecrasee
+      stationHoldSet(st, tr.at.hold);
+      ev.hold = Math.round(tr.at.hold);
+    }
+  }
+  lineRegEvent(line, ev);
+}
+
+function lineRegDepart(line, tr, now) {
+  const a = tr.at, s = line.stations[a.name] || (line.stations[a.name] = { lastDep: null, lastTrain: null, lastPath: null });
+  s.lastDep = now; s.lastTrain = tr.name; s.lastPath = tr.path;
+  if (a.cargo) { try { lineRegCargoDepart(line, a.name, a.cargo); } catch (e) { lineRegs.error = 'charge au depart : ' + e.message; } }
+  tr.from = { name: a.name, station: a.station, t: now };
+  tr.at = null;
+  lineRegEvent(line, { train: tr.name, depart: a.name, dwell: Math.round((now - a.t) / 1000), held: a.hold ? Math.round(a.hold) : 0 });
+}
+
+// Arrivee : accroche de AFGTrain::OnDocked(train, gare), appelee par la gare au debut de l'arret
+function lineRegOnDocked(train, st) {
+  for (const line of lineRegs.lines.values()) {
+    const tr = line.trains.find((t) => t.train.equals(train));
+    if (tr) { if (!tr.at) lineRegArrive(line, tr, st, Date.now()); return; }
+  }
+}
+
+// A chaque image : releve des tournees toutes les 10 s, departs des trains a quai. Les erreurs sont gardees
+// (lineRegs.error) : une erreur levee retirerait la tache de la boucle du jeu
+function lineRegTick(subsystem) {
+  lineRegs.ticks++;
+  try {
+    const now = Date.now();
+    if (now - lineRegs.lastScan >= lineRegs.scanMs) { lineRegs.lastScan = now; lineRegs.scans++; lineRegScan(subsystem); }
+    let L = null;
+    for (const line of lineRegs.lines.values()) {
+      for (const tr of line.trains) {
+        if (!tr.at || !isUObject(tr.train)) continue;
+        L = L || railTrafficLayout();
+        if (!isUObject(tr.train.add(L.train.dockedAt).readPointer())) lineRegDepart(line, tr, now);
+      }
+    }
+  } catch (e) {
+    lineRegs.error = new Date().toTimeString().slice(0, 8) + ' ' + e.message;
+  }
+}
+
+function lineRegStart() {
+  if (lineRegs.on) return;
+  // nom decore : refuse si la signature change a une mise a jour, ou si le corps est partage (ICF)
+  const addr = hookableGameExport('?OnDocked@AFGTrain@@QEAAXPEAVAFGBuildableRailroadStation@@@Z');
+  lineRegs.hook = Interceptor.attach(addr, {
+    onEnter(args) {
+      if (!lineRegs.on) return;
+      try { lineRegOnDocked(args[0], args[1]); } catch (e) { lineRegs.error = 'OnDocked : ' + e.message; }
+    },
+  });
+  lineRegs.lastScan = 0;
+  pump.tickHooks.set('lineReg', lineRegTick);
+  lineRegs.on = true;
+}
+
+function lineRegStop() {
+  pump.tickHooks.delete('lineReg');
+  if (lineRegs.hook) { lineRegs.hook.detach(); lineRegs.hook = null; }
+  lineRegs.on = false;
+  const released = [];
+  for (const line of lineRegs.lines.values()) released.push(...lineRegRelease(line));
+  lineRegs.lines.clear();
+  return released;
+}
+
+function lineRegulatorState(nEvents) {
+  const now = Date.now(), r = (x) => (x == null ? null : Math.round(x)), r1 = (x) => Math.round(x * 10) / 10;
+  return {
+    on: lineRegs.on, ticks: lineRegs.ticks, scans: lineRegs.scans, error: lineRegs.error,
+    lines: Array.from(lineRegs.lines.values()).map((line) => {
+      const stations = {}, legs = {};
+      for (const [k, s] of Object.entries(line.stations)) stations[k] = { sinceLastDepS: s.lastDep === null ? null : r((now - s.lastDep) / 1000), lastTrain: s.lastTrain };
+      for (const [k, l] of Object.entries(line.legs)) legs[k] = { v: r1(l.v), n: l.n, s: l.s.map(r1) };
+      return {
+        order: line.order, upS: r((now - line.t0) / 1000), cycleS: r(lineRegCycle(line)), headwayS: r(lineRegHeadway(line)),
+        trains: line.trains.map((t) => ({ name: t.name, path: t.path,
+          at: t.at ? { station: t.at.name, sinceS: r((now - t.at.t) / 1000), hold: r(t.at.hold), partial: !!t.at.partial } : null,
+          from: t.from ? { station: t.from.name, sinceS: r((now - t.from.t) / 1000) } : null })),
+        stations, legs, cargo: lineRegCargoState(line), events: line.events.slice(-(nEvents || 20)),
+      };
+    }),
+  };
+}
+
+// Levier d'aiguillage sur un connecteur de rail : hologramme du levier place par
+// AFGRailroadSwitchControlHologram::SetHologramLocationAndRotationFromConnection (connecteur commande, position et cap pris
+// sur lui), puis construction (voir la commande switchControl). opts : dryRun, force, ignore
+function placeSwitchControl(ctx, conn, opts) {
+  exportByPattern('switchHoloFromConnection', 'game', /^\?SetHologramLocationAndRotationFromConnection@AFGRailroadSwitchControlHologram@@QEAAXPEAVUFGRailroadTrackConnectionComponent@@@Z$/, 'void', ['pointer', 'pointer']);
+  const loc = zeroAlloc(24, 8);
+  native('railConnLocation')(conn, loc.ptr);
+  const res = placeValidateConstruct(ctx, 'Recipe_RailroadSwitchControl_C', readVec(loc.ptr), (holo) => {
+    native('switchHoloFromConnection')(holo, conn);
+    return { mode: 'connection' };
+  }, opts || {});
+  if (res.built) res.switchControl = dumpObject(conn, 1, 1, ['mSwitchControl']).mSwitchControl || null;
+  return res;
+}
+
+// Connecteur devenu aiguillage (2 branches ou plus) sans levier : pose le levier. Rend son chemin, { failed } si le jeu le
+// refuse, null s'il n'y avait rien a faire
+function ensureSwitchControl(ctx, conn) {
+  const links = zeroAlloc(16, 8);
+  native('railConnConnections')(conn, links.ptr);
+  if (takePointerArray(links.ptr).filter(isUObject).length < 2) return null;
+  if (dumpObject(conn, 1, 1, ['mSwitchControl']).mSwitchControl) return null;
+  const r = placeSwitchControl(ctx, conn, {});
+  return r.built ? r.switchControl : { failed: r.blocking };
+}
+
 function withContext(label, fn) {
   return onGameThread(label, (subsystem) => fn(gameContext(subsystem)));
 }
@@ -1892,7 +2611,10 @@ Object.assign(rpc.exports, {
   install() {
     const warm = warmUp();
     installPump();
-    return Object.assign(pumpStatus(), warm, { tagsSaveGame: enableTagsSaveGame() });
+    // regulateur des tournees etiquetees : il tourne des le demarrage de l'agent (une erreur ne bloque pas l'agent)
+    let regulator = 'en marche';
+    try { lineRegStart(); } catch (e) { regulator = 'ERREUR ' + e.message; }
+    return Object.assign(pumpStatus(), warm, { tagsSaveGame: enableTagsSaveGame(), regulator });
   },
   status() {
     return Object.assign(pumpStatus(), { build: native('buildVersion')().readUtf16String(), hitLayout, built: Array.from(builtPaths) });
@@ -1928,8 +2650,22 @@ Object.assign(rpc.exports, {
   signal(recipe, guard, opts) {
     return withContext('signal', (ctx) => signalOnGameThread(ctx, recipe, guard, opts));
   },
+  // Rail construit : levier pose a chaque bout devenu aiguillage (le sien ou celui du rail voisin), car le jeu ne le
+  // construit pas avec le rail de l'agent (utilisateur, 26/10/2026 : « je t'avais pourtant demande de le faire en auto » ;
+  // 20 aiguillages sans levier apres les chantiers de bouts d'anneau, raccords faits par la pose et non par railLink)
   rail(recipe, from, to, opts) {
-    return withContext('rail', (ctx) => railOnGameThread(ctx, recipe, from, to, opts));
+    return withContext('rail', (ctx) => {
+      const res = railOnGameThread(ctx, recipe, from, to, opts);
+      if (res.built && res.actor) {
+        const comps = [];
+        for (const c of trackConnections(requireActor(res.actor))) {
+          comps.push(c.comp);
+          for (const o of c.connections) if (o.track) comps.push(requireRailConnection(o.track, o.name).comp);
+        }
+        res.switchControls = comps.map((c) => ensureSwitchControl(ctx, c)).filter(Boolean);
+      }
+      return res;
+    });
   },
   // Liste du monde entier (cf. worldScannablesOnGameThread) : list = pickups | dropPods
   world(list, opts) {
@@ -2390,23 +3126,8 @@ Object.assign(rpc.exports, {
   tags(path, tags) {
     return withContext('tags', () => {
       const actor = requireActor(path);
-      const arr = actor.add(propertyOffset(native('getObjectClass')(actor), 'Tags'));
-      const read = () => {
-        const data = arr.readPointer(), n = arr.add(8).readS32(), out = [];
-        for (let i = 0; i < n; i++) out.push(fnameString(data.add(8 * i)));
-        return out;
-      };
-      if (!tags) return { tags: read() };
-      const old = arr.readPointer();
-      const data = tags.length ? native('memMalloc')(8 * tags.length, 8) : NULL;
-      tags.forEach((t, i) => {
-        const buf = zeroAlloc(16, 8);
-        native('fnameCtor')(buf.ptr, wideString(t), 1); // EFindName::FNAME_Add
-        data.add(8 * i).writeU64(buf.ptr.readU64());
-      });
-      arr.writePointer(data); arr.add(8).writeS32(tags.length); arr.add(12).writeS32(tags.length);
-      if (!old.isNull()) fnFree(old);
-      return { tags: read() };
+      if (tags) actorTagsSet(actor, tags);
+      return { tags: actorTags(actor) };
     });
   },
   // Drapeau « a sauvegarder » (CPF_SaveGame) d'une propriete : struct = chemin d'une classe ou structure (ex.
@@ -2664,8 +3385,11 @@ Object.assign(rpc.exports, {
   // Relie deux connecteurs de rail sans recherche par collision (UFGRailroadTrackConnectionComponent::AddConnection, comme
   // ConfigureComponents a la construction), puis reinscrit le rail A dans le systeme ferroviaire (RemoveTrack + AddTrack,
   // qui fusionne son graphe avec ceux des rails relies). Repare un joint reste libre parce que pose loin du joueur.
+  // Raccord direct de deux connecteurs de rail. Si l'un d'eux devient un aiguillage (2 branches ou plus) sans levier, le
+  // levier est pose aussitot (utilisateur, 26/10/2026 : « quand tu fais un railLink il faudrait placer le signal en auto si
+  // necessaire ») : sans levier, l'aiguillage ne bascule jamais (voir switchControl)
   railLink(subsystemPath, trackA, nameA, trackB, nameB) {
-    return withContext('railLink', () => {
+    return withContext('railLink', (ctx) => {
       const sub = requireActor(subsystemPath);
       const ta = requireActor(trackA), tb = requireActor(trackB);
       const a = requireRailConnection(trackA, nameA), b = requireRailConnection(trackB, nameB);
@@ -2674,7 +3398,20 @@ Object.assign(rpc.exports, {
       native('railConnAddConnection')(a.comp, b.comp);
       native('railSubsystemRemoveTrack')(sub, ta);
       native('railSubsystemAddTrack')(sub, ta);
-      return { graphsBefore: before, graphsAfter: graphs() };
+      const switchControls = [a.comp, b.comp].map((c) => ensureSwitchControl(ctx, c)).filter(Boolean);
+      return { graphsBefore: before, graphsAfter: graphs(), switchControls };
+    });
+  },
+  // Recalcul complet d'un reseau ferre (graphe, blocs, etats des signaux) au tick suivant, comme apres la pose ou le
+  // demontage d'un rail : AFGRailroadSubsystem::MarkGraphForFullRebuild(graphId). Graphes donnes par des rails
+  // (utilisateur, 26/10/2026 : « t'as moyen de reset les signaux ? »)
+  railRebuild(subsystemPath, trackPaths) {
+    return withContext('railRebuild', () => {
+      exportByPattern('railSubsystemMarkFullRebuild', 'game', /^\?MarkGraphForFullRebuild@AFGRailroadSubsystem@@AEAAXH@Z$/, 'void', ['pointer', 'int']);
+      const sub = requireActor(subsystemPath);
+      const ids = [...new Set(trackPaths.map((p) => native('railTrackGraphId')(requireActor(p))))];
+      for (const id of ids) native('railSubsystemMarkFullRebuild')(sub, id);
+      return { graphs: ids };
     });
   },
   // Noms decores des exports du module du jeu qui correspondent a un motif (recherche d'une fonction par son nom, sans
@@ -2754,6 +3491,192 @@ Object.assign(rpc.exports, {
         out.push(data.isNull() || num <= 0 ? '' : data.readUtf16String(num - 1));
       }
       return out;
+    });
+  },
+  // Valeurs d'un enum du jeu par nom (ex. ETrainDockingDefinition)
+  enums(name) {
+    return withContext('enums', () => enumValues(name));
+  },
+  // Trains (cf. trainInfo) : opts.path (un train, ou un de ses vehicules), opts.station (motif sur les noms des gares de
+  // l'horaire), opts.near {x, y, z} + opts.radius (uu, premier vehicule)
+  trains(opts) {
+    return withContext('trains', (ctx) => {
+      const o = opts || {};
+      const L = railTrafficLayout();
+      let list = actorsOfClass(ctx, L.C.train).filter(isUObject);
+      if (o.path) {
+        const a = requireActor(o.path);
+        const t = isA(a, L.C.train) ? a : isA(a, L.C.vehicle) ? a.add(propertyOffset(L.C.vehicle, 'mTrain')).readPointer() : NULL;
+        if (!isUObject(t)) throw new Error(o.path + ' : ni train ni vehicule d\'un train');
+        list = [t];
+      }
+      let out = list.map(trainInfo);
+      if (o.station) { const re = new RegExp(o.station); out = out.filter((t) => t.timetable && t.timetable.stops.some((s) => s.station && re.test(s.station.name))); }
+      if (o.near) out = out.filter((t) => t.vehicles.length && Math.hypot(t.vehicles[0].location.x - o.near.x, t.vehicles[0].location.y - o.near.y, t.vehicles[0].location.z - (o.near.z || 0)) <= (o.radius || 10000));
+      return out;
+    });
+  },
+  // Horaire d'un train (cf. trainTimetableSet) ; opts.current (arret suivant), opts.selfDriving (true / false)
+  trainTimetable(trainPath, stops, opts) {
+    return withContext('trainTimetable', (ctx) => {
+      const o = opts || {};
+      trainTimetableSet(ctx, trainPath, stops, o.current);
+      if (o.selfDriving != null) native('trainSetSelfDriving')(requireActor(trainPath), o.selfDriving === true ? 1 : 0); // bool natif : entier pour Frida
+      return trainInfo(requireActor(trainPath));
+    });
+  },
+  // Gares (identifiants AFGTrainStationIdentifier) : nom en jeu, batiment, position ; opts.name : motif sur le nom
+  stations(opts) {
+    return withContext('stations', (ctx) => {
+      const L = railTrafficLayout();
+      const re = opts && opts.name ? new RegExp(opts.name) : null;
+      return actorsOfClass(ctx, L.C.ident).filter(isUObject).map((i) => {
+        const st = i.add(L.ident.station).readPointer();
+        return { name: textString(i.add(L.ident.name)), identifier: splitFullName(i).path,
+          station: isUObject(st) ? splitFullName(st).path : null, location: isUObject(st) ? r0(actorPose(st).location) : null };
+      }).filter((s) => !re || re.test(s.name));
+    });
+  },
+  // Nom d'un train (AFGTrain::SetTrainName, FText fait par FText::FromString ; le FText rendu n'est pas libere)
+  trainName(trainPath, name) {
+    return withContext('trainName', () => {
+      const L = railTrafficLayout();
+      exportByPattern('textFromString', 'core', /^\?FromString@FText@@SA\?AV1@AEBVFString@@@Z$/, 'pointer', ['pointer', 'pointer']);
+      exportByPattern('trainSetName', 'game', /^\?SetTrainName@AFGTrain@@QEAAXAEBVFText@@@Z$/, 'void', ['pointer', 'pointer']);
+      const train = requireActor(trainPath);
+      if (!isA(train, L.C.train)) throw new Error(trainPath + ' : pas un train (AFGTrain)');
+      // chars garde la chaine en vie pendant l'appel (Frida libere un tampon sans reference JS)
+      const chars = wideString(name), str = zeroAlloc(16, 8);
+      str.ptr.writePointer(chars); str.ptr.add(8).writeS32(name.length + 1); str.ptr.add(12).writeS32(name.length + 1);
+      const text = zeroAlloc(32, 16); // FText rendu par valeur
+      native('textFromString')(text.ptr, str.ptr);
+      native('trainSetName')(train, text.ptr);
+      return Object.assign(trainInfo(train), { chars: chars.isNull() ? null : name.length });
+    });
+  },
+  // Enregistreur (cf. trainRecTick) : suit les trains donnes (chemins de trains ou de vehicules) ; opts.periodMs (100 ms),
+  // opts.keepMs (15 s), opts.afterMs (1,5 s apres le deraillement). Remet le tampon a zero.
+  trainRecorder(paths, opts) {
+    return withContext('trainRecorder', () => {
+      const L = railTrafficLayout(), o = opts || {};
+      trainRec.trains = paths.map((p) => {
+        const a = requireActor(p);
+        const t = isA(a, L.C.train) ? a : isA(a, L.C.vehicle) ? a.add(propertyOffset(L.C.vehicle, 'mTrain')).readPointer() : NULL;
+        if (!isUObject(t)) throw new Error(p + ' : ni train ni vehicule d\'un train');
+        return { train: t, name: textString(t.add(L.train.name)) || splitFullName(t).path.split('.').pop(),
+          vehicles: readPointerArray(t.add(L.train.sim).add(L.sim.vehicles)).filter(isUObject) };
+      });
+      trainRec.derailedValue = Number(Object.keys(L.enums.status).find((v) => L.enums.status[v] === 'TS_Derailed'));
+      Object.assign(trainRec, { buf: [], keepMs: o.keepMs || 15000, afterMs: o.afterMs || 1500, periodMs: o.periodMs || 100, last: 0,
+        t0: Date.now(), ticks: 0, frozenAt: null, derailed: null });
+      pump.tickHooks.set('trainRec', trainRecTick);
+      return { trains: trainRec.trains.map((t) => ({ name: t.name, vehicles: t.vehicles.length })), keepMs: trainRec.keepMs };
+    });
+  },
+  // Tampon de l'enregistreur : opts.everyMs (un echantillon par intervalle, defaut : tous), opts.lastMs (fenetre de fin)
+  trainRecorderGet(opts) {
+    const o = opts || {};
+    const end = trainRec.buf.length ? trainRec.buf[trainRec.buf.length - 1].t : 0;
+    let last = -Infinity;
+    const samples = trainRec.buf.filter((s) => {
+      if (o.lastMs && s.t < end - o.lastMs) return false;
+      if (o.everyMs && s.t - last < o.everyMs) return false;
+      last = s.t;
+      return true;
+    });
+    return { running: pump.tickHooks.has('trainRec'), ticks: trainRec.ticks, derailed: trainRec.derailed,
+      frozenAt: trainRec.frozenAt === null ? null : trainRec.frozenAt - trainRec.t0, statusNames: railTraffic ? railTraffic.enums.status : null, samples };
+  },
+  // Levier d'aiguillage (AFGBuildableRailroadSwitchControl) sur un connecteur de rail qui en manque. Un aiguillage sans
+  // levier ne bascule jamais (UFGRailroadTrackConnectionComponent::SetSwitchPosition ne fait rien sans mSwitchControl, lu
+  // avec Ghidra le 26/10/2026) : les trains suivent sa position en cours. Le jeu pose le levier avec l'hologramme du rail
+  // qui cree la bifurcation (AFGRailroadTrackHologram::TryPlaceSwitchControl) ; un raccord fait par railLink n'en a pas.
+  // Ici : hologramme du levier place par AFGRailroadSwitchControlHologram::SetHologramLocationAndRotationFromConnection
+  // (connecteur commande, position et cap pris sur lui), puis construction. opts : dryRun, force, ignore
+  switchControl(connectorPath, opts) {
+    return withContext('switchControl', (ctx) => placeSwitchControl(ctx, requireActor(connectorPath), opts));
+  },
+  // Position d'un aiguillage (connecteur qui fait face aux branches) : lecture, ou reglage si `position` est donne (par son
+  // levier ; sans levier, rien ne change). Rend la position et la branche (rail) qu'elle designe
+  switchPosition(connectorPath, position) {
+    return withContext('switchPosition', () => {
+      exportByPattern('railConnGetSwitchPosition', 'game', /^\?GetSwitchPosition@UFGRailroadTrackConnectionComponent@@QEBAHXZ$/, 'int', ['pointer']);
+      exportByPattern('railConnSetSwitchPosition', 'game', /^\?SetSwitchPosition@UFGRailroadTrackConnectionComponent@@QEAAXH@Z$/, 'void', ['pointer', 'int']);
+      const conn = requireActor(connectorPath);
+      if (position != null) native('railConnSetSwitchPosition')(conn, position);
+      const links = zeroAlloc(16, 8);
+      native('railConnConnections')(conn, links.ptr);
+      const branches = takePointerArray(links.ptr).filter(isUObject).map((other) => pathOrNull(native('railConnTrack')(other)));
+      const pos = native('railConnGetSwitchPosition')(conn);
+      return { position: pos, branch: branches[pos] || null, branches, switchControl: dumpObject(conn, 1, 1, ['mSwitchControl']).mSwitchControl || null };
+    });
+  },
+  trainRecorderStop() {
+    pump.tickHooks.delete('trainRec');
+    return { ticks: trainRec.ticks, samples: trainRec.buf.length };
+  },
+  // Etat du regulateur des tournees (cf. lineRegTick) : par tournee, boucle, intervalle, trains, gares, trajets, derniers
+  // evenements (opts.events : nombre, 20)
+  lineRegulatorStatus(opts) {
+    return lineRegulatorState(opts && opts.events);
+  },
+  // Remet en marche le regulateur des tournees (installe avec l'agent ; apres lineRegulatorStop)
+  lineRegulatorStart() {
+    return withContext('lineRegulatorStart', () => { lineRegStart(); return lineRegulatorState(0); });
+  },
+  // Arrete le regulateur des tournees jusqu'a lineRegulatorStart ou au prochain demarrage de l'agent, et leve les
+  // retenues en cours. Pour ne plus reguler une tournee : retirer l'etiquette « regulation » de sa gare
+  lineRegulatorStop() {
+    return withContext('lineRegulatorStop', () => ({ released: lineRegStop(), state: lineRegulatorState(0) }));
+  },
+  // Retient le train a quai d'une gare holdS secondes de plus (cf. stationHold) ; rend le temps a quai et la duree exigee
+  stationHoldDock(stationPath, holdS) {
+    return withContext('stationHoldDock', () => {
+      const L = railTrafficLayout();
+      const st = requireActor(stationPath);
+      if (!isA(st, L.C.station)) throw new Error(stationPath + ' : pas une gare (AFGBuildableRailroadStation)');
+      const total = stationHold(st, holdS);
+      return { station: splitFullName(st).path, elapsed: st.add(propertyOffset(L.C.station, 'mCurrentDockForDuration')).readFloat(), total };
+    });
+  },
+  // Leve l'attente en cours a une gare (AFGBuildableRailroadStation::ClearRuleSetTimeRequirement) : le train a quai part
+  // des que sa regle (charger / decharger une fois...) est remplie. La gare garde une copie de la regle prise a l'arrivee
+  // (mCurrentDockedWithRuleSet, mCurrentDockForDuration) : changer l'horaire pendant l'arret ne fait rien (26/10/2026)
+  stationReleaseDock(stationPath) {
+    return withContext('stationReleaseDock', () => {
+      const L = railTrafficLayout();
+      exportByPattern('stationClearRuleSetTime', 'game', /^\?ClearRuleSetTimeRequirement@AFGBuildableRailroadStation@@QEAAXXZ$/, 'void', ['pointer']);
+      const st = requireActor(stationPath);
+      if (!isA(st, L.C.station)) throw new Error(stationPath + ' : pas une gare (AFGBuildableRailroadStation)');
+      const off = propertyOffset(L.C.station, 'mCurrentDockForDuration');
+      const before = st.add(off).readFloat();
+      native('stationClearRuleSetTime')(st);
+      return { station: splitFullName(st).path, dockForDurationBefore: before, dockForDurationAfter: st.add(off).readFloat() };
+    });
+  },
+  // Remet un train deraille sur ses rails (AFGTrain::Rerail, comme la touche E du jeu), puis recalcule son etat
+  // (AFGTrain::UpdateTrainStatus) : loin du joueur, un train qui a deraille reste « TS_Derailed » sans que ses vehicules
+  // soient marques derailles ni tombes (physique calculee pres du joueur seulement), et Rerail ne fait rien (26/10/2026)
+  trainRerail(trainPath) {
+    return withContext('trainRerail', () => {
+      const L = railTrafficLayout();
+      exportByPattern('trainRerail', 'game', /^\?Rerail@AFGTrain@@QEAAXXZ$/, 'void', ['pointer']);
+      exportByPattern('trainUpdateStatus', 'game', /^\?UpdateTrainStatus@AFGTrain@@AEAAXXZ$/, 'void', ['pointer']);
+      const train = requireActor(trainPath);
+      if (!isA(train, L.C.train)) throw new Error(trainPath + ' : pas un train (AFGTrain)');
+      native('trainRerail')(train);
+      native('trainUpdateStatus')(train);
+      return trainInfo(train);
+    });
+  },
+  // Conduite automatique d'un train (AFGTrain::SetSelfDrivingEnabled) ; rend l'etat du train
+  trainSelfDriving(trainPath, on) {
+    return withContext('trainSelfDriving', () => {
+      const L = railTrafficLayout();
+      const train = requireActor(trainPath);
+      if (!isA(train, L.C.train)) throw new Error(trainPath + ' : pas un train (AFGTrain)');
+      native('trainSetSelfDriving')(train, on !== false ? 1 : 0); // bool natif : entier pour Frida
+      return trainInfo(train);
     });
   },
   // Sauvegarde nommee de la partie (UFGSaveSession::SaveGame, comme le menu du jeu), sans delegue de fin : elle est ecrite

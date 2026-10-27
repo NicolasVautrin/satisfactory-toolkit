@@ -22,6 +22,12 @@
 //   [--ouest <u en m>] : etage bas, voies vers l'ouest prolongees en droite jusqu'a u (rails XS*, XN*)
 //   [--colonne <v en m>] : avec --ouest, suite vers le sud au-dessus de la colonne de fondations jusqu'a v (XSt*, XSs*, XSc*...)
 //   [--rangee <u en m>] : avec --colonne, suite vers l'ouest au-dessus des rangees du bord sud de la plateforme (XSu*, XSw*...)
+//   [--ent E2=10,W1=10] : ecart (m) entre le cote de l'anneau et l'entree de ces gares (E<k> : gare est k, W<k> : gare
+//     ouest k ; ENT par defaut). Regle de l'utilisateur (26/10/2026) : « pas de signaux a l'entree et a la sortie des gares,
+//     segment minimum de 12m ». Le rail d'entree part d'un aiguillage tangent au coin de l'anneau, dont la courbe reste a
+//     moins de 6,2 m du rail sur 13,6 m (le jeu met alors les deux rails dans le meme bloc) : avec ENT = 6, le rail est
+//     de 24 m et seul le bout du quai est hors contact. Au-dela de ENT_SPLIT, l'entree est coupee en deux rails (Ein<k> /
+//     Win<k> cote anneau, Eing<k> / Wing<k> de 12 m cote gare) et le signal d'entree passe a leur jonction.
 'use strict';
 
 const fs = require('fs');
@@ -35,12 +41,36 @@ const R = 18; // rayon des coins et des quarts de cercle des raccords
 const QUAIS = 16 * 5; // gare + 4 quais
 const PAIR = 117.05; // du cote ouest d'un anneau au cote est du suivant : voie principale de 81 m entre anneaux
 const ENT = 6; // entree d'une gare a 6 m du cote de l'anneau
-const XSTUB = PAIR - QUAIS - ENT; // sortie d'une gare jusqu'a son signal, sur le cote de l'anneau
+const ENT_SPLIT = 7.6; // ecart minimum pour un rail de 12 m entre le signal et la gare, hors contact avec le coin
+const SIG_GAP = 12; // rail entre le signal d'entree et la gare
+// Ecarts d'entree par gare (--ent E2=10,W1=10)
+const entries = (o) => Object.fromEntries(String(o.ent || '').split(',').filter(Boolean).map((kv) => {
+  const [k, v] = kv.split('=');
+  if (!/^[EW]\d+$/.test(k) || !(Number(v) >= ENT)) throw new Error('--ent : ' + kv + ' (attendu E<k>=<m> ou W<k>=<m>, m >= ' + ENT + ')');
+  return [k, Number(v)];
+}));
 const SIDE = 26; // deux rails de 13 m entre deux aiguillages
 const EXT = 2 * R + 6.5; // ligne externe : du depart a l'arrivee (deux quarts de cercle, voies a 6,5 m)
 const MAIN = PAIR - 2 * R; // voie principale entre deux anneaux (81 m)
 const TAIL = MAIN; // voies vers l'ouest apres le dernier anneau
 const rad = (d) => (d * Math.PI) / 180;
+// Liens a voies ecartees (utilisateur, 26/10/2026, apres des deraillements aux bouts des anneaux de la voie basse : « faut
+// passer l'ecart des rails a 7m, 6.5 c'est trop juste » ; « fais ta variante a 10m dans l'anneau a helice ou je me
+// trouve » ; puis « on passe le standard a 7m »). A un bout d'anneau, le quart de cercle de sortie et celui d'entree
+// partent du meme point en sens contraires : la tete du train qui sort deborde vers l'autre voie, et le jeu voit un contact
+// sous 6,64 m d'axe en axe pour des quarts de 18 m (references/rails.md, « Collisions entre trains »). Les cotes des
+// anneaux ne bougent pas (helices au centre, raccordees au cote nord) : les deux voies du lien s'ecartent symetriquement et
+// les quarts de cercle retrecissent (R - (ecart - VN) / 2 : 17,75 m pour 7 m, 16,25 m pour 10 m). Cle : etage -> { lien k :
+// ecart (m) } ; lien k = entre les anneaux k-1 et k, lien RINGS.length = du bout ouest du dernier anneau a SEND / NEND.
+// Lien 0 (etage du bas) : bout est de l'anneau 0, raccorde aux virages du canyon (reconstruits par ce plan, accroches aux
+// droites gardees canyonS / canyonN). Le lien du bout ouest du dernier anneau garde SEND / NEND en place (a l'etage du bas,
+// les voies XS / XN en repartent) : MS / MN y reviennent par un S de 0,25 m.
+const ECART = 7; // standard de l'utilisateur (« on passe le standard a 7m »)
+const LIENS = { 0: { 0: ECART, 1: ECART, 2: ECART, 3: ECART }, 1: { 1: ECART, 2: ECART, 3: ECART }, 2: { 1: ECART, 2: ECART, 3: ECART } };
+// Lignes externes (sud de chaque anneau, est de l'anneau 0 aux etages) : depart et arrivee forment le meme bout d'anneau
+// (quarts de cercle opposes, voies a 6,5 m) ; quarts retrecis pour ECART m entre leurs bouts, droites suivantes en S de
+// 0,25 m jusqu'aux bouts inchanges (libres, ou raccordes plus loin comme la ligne des mines sur RAXos / RAXis a l'etage 2)
+const EXT_R = R - (ECART - 6.5) / 2;
 
 function layout(o = {}) {
   const etage = Number(o.etage || 0);
@@ -64,9 +94,11 @@ function layout(o = {}) {
   rings[2].helices = { du: rings[2].ue - HG.UE0, prefix: 'Z' };
   const prefix = 'hub' + etage;
   const stations = {};
+  const ent = entries(o);
   for (let k = 1; k < rings.length; k++) {
-    stations['est' + k] = { nom: prefix + '-est' + k, exit: rings[k - 1].uw + XSTUB, v: VNR, axis: 180 };
-    stations['ouest' + k] = { nom: prefix + '-ouest' + k, exit: rings[k].ue - XSTUB, v: VSR, axis: 0 };
+    const eE = ent['E' + k] || ENT, eW = ent['W' + k] || ENT;
+    stations['est' + k] = { nom: prefix + '-est' + k, exit: rings[k - 1].uw + PAIR - QUAIS - eE, v: VNR, axis: 180, ent: eE };
+    stations['ouest' + k] = { nom: prefix + '-ouest' + k, exit: rings[k].ue - (PAIR - QUAIS - eW), v: VSR, axis: 0, ent: eW };
   }
   const z = H.z + 100 * etage * HG.ETAGE;
   for (const st of Object.values(stations)) st.origin = { x: H.x - 100 * st.exit, y: H.y - 100 * st.v, z };
@@ -100,13 +132,13 @@ function plan(o) {
     rail(id + '1', a, capA, id + 'm', capA + (capB - capA > 0 ? 50 : -50));
     rail(id + '2', id + 'm', capA + (capB - capA > 0 ? 50 : -50), b, capB);
   };
-  // quart de cercle de rayon R en deux rails (split deg puis le reste) depuis `a`, cap c ; t = +1 : cap croissant (virage
-  // a droite sur la carte)
-  const quarter = (id, a, c, t, b, split = 50) => {
+  // quart de cercle de rayon r (R par defaut) en deux rails (split deg puis le reste) depuis `a`, cap c ; t = +1 : cap
+  // croissant (virage a droite sur la carte)
+  const quarter = (id, a, c, t, b, split = 50, r = R) => {
     const [ua, va] = joints[a];
-    const cu = ua + R * Math.cos(rad(c + 90 * t)), cv = va + R * Math.sin(rad(c + 90 * t));
+    const cu = ua + r * Math.cos(rad(c + 90 * t)), cv = va + r * Math.sin(rad(c + 90 * t));
     const m = c + split * t;
-    J(id + 'm', cu - R * Math.cos(rad(m + 90 * t)), cv - R * Math.sin(rad(m + 90 * t)));
+    J(id + 'm', cu - r * Math.cos(rad(m + 90 * t)), cv - r * Math.sin(rad(m + 90 * t)));
     rail(id + '1', a, c, id + 'm', m); rail(id + '2', id + 'm', m, b, c + 90 * t);
   };
   const helState = fs.existsSync(PLANS + 'hub0-state.json') ? JSON.parse(fs.readFileSync(PLANS + 'hub0-state.json', 'utf8')).rails : {};
@@ -125,8 +157,15 @@ function plan(o) {
   // helices de chaque anneau qui en a : posees avec l'etage du bas
   const helOf = (r) => ({ G: helices.geometry(r.helices.du), P: helices({ du: r.helices.du, prefix: r.helices.prefix }), p: r.helices.prefix });
   if (L.etage === 0) for (const r of RINGS) if (r.helices) { const { P } = helOf(r); Object.assign(joints, P.joints); rails.push(...P.rails); signals.push(...P.signals); }
+  // voies d'un lien (cf. LIENS) : rayon des quarts de cercle des bouts d'anneau, voies sud et nord
+  const liens = LIENS[L.etage] || {};
+  const link = (k) => {
+    if (!liens[k]) return { r: R, vS: 0, vN: VN };
+    const d = (liens[k] - VN) / 2;
+    return { r: R - d, vS: -d, vN: VN + d };
+  };
 
-  for (const r of RINGS) {
+  for (const [i, r] of RINGS.entries()) {
     const { id, ue, uw } = r;
     const n = (x) => id + x;
     const { G: HG, P: HEL, p: hp } = r.helices ? helOf(r) : { G: null, P: null, p: '' };
@@ -180,13 +219,14 @@ function plan(o) {
       const YI = EXTRA ? J(n('YI'), ue, vy - EXT) : n('E1');
       const vin = joints[YI][1] + R; // voie d'arrivee
       if (EXTRA) { straight(n('ey'), NEc, YI, 270); straight(n('ez'), YI, n('E1'), 270, 1); } else straight(n('e'), NEc, YI, 270);
-      J(n('YOL'), ue - R, vy - R); J(n('YOS'), ue - R - 18.5, vy - R); J(n('YOT'), ue - 2 * R - 18.5, vy - 2 * R); J(n('YOE'), ue - 2 * R - 18.5, vy - 2 * R - 40);
-      J(n('YIq'), ue - R, vin); J(n('YIS'), ue - R - 12, vin); J(n('YIL'), ue - 2 * R - 12, vin - R); J(n('YIE'), ue - 2 * R - 12, vin - R - 40);
-      quarter(n('Yo'), NEc, 270, -1, n('YOL')); sig(n('xYo'), 'block', n('Yo2'), 'to'); // sortie de l'anneau
+      // quarts Yo / Yi de rayon EXT_R (ECART m entre YOL et YIq), droites Yod / Yid en S jusqu'a YOS / YIS inchanges
+      J(n('YOL'), ue - EXT_R, vy - EXT_R); J(n('YOS'), ue - R - 18.5, vy - R); J(n('YOT'), ue - 2 * R - 18.5, vy - 2 * R); J(n('YOE'), ue - 2 * R - 18.5, vy - 2 * R - 40);
+      J(n('YIq'), ue - EXT_R, joints[YI][1] + EXT_R); J(n('YIS'), ue - R - 12, vin); J(n('YIL'), ue - 2 * R - 12, vin - R); J(n('YIE'), ue - 2 * R - 12, vin - R - 40);
+      quarter(n('Yo'), NEc, 270, -1, n('YOL'), 50, EXT_R); sig(n('xYo'), 'block', n('Yo2'), 'to'); // sortie de l'anneau
       rail(n('Yod'), n('YOL'), 180, n('YOS'), 180); quarter(n('Yoq'), n('YOS'), 180, 1, n('YOT')); rail(n('Yos'), n('YOT'), 270, n('YOE'), 270);
       rail(n('Yis'), n('YIE'), 90, n('YIL'), 90); quarter(n('Yiq'), n('YIL'), 90, -1, n('YIS'));
       rail(n('Yid'), n('YIS'), 0, n('YIq'), 0); sig(n('eYi'), 'path', n('Yid'), 'to'); // entree de l'anneau
-      quarter(n('Yi'), n('YIq'), 0, -1, YI);
+      quarter(n('Yi'), n('YIq'), 0, -1, YI, 50, EXT_R);
     } else {
       if (EXTRA) straight(n('ex'), NEc, n('E0'), 270, 1);
       straight(n('e'), n('E0'), n('E1'), 270);
@@ -200,8 +240,9 @@ function plan(o) {
       J(n('XI'), xi, VSR);
       if (!r.seFree) straight(n('sa'), n('SE'), XO, 0, r.xoff ? 1 : 2);
       straight(n('sb'), XO, n('XI'), 0); straight(n('sc'), n('XI'), n('SW'), 0);
-      J(n('XOL'), xo + R, VSR - R); J(n('XOE'), xo + R, VSR - R - 40);
-      J(n('XIL'), xi - R, VSR - R); J(n('XIE'), xi - R, VSR - R - 40);
+      // quarts Xo / Xi de rayon EXT_R, droites Xos / Xis en S jusqu'a XOE / XIE inchanges
+      J(n('XOL'), xo + EXT_R, VSR - EXT_R); J(n('XOE'), xo + R, VSR - R - 40);
+      J(n('XIL'), xi - EXT_R, VSR - EXT_R); J(n('XIE'), xi - R, VSR - R - 40);
       rail(n('Xo'), XO, 0, n('XOL'), 270); rail(n('Xos'), n('XOL'), 270, n('XOE'), 270);
       rail(n('Xis'), n('XIE'), 90, n('XIL'), 90); rail(n('Xi'), n('XIL'), 90, n('XI'), 0);
       sig(n('xXo'), 'block', n('Xo'), 'to'); sig(n('eXi'), 'path', n('Xis'), 'to');
@@ -215,11 +256,13 @@ function plan(o) {
     corner(n('nw'), W1c, 90, [uw - R, VNR - R], 0, n('NW'), 180);
     // voies principales : quarts de cercle cote est (sauf l'anneau 0 en etage) et cote ouest
     if (id !== 'R0' || L.etage === 0) {
-      J(n('NO'), ue - R, VN); J(n('SI'), ue - R, 0);
+      const k = link(i);
+      J(n('NO'), ue - k.r, k.vN); J(n('SI'), ue - k.r, k.vS);
       rail(n('No'), n('E0'), 270, n('NO'), 180); sig(n('xNo'), 'block', n('No'), 'to'); // vers l'est
       rail(n('Si'), n('SI'), 0, n('E1'), 270); // depuis l'est
     }
-    J(n('SO'), uw + R, 0); J(n('NI'), uw + R, VN);
+    const kw = link(i + 1);
+    J(n('SO'), uw + kw.r, kw.vS); J(n('NI'), uw + kw.r, kw.vN);
     rail(n('So'), n('W0'), 90, n('SO'), 0); sig(n('xSo'), 'block', n('So'), 'to'); // vers l'ouest
     rail(n('Ni'), n('NI'), 180, n('W1'), 90); // depuis l'ouest
   }
@@ -227,8 +270,17 @@ function plan(o) {
   // --- Canyon (etage du bas) : la double voie arrive au cote est de l'anneau 0, au bout de son virage --------------------
   if (L.etage === 0) {
     joints.KS = [...localXY(KEEP.S.b), 0]; joints.KN = [...localXY(KEEP.N.b), 0];
-    rail('virageS', 'KS', 20, 'R0SI', 0, { existing: oldHel.virageS });
-    rail('virageN', 'KN', 20, 'R0NO', 0, { existing: oldHel.virageN });
+    if (liens[0]) {
+      // virages reconstruits jusqu'aux points de raccord ecartes, accroches aux droites gardees du canyon
+      joints.KSf = [...localXY(KEEP.S.f), 0]; joints.KNf = [...localXY(KEEP.N.f), 0];
+      rail('canyonS', 'KSf', 20, 'KS', 20, { existing: oldHel.canyonS });
+      rail('canyonN', 'KNf', 20, 'KN', 20, { existing: oldHel.canyonN });
+      rail('virageS', 'KS', 20, 'R0SI', 0);
+      rail('virageN', 'KN', 20, 'R0NO', 0);
+    } else {
+      rail('virageS', 'KS', 20, 'R0SI', 0, { existing: oldHel.virageS });
+      rail('virageN', 'KN', 20, 'R0NO', 0, { existing: oldHel.virageN });
+    }
     sig('eR0Si', 'path', 'virageS', 'to'); // entree de l'anneau 0 par la voie sud
   }
   // --- Voies principales entre anneaux et vers l'ouest -----------------------------------------------------------------
@@ -241,7 +293,7 @@ function plan(o) {
   // bout des voies vers l'ouest fixe : celui de l'anneau Z sans ligne externe, d'ou partent les rails XS / XN de l'etage
   // bas (21/10/2026) ; l'anneau Z elargi (23/10) raccourcit MS3 / MN3 a 12,5 m
   const uEnd = z.ue + 2 * R + SIDE + R + TAIL;
-  J('SEND', uEnd, 0); J('NEND', uEnd, VN);
+  J('SEND', uEnd, 0); J('NEND', uEnd, VN); // inchanges (cf. LIENS) : MS / MN en S depuis les points de raccord ecartes
   rail('MS' + RINGS.length, z.id + 'SO', 0, 'SEND', 0);
   rail('MN' + RINGS.length, 'NEND', 180, z.id + 'NI', 180); sig('e' + z.id + 'Ni', 'path', 'MN' + RINGS.length, 'to');
   // Prolongement de l'etage bas vers l'ouest jusqu'a u = --ouest (m), en droite, bouts libres (utilisateur, 21/10/2026 :
@@ -303,10 +355,22 @@ function plan(o) {
     J('XE' + k, a.uw, VNR);
     rail('Eo' + k, 'E' + k + 'G0', 180, 'XE' + k, 180); sig('eEo' + k, 'path', 'Eo' + k, 'to');
     rail('Eon' + k, 'XE' + k, 180, a.id + 'NW', 180);
-    // entree depuis le coin NE de l'anneau b (signal de bloc a l'entree de la gare)
-    rail('Ein' + k, b.id + 'NE', 180, 'E' + k + 'G5', 180); sig('xEi' + k, 'block', 'Ein' + k, 'to');
+    // entree depuis le coin NE de l'anneau b : signal de bloc au quai (ENT), ou a SIG_GAP de la gare (entree coupee)
+    if (E.ent >= ENT_SPLIT) {
+      J('E' + k + 'Gm', joints['E' + k + 'G5'][0] + SIG_GAP, E.v);
+      rail('Ein' + k, b.id + 'NE', 180, 'E' + k + 'Gm', 180); rail('Eing' + k, 'E' + k + 'Gm', 180, 'E' + k + 'G5', 180);
+    } else {
+      rail('Ein' + k, b.id + 'NE', 180, 'E' + k + 'G5', 180);
+    }
+    sig('xEi' + k, 'block', 'Ein' + k, 'to');
     // gare ouest k (cote sud) : entree depuis le coin SW de l'anneau a
-    rail('Win' + k, a.id + 'SW', 0, 'W' + k + 'G5', 0); sig('xWi' + k, 'block', 'Win' + k, 'to');
+    if (W.ent >= ENT_SPLIT) {
+      J('W' + k + 'Gm', joints['W' + k + 'G5'][0] - SIG_GAP, W.v);
+      rail('Win' + k, a.id + 'SW', 0, 'W' + k + 'Gm', 0); rail('Wing' + k, 'W' + k + 'Gm', 0, 'W' + k + 'G5', 0);
+    } else {
+      rail('Win' + k, a.id + 'SW', 0, 'W' + k + 'G5', 0);
+    }
+    sig('xWi' + k, 'block', 'Win' + k, 'to');
     // sortie vers l'ouest, signal de chemin sur le cote est de l'anneau b, puis son coin SE
     J('XW' + k, b.ue, VSR);
     rail('Wo' + k, 'W' + k + 'G0', 0, 'XW' + k, 0); sig('eWo' + k, 'path', 'Wo' + k, 'to');
@@ -317,7 +381,7 @@ function plan(o) {
 
 // Bouts des droites gardees du raccord au canyon (lus en jeu le 21/10/2026, cf. helices-etages.js) : fin des rails
 // canyonN / canyonS, debut des virages
-const KEEP = { N: { b: { x: 147231, y: -261558 } }, S: { b: { x: 147009, y: -260948 } } };
+const KEEP = { N: { b: { x: 147231, y: -261558 }, f: { x: 153704, y: -259202 } }, S: { b: { x: 147009, y: -260948 }, f: { x: 153482, y: -258591 } } }; // f : autre bout (lu en jeu le 26/10/2026)
 function localXY(p) { return [-(p.x - H.x) / 100, -(p.y - H.y) / 100]; }
 
 module.exports = (o = {}) => plan(o);

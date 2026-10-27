@@ -12,7 +12,14 @@
 //   help                              cette aide (en-tete de fg.js), sans appel au jeu
 //   call <fonction> [arg...]          appel brut d'une fonction de l'agent ; arg = JSON, <point> ou <acteur>
 //   player                            joueur (position, regard)
+//   selection                         ce que cible le pistolet du joueur en mode demontage : acteur sous le viseur,
+//                                     acteur selectionne, selection multiple (UFGBuildGunStateDismantle)
 //   teleport <point> [cap]            deplace le joueur
+//   goto <x,y[,z]> [m]                « amene-moi en ... » : pose le joueur a 3 m du poteau electrique raccorde le plus
+//                                     proche du point (1 km au plus), a sa hauteur (il vole et a besoin du courant) ;
+//                                     m : coordonnees en metres (-1621,-1489 m) ; le depart est garde pour `retour` ;
+//                                     --dry : poteau choisi, sans deplacer le joueur
+//   retour                            ramene le joueur a son depart du dernier goto
 //   scan <classe> [--near <point|acteur>] [--radius <m>] [--limit <n>]
 //   pose <acteur...>                  position et rotation
 //   bounds <acteur...>                boite englobante dans le repere de l'acteur (min, max) et sa pose ; ex. plan d'eau
@@ -49,6 +56,8 @@ const opt = (name, def) => {
   argv.splice(i, 2);
   return v;
 };
+
+const GOTO_BACK = path.join(__dirname, 'goto-retour.json'); // depart du dernier goto (non versionne)
 
 let levelPrefix = null; // ".../Persistent_Level.Persistent_Level:PersistentLevel." lu sur le pion du joueur
 async function actor(name) {
@@ -133,6 +142,39 @@ const COMMANDS = {
   player: () => call('player'),
   async teleport(p, cap) {
     return call('teleport', await point(p), cap == null ? null : Number(cap));
+  },
+  // Utilisateur, 27/10/2026 : « comment faire en sorte que tu n'aies plus a chercher comment me teleporter » ; regle :
+  // pres d'un poteau alimente, a sa hauteur, le sol importe peu (references/pieges.md, Teleportation)
+  async goto(p, unit) {
+    if (!p) throw new Error('goto <x,y[,z]> [m]');
+    const k = unit === 'm' ? 100 : 1;
+    const [x, y, z] = p.split(',').map((v) => Number(v) * k);
+    const target = { x, y, z: Number.isFinite(z) ? z : 0 };
+    const start = (await call('player')).eyes;
+    const flat = (l) => Math.hypot(l.x - target.x, l.y - target.y);
+    let poles = [];
+    for (const r of [300, 1000]) {
+      poles = (await call('scan', 'FGBuildablePowerPole', target, r * 100, 30, {})).items;
+      if (poles.length) break;
+    }
+    let pole = null;
+    for (const it of poles.sort((a, b) => flat(a.location) - flat(b.location))) {
+      const pw = await call('power', it.path);
+      if (pw.wires > 0) { pole = Object.assign({}, it, { power: pw }); break; }
+    }
+    if (!pole) throw new Error('aucun poteau raccorde a moins de 1 km de ' + JSON.stringify(target));
+    if (argv.indexOf('--dry') >= 0) return { essai: true, poteau: pole.path.split('.').pop(), circuit: pole.power.circuitId, aDuPointM: Math.round(flat(pole.location) / 100), location: pole.location };
+    fs.writeFileSync(GOTO_BACK, JSON.stringify({ at: new Date().toISOString(), location: start.location, yaw: start.rotation.yaw }));
+    await call('teleport', { x: pole.location.x + 300, y: pole.location.y, z: pole.location.z + 200 }, null);
+    const now = (await call('player')).eyes.location;
+    return { poteau: pole.path.split('.').pop(), circuit: pole.power.circuitId, aDuPointM: Math.round(flat(pole.location) / 100),
+      arrivee: { x: Math.round(now.x), y: Math.round(now.y), z: Math.round(now.z) }, depart: { x: Math.round(start.location.x), y: Math.round(start.location.y), z: Math.round(start.location.z) } };
+  },
+  async retour() {
+    if (!fs.existsSync(GOTO_BACK)) throw new Error('pas de depart garde (goto jamais lance)');
+    const back = JSON.parse(fs.readFileSync(GOTO_BACK, 'utf8'));
+    await call('teleport', back.location, back.yaw);
+    return { retour: back.location, depuisLe: back.at };
   },
   // --machine : etat des machines (recette, cadence, pause) ; --recipe <motif> : seulement les machines dont la recette
   // correspond (implique --machine)
@@ -309,6 +351,16 @@ const COMMANDS = {
     };
     await walk(await actor(start), 0, null);
     return found;
+  },
+  // Etat de demontage du pistolet (BP_BuildGun_C.<...>_DismantleState) : lu meme si le pistolet est dans un autre mode
+  // (champs restes de la derniere visee), d'ou le mode courant dans le resultat
+  async selection() {
+    const gun = (await call('scan', 'BP_BuildGun_C', null, 0, 1, {})).items[0];
+    if (!gun) throw new Error('pistolet du joueur introuvable (BP_BuildGun_C)');
+    const g = await call('dump', gun.path, 1, 1, ['mCurrentState', 'mCurrentStateEnum']);
+    const state = gun.path + '.' + gun.path.split('.').pop() + '_DismantleState';
+    const d = await call('dump', state, 1, 200, ['mCurrentlyAimedAtActor', 'mCurrentlySelectedActor', 'mPendingDismantleActors']);
+    return { modeDemontage: g.mCurrentState === state, vise: d.mCurrentlyAimedAtActor, selectionne: d.mCurrentlySelectedActor, multiple: d.mPendingDismantleActors };
   },
   async signals(...names) {
     return each(names, async (n) => Object.assign({ signal: n },

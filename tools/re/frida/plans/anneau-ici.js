@@ -9,6 +9,8 @@
 // --gare <etat> : gare deja posee au nord, dans l'alignement du cote nord, a l'est de l'anneau (ex. anneau-vb-est1, layouts/
 // anneau-gare-nord.js) ; sans --x ni --est, l'anneau se place a 6 m de son entree, comme a la gare de triage, et son coin NE
 // raccorde l'entree.
+// --voie <y sud>,<y nord> : autre partie est-ouest de la voie basse (defaut -207220,-207870 ; ligne droite entre la gare
+// de triage et le coude, 25/10/2026 : -261512,-262161), meme sens de circulation (voie sud vers l'ouest).
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -18,13 +20,15 @@ const { SPAN, HALF, ENT } = require('./layouts/anneau-voie-basse.js');
 
 const argv = process.argv.slice(2);
 const opt = (name, def) => { const i = argv.indexOf('--' + name); return i < 0 ? def : argv[i + 1]; };
-const LINES = { S: -207220, N: -207870 };
+const [YS, YN] = String(opt('voie', '-207220,-207870')).split(',').map(Number);
+const LINES = { S: YS, N: YN };
+const YC = Math.round((YS + YN) / 2); // axe de la double voie
 const MIN_STRAIGHT = 12; // m : droite la plus courte entre un raccord de l'anneau et un rail garde
 const short = (p) => p.split('.').pop();
 const node = (args) => execFileSync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 1 << 26 });
 
 async function survey(cx) {
-  const near = (await call('scan', 'FGBuildableRailroadTrack', { x: cx, y: -207545, z: 349 }, 40000, 300, {})).items;
+  const near = (await call('scan', 'FGBuildableRailroadTrack', { x: cx, y: YC, z: 349 }, 40000, 300, {})).items;
   const out = {};
   for (const [k, y] of Object.entries(LINES)) {
     const joints = new Map(); // x arrondi -> rails qui y aboutissent
@@ -90,9 +94,9 @@ async function gareEntry(etat) {
     : opt('x') || !gare ? Math.round(Number(opt('x', p.x)))
       : Math.round(gare.near.x - 100 * (ENT + HALF));
   console.log('joueur', Math.round(p.x), Math.round(p.y), Math.round(p.z / 100) + ' m', '-> centre de l\'anneau x', cx);
-  if (Math.abs(p.y - -207545) > 15000 && !opt('x') && !opt('est') && !gare) console.log('ATTENTION : le joueur est a', Math.round(Math.abs(p.y - -207545) / 100), 'm de la voie basse');
+  if (Math.abs(p.y - YC) > 15000 && !opt('x') && !opt('est') && !gare) console.log('ATTENTION : le joueur est a', Math.round(Math.abs(p.y - YC) / 100), 'm de la voie basse');
   // collisions des batiments chargees autour du joueur seulement (environ 100 m) : au-dela, la pose a blanc ne voit pas tout
-  const far = Math.round(Math.hypot(p.x - cx, p.y - -207545) / 100);
+  const far = Math.round(Math.hypot(p.x - cx, p.y - YC) / 100);
   if (far > 60) console.log('ATTENTION : le joueur est a', far, 'm du centre de l\'anneau');
   const s = await survey(cx);
   const keep = { ES: s.S.keepE, EN: s.N.keepE, WS: s.S.keepW, WN: s.N.keepW };
@@ -101,7 +105,7 @@ async function gareEntry(etat) {
   const removed = [...s.S.removed, ...s.N.removed];
   console.log('rails retires :', removed.length, '(x', s.S.westX, '..', s.S.eastX, ')');
   console.log('rails gardes :', Object.entries(keep).map(([k, g]) => k + ' ' + g.path).join(', '));
-  const args = ['--origin', cx + ',-207220,349', '--axis', '180', '--nom', nom, '--keep', JSON.stringify(keep)];
+  const args = ['--origin', cx + ',' + YS + ',349', '--axis', '180', '--nom', nom, '--keep', JSON.stringify(keep)];
   // description des rails gardes : necessaire pour relancer le plan plus tard (check, remove, build, verif-plan)
   fs.writeFileSync(path.join(__dirname, nom + '-keep.json'), JSON.stringify(keep, null, 1));
   if (mode === 'plan') return;

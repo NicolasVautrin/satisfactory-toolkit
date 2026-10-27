@@ -45,8 +45,11 @@ async function minerRate(tier, purity, potential = 1) {
   return (await K.minerBaseRate(tier)) * PURITY[purity] * potential;
 }
 
-// Build_ConstructorMk1_C -> Recipe_ConstructorMk1_C (verifie ensuite par la disposition apprise : buildClass)
-const buildingRecipeOf = (buildClass) => buildClass.replace(/^Build_/, 'Recipe_');
+// Build_ConstructorMk1_C -> Recipe_ConstructorMk1_C (verifie ensuite par la disposition apprise : buildClass).
+// Exception du jeu, lue en jeu le 25/10/2026 (layout) : la fonderie simple Build_SmelterMk1_C se construit avec
+// Recipe_SmelterBasicMk1_C ; Recipe_SmelterMk1_C construit la fonderie a deux entrees Build_FoundryMk1_C
+const BUILD_RECIPE = { Build_SmelterMk1_C: 'Recipe_SmelterBasicMk1_C' };
+const buildingRecipeOf = (buildClass) => BUILD_RECIPE[buildClass] || buildClass.replace(/^Build_/, 'Recipe_');
 
 module.exports = {
   LIFT_STEP,

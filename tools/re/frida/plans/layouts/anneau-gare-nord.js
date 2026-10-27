@@ -10,6 +10,9 @@
 // Paire suivante (utilisateur, 23/10/2026 : gare jumelle de la 39 « dans le prolongement de la voie du bas au nord, apres le
 // prochain anneau ») : --anneau <etat de l'anneau a l'est de la gare> --gare <etat de la gare>, origine = centre de cet
 // anneau, ex. --origin -109599,-207220,349 --anneau anneau-vb2 --gare anneau-vb-est2 --nom anneau-vb2-gare-nord
+// --ent <m> : ecart entre l'entree de la gare et le cote de l'anneau suivant (6 par defaut) ; 12 pour la regle de
+// l'utilisateur (26/10/2026 : pas de signal a l'entree d'une gare, rail de 12 m au moins ; gare avancee de 6 m vers sa
+// sortie, Eo raccourci d'autant, voir layouts/hub.js --ent et layouts/anneau-entree-nord.js --ent)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -29,6 +32,8 @@ module.exports = () => {
   const ring = JSON.parse(fs.readFileSync(PLANS + opt('anneau', 'anneau-vb') + '-state.json', 'utf8')).rails;
   const gare = JSON.parse(fs.readFileSync(PLANS + opt('gare', 'anneau-vb-est1') + '-state.json', 'utf8')).integrated;
   const uw = W / 2, VNR = VN + 2 * R;
+  const ent = Number(opt('ent', ENT));
+  if (!(ent >= ENT)) throw new Error('--ent : ' + opt('ent') + ' (au moins ' + ENT + ')');
   const joints = {}, rails = [], signals = [];
   const J = (name, u, v) => { joints[name] = [u, v, 0]; return name; };
   // anneau : coin NW (nw2 : nwm -> NW) et debut du cote nord (n1 : NW -> nj1), deja poses
@@ -36,7 +41,7 @@ module.exports = () => {
   rails.push({ id: 'nw2', from: 'nwm', fromCap: 140, to: 'NW', toCap: 180, existing: ring.nw2 });
   rails.push({ id: 'n1', from: 'NW', fromCap: 180, to: 'nj1', toCap: 180, existing: ring.n1 });
   // gare : voies integrees G0 (sortie) .. G5 (entree), vers l'ouest
-  const exit = uw + XSTUB;
+  const exit = uw + XSTUB - (ent - ENT);
   for (let i = 0; i <= 5; i++) J('G' + i, exit + QUAI * i, VNR);
   for (let i = 0; i < 5; i++) rails.push({ id: 'gare' + i, from: 'G' + i, fromCap: 0, to: 'G' + (i + 1), toCap: 0, existing: gare[i] });
   // sortie vers l'est jusqu'au cote ouest de l'anneau (signal de chemin : entree du bloc de l'anneau), puis coin NW

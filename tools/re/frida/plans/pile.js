@@ -11,9 +11,15 @@
 // La disposition des connecteurs de la machine est lue dans le jeu (knowledge.js), la plateforme retrouvee par ses
 // fondations. Les distances ci-dessus (DESIGN) sont celles des piles de l'utilisateur.
 //
+// Machines a 3 ou 4 entrees (fabricants, 25/10/2026, montage de la pile de cellules de l'utilisateur relevee en
+// (-235 361 ; -190 447)) : colonnes des entrees exterieures 4,3 m derriere elles, des interieures 11,3 m ; arrivees de
+// preference en mode ascenseur (une ligne sous la plateforme et une au-dessus par rang) ; « directes » : une entree
+// alimentee etage par etage par la sortie de la machine correspondante d'une autre pile (« sortie »: "directe" sur
+// celle-ci : ni fusionneurs, ni collecteur).
+//
 // Usage : node pile.js <phase> --config <fichier.json> [--dry]
-//   phases : plan | machines | raccords | branches | ascenseurs | arrivees | collecteur | courant | recettes | verifie
-//            | tout | demonte
+//   phases : plan | machines | raccords | branches | directes | ascenseurs | arrivees | collecteur | courant | recettes
+//            | verifie | tout | demonte
 // Configuration (JSON) :
 //   { "nom": "silice", "recette": "Recipe_Alternate_Silica_C",
 //     "plateforme": { "pres": { "x": .., "y": .., "z": .. } }        // fondations retrouvees autour du point
@@ -23,7 +29,10 @@
 //     "piles": 2, "etages": 8,        // nombre de piles (cote a cote le long de lx) et d'etages
 //     "pas": 16, "espacement": 10,    // m entre piles, m entre etages
 //     "arrivees": [ { "entree": "Input1", "hauteur": 2, "sens": "+lx" }, ... ],   // hauteur : m au-dessus de la
-//                                     // plateforme ; sens : sens du flux le long de la rangee (+lx / -lx)
+//                                     // plateforme ; sens : sens du flux le long de la rangee (+lx / -lx) ;
+//                                     // "mode": "ascenseur" : ligne 4 m derriere le pied, hauteur -6 ou +6
+//     "directes": [ { "entree": "Input2", "depuis": "<nom d'une autre pile>", "sortie": "Output0" } ],
+//     "sortie": "directe",            // facultatif : sortie reprise par une autre pile (pas de collecteur)
 //     "collecteur": { "sens": "-lx" },
 //     "poteaux": [ [lx, ly], ... ],   // facultatif (repere de la rangee, m) ; defaut : un par pile devant le collecteur
 //     "reseau": "<poteau du reseau>",
@@ -45,6 +54,11 @@ const DESIGN = {
   FEED_BACK: 1500,     // ligne d'arrivee derriere les repartiteurs du pied
   COLLECTOR_FRONT: 600, // collecteur devant les fusionneurs du pied
   POLE_FRONT: 300,     // poteau par defaut devant le collecteur
+  // machines a 3 ou 4 entrees (fabricants), comme la pile de cellules de l'utilisateur relevee en (-235 361 ; -190 447)
+  // le 25/10/2026 : repartiteurs des entrees exterieures 4,3 m derriere elles, des entrees interieures 11,3 m
+  SPLITTER_BACK_EXT: 430,
+  SPLITTER_BACK_INT: 1130,
+  FEED_LIFT_BACK: 400, // arrivee par ascenseur : ligne 4 m derriere le repartiteur du pied
 };
 const RECIPES = {
   splitter: 'Recipe_ConveyorAttachmentSplitter_C', merger: 'Recipe_ConveyorAttachmentMerger_C',
@@ -117,11 +131,23 @@ async function geometry(cfg, st) {
   const rec = await R.recipe(cfg.recette);
   if (!rec.producer) throw new Error(cfg.recette + ' : aucun batiment producteur');
   const lay = await K.layout(R.buildingRecipeOf(rec.producer));
+  // la recette de construction deduite du nom peut viser un autre batiment (Recipe_SmelterMk1_C = fonderie a deux
+  // entrees, rules.js BUILD_RECIPE)
+  if (lay.buildClass && lay.buildClass !== rec.producer) throw new Error(R.buildingRecipeOf(rec.producer) + ' construit ' + lay.buildClass + ', pas ' + rec.producer + ' (rules.js BUILD_RECIPE)');
   const ins = lay.connectors.filter((k) => k.direction === 'input');
   const out = lay.connectors.filter((k) => k.direction === 'output');
-  if (ins.length < 1 || ins.length > 2 || out.length !== 1) throw new Error(lay.buildClass + ' : ' + ins.length + ' entrees / ' + out.length + ' sorties (1 ou 2 entrees et 1 sortie gerees)');
-  const columns = ins.map((k) => ({ input: k.name, x: k.offset.x, y: k.offset.y - DESIGN.SPLITTER_BACK, z: k.offset.z, outer: k.offset.x > 0 ? 1 : -1 }));
-  if (columns.length === 2 && columns[0].outer === columns[1].outer) throw new Error('entrees du meme cote de la machine : disposition non geree');
+  if (ins.length < 1 || ins.length > 4 || out.length !== 1) throw new Error(lay.buildClass + ' : ' + ins.length + ' entrees / ' + out.length + ' sorties (1 a 4 entrees et 1 sortie gerees)');
+  // entrees alimentees directement par une autre pile (cfg.directes) : pas de colonne. A 3 ou 4 entrees, les colonnes
+  // exterieures (|x| le plus grand) sont pres de la machine, les interieures plus loin : leurs ascenseurs de cote
+  // tombent entre deux rangs et ne se croisent pas
+  const direct = new Set((cfg.directes || []).map((d) => d.entree));
+  const maxAbs = Math.max(...ins.map((k) => Math.abs(k.offset.x)));
+  const columns = ins.filter((k) => !direct.has(k.name)).map((k) => {
+    const ext = ins.length <= 2 || Math.abs(k.offset.x) > maxAbs - 100;
+    const back = ins.length <= 2 ? DESIGN.SPLITTER_BACK : ext ? DESIGN.SPLITTER_BACK_EXT : DESIGN.SPLITTER_BACK_INT;
+    return { input: k.name, x: k.offset.x, y: k.offset.y - back, z: k.offset.z, outer: k.offset.x > 0 ? 1 : -1, ext };
+  });
+  if (ins.length === 2 && columns.length === 2 && columns[0].outer === columns[1].outer) throw new Error('entrees du meme cote de la machine : disposition non geree');
   const merger = { x: out[0].offset.x, y: out[0].offset.y + DESIGN.MERGER_FRONT, z: out[0].offset.z };
   const n = cfg.piles || 1;
   const stacks = Array.from({ length: n }, (_, k) => (k - (n - 1) / 2) * (cfg.pas || 16) * 100);
@@ -206,6 +232,7 @@ const PHASES = {
       for (const [c, col] of g.columns.entries()) {
         await ops.build('parts', 'pile ' + s + ' entree ' + c + ' etage ' + i, RECIPES.splitter, g.W(lx + col.x, col.y, g.zf(i) + col.z), g.machineYaw + splitterYaw(col, i), AIR);
       }
+      if (cfg.sortie === 'directe') continue; // sortie reprise par une autre pile (sa phase directes)
       await ops.build('parts', 'pile ' + s + ' sortie etage ' + i, RECIPES.merger, g.W(lx + g.merger.x, g.merger.y, g.zf(i) + g.merger.z), g.machineYaw + mergerYaw(i), AIR);
     }
   },
@@ -215,7 +242,21 @@ const PHASES = {
     for (const s of g.stacks.keys()) for (let i = 0; i < g.floors; i++) {
       const m = st.machines['pile ' + s + ' machine ' + i];
       for (const [c, col] of g.columns.entries()) await ops.link('belts', 'pile ' + s + ' entree ' + c + ' etage ' + i + ' > machine', b, st.parts['pile ' + s + ' entree ' + c + ' etage ' + i], 'front', m, col.input);
-      await ops.link('belts', 'pile ' + s + ' machine ' + i + ' > sortie', b, m, 'front', st.parts['pile ' + s + ' sortie etage ' + i], 'back');
+      if (cfg.sortie !== 'directe') await ops.link('belts', 'pile ' + s + ' machine ' + i + ' > sortie', b, m, 'front', st.parts['pile ' + s + ' sortie etage ' + i], 'back');
+    }
+  },
+
+  // Liaisons directes d'etage a etage : sortie de la machine de meme pile / meme etage d'une autre pile (cfg.directes :
+  // [{ entree, depuis : nom de l'autre pile, sortie }]) -> entree de cette machine. Ex. fabricant de cellules infusees ->
+  // fabricant de barres d'uranium (utilisateur, 25/10/2026 : « j'enverrais directement la sortie d'un fabricant
+  // cellules vers un fabricant barre U »).
+  async directes(cfg, g, st, ops) {
+    const b = (await belts(g)).belt;
+    for (const d of cfg.directes || []) {
+      const src = JSON.parse(fs.readFileSync(path.join(__dirname, d.depuis + '-pile-state.json'), 'utf8'));
+      for (const s of g.stacks.keys()) for (let i = 0; i < g.floors; i++) {
+        await ops.link('belts', 'directe ' + d.entree + ' pile ' + s + ' etage ' + i, b, src.machines['pile ' + s + ' machine ' + i], d.sortie || 'Output0', st.machines['pile ' + s + ' machine ' + i], d.entree);
+      }
     }
   },
 
@@ -227,6 +268,7 @@ const PHASES = {
         const p = (k) => st.parts['pile ' + s + ' entree ' + c + ' etage ' + k];
         await ops.link('lifts', 'pile ' + s + ' entree ' + c + ' ' + i + '>' + (i + 1), lift, p(i), splitterOut(col, i), p(i + 1), splitterIn(col, i + 1), opts);
       }
+      if (cfg.sortie === 'directe') continue;
       const m = (k) => st.parts['pile ' + s + ' sortie etage ' + k];
       await ops.link('lifts', 'pile ' + s + ' sortie ' + (i + 1) + '>' + i, lift, m(i + 1), mergerOut(i + 1), m(i), mergerIn(i), opts);
     }
@@ -241,11 +283,18 @@ const PHASES = {
       const flow = feed.sens === '-lx' ? '-x' : '+x', up = flow === '+x' ? '-x' : '+x';
       const order = [...g.stacks.keys()]; if (flow === '-x') order.reverse();
       const yaw = g.machineYaw + (flow === '+x' ? 0 : 180); // entree (-X local) vers l'amont
-      const ly = col.y - DESIGN.FEED_BACK, z = g.pf.dessus + feed.hauteur * 100;
+      // mode ascenseur (machines a 3 ou 4 entrees) : ligne 4 m derriere le repartiteur du pied, sous la plateforme
+      // (hauteur < 0) ou entre le pied et le premier etage (hauteur > 0) ; repartiteur de ligne -> ascenseur face a face
+      // -> entree arriere du repartiteur du pied. Deux lignes au plus par rang (meme ly), l'une dessous, l'autre dessus :
+      // aucun ascenseur ne croise l'autre ligne.
+      const lift = feed.mode === 'ascenseur';
+      const ly = col.y - (lift ? DESIGN.FEED_LIFT_BACK : DESIGN.FEED_BACK), z = g.pf.dessus + feed.hauteur * 100;
+      const liftRecipe = lift ? (await belts(g)).lift : null;
       let prev = null;
       for (const s of order) {
         const sp = await ops.build('parts', 'arrivee ' + f + ' pile ' + s, RECIPES.splitter, g.W(g.stacks[s] + col.x, ly, z), yaw, AIR);
-        await ops.link('belts', 'arrivee ' + f + ' pile ' + s + ' > pied', b, sp, 'front', st.parts['pile ' + s + ' entree ' + c + ' etage 0'], 'back');
+        if (lift) await ops.link('lifts', 'arrivee ' + f + ' pile ' + s + ' > pied', liftRecipe, sp, 'front', st.parts['pile ' + s + ' entree ' + c + ' etage 0'], 'back', { snapTolerance: 400 });
+        else await ops.link('belts', 'arrivee ' + f + ' pile ' + s + ' > pied', b, sp, 'front', st.parts['pile ' + s + ' entree ' + c + ' etage 0'], 'back');
         if (prev) await ops.link('belts', 'arrivee ' + f + ' ' + prev.s + '>' + s, b, prev.sp, flow, sp, up);
         prev = { s, sp };
       }
@@ -253,6 +302,7 @@ const PHASES = {
   },
 
   async collecteur(cfg, g, st, ops) {
+    if (cfg.sortie === 'directe') return;
     const b = (await belts(g)).belt;
     const flow = (cfg.collecteur && cfg.collecteur.sens) === '-lx' ? '-x' : '+x', up = flow === '+x' ? '-x' : '+x';
     const order = [...g.stacks.keys()]; if (flow === '-x') order.reverse();
@@ -275,12 +325,19 @@ const PHASES = {
     const poles = [];
     for (const [k, [lx, ly]] of spots.entries()) poles.push(await ops.build('poles', 'poteau ' + k, recipe, g.W(lx, ly, g.pf.dessus), g.machineYaw, cfg.enLAir ? AIR : {}));
     if (poles.some((p) => !p)) return;
-    // pile k sur le poteau k (modulo le nombre de poteaux) ; poteaux chaines, le premier relie au reseau
+    // pile k sur le poteau k (modulo le nombre de poteaux) ; poteaux chaines, le premier relie au reseau. Au moins deux
+    // poteaux par pile (pp) : les etages de la pile s se partagent les poteaux s, s + piles, s + 2 x piles... par tranches
+    // (piles de 10 fonderies du module alu, 25/10/2026 : 10 machines + chaine + reseau depassaient les 10 connexions
+    // d'un poteau Mk3)
     const plan = [];
     if (cfg.reseau) plan.push([poles[0], cfg.reseau]);
     for (let k = 1; k < poles.length; k++) plan.push([poles[k], poles[k - 1]]);
+    const ns = g.stacks.length, pp = Math.floor(poles.length / ns);
     for (const s of g.stacks.keys()) {
-      for (let i = 0; i < g.floors; i++) plan.push([poles[s % poles.length], st.machines['pile ' + s + ' machine ' + i]]);
+      for (let i = 0; i < g.floors; i++) {
+        const k = pp >= 2 ? s + ns * Math.floor((i * pp) / g.floors) : s % poles.length;
+        plan.push([poles[k], st.machines['pile ' + s + ' machine ' + i]]);
+      }
     }
     const counts = new Map();
     for (const [a, b] of plan) for (const p of [a, b]) if (poles.includes(p)) counts.set(p, (counts.get(p) || 0) + 1);
@@ -328,7 +385,7 @@ const PHASES = {
   },
 
   async tout(cfg, g, st, ops, save) {
-    for (const p of ['machines', 'raccords', 'branches', 'ascenseurs', 'arrivees', 'collecteur', 'courant']) { console.log('--- ' + p); await PHASES[p](cfg, g, st, ops, save); }
+    for (const p of ['machines', 'raccords', 'branches', 'directes', 'ascenseurs', 'arrivees', 'collecteur', 'courant']) { console.log('--- ' + p); await PHASES[p](cfg, g, st, ops, save); }
     if (DRY) return;
     console.log('--- recettes'); await PHASES.recettes(cfg, g, st);
     console.log('--- verifie'); await PHASES.verifie(cfg, g, st);

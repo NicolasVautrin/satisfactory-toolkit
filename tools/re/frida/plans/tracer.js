@@ -76,9 +76,10 @@ async function relief(box, step) {
   const x0 = Math.floor(box.x0 / step) * step, y0 = Math.floor(box.y0 / step) * step;
   const nx = Math.ceil((box.x1 - x0) / step) + 1, ny = Math.ceil((box.y1 - y0) / step) + 1;
   fs.mkdirSync(CACHE, { recursive: true });
-  // relief4 : zone chargee par des sources de streaming (relief3 et avant : rochers seulement pres du joueur ; relief3 :
-  // surplombs etendus sous les arches larges ; relief2 : leurs bords seulement ; relief_ : aucun surplomb)
-  const file = path.join(CACHE, `relief4_${x0}_${y0}_${nx}_${ny}_${step}.json`);
+  // relief5 : surplombs au-dessus d'un sol rocheux (relief4 : sous le seul relief nu, Landscape) ; relief4 : zone chargee
+  // par des sources de streaming (relief3 et avant : rochers seulement pres du joueur ; relief3 : surplombs etendus sous
+  // les arches larges ; relief2 : leurs bords seulement ; relief_ : aucun surplomb)
+  const file = path.join(CACHE, `relief5_${x0}_${y0}_${nx}_${ny}_${step}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
   const sources = await loadArea({ x0, y0, x1: x0 + (nx - 1) * step, y1: y0 + (ny - 1) * step });
   try {
@@ -112,7 +113,7 @@ async function reliefMulti(box, coarse, fine) {
   const x0 = Math.floor(box.x0 / coarse) * coarse, y0 = Math.floor(box.y0 / coarse) * coarse;
   const cx = Math.ceil((box.x1 - x0) / coarse) + 1, cy = Math.ceil((box.y1 - y0) / coarse) + 1;
   fs.mkdirSync(CACHE, { recursive: true });
-  const file = path.join(CACHE, `relief4m_${x0}_${y0}_${cx}_${cy}_${coarse}_${fine}.json`);
+  const file = path.join(CACHE, `relief5m_${x0}_${y0}_${cx}_${cy}_${coarse}_${fine}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
   const sources = await loadArea({ x0, y0, x1: x0 + (cx - 1) * coarse, y1: y0 + (cy - 1) * coarse });
   try {
@@ -215,16 +216,20 @@ async function overhangs(R) {
   for (let j = 0; j < R.ny; j++) for (let i = 0; i < R.nx; i++) {
     const v = R.z[j * R.nx + i];
     if (v === null) continue;
-    let lo = Infinity;
+    let lo = null; // voisine la plus basse
     for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
       const a = i + di, b = j + dj;
-      if ((di || dj) && a >= 0 && b >= 0 && a < R.nx && b < R.ny && R.z[b * R.nx + a] !== null) lo = Math.min(lo, R.z[b * R.nx + a]);
+      if (!(di || dj) || a < 0 || b < 0 || a >= R.nx || b >= R.ny) continue;
+      const w = R.z[b * R.nx + a];
+      if (w !== null && (!lo || w < lo.z)) lo = { x: R.x0 + a * R.step, y: R.y0 + b * R.step, z: w };
     }
-    if (v - lo > 800) cand.push({ k: j * R.nx + i, x: R.x0 + i * R.step, y: R.y0 + j * R.step, top: v });
+    if (lo && v - lo.z > 800) cand.push({ k: j * R.nx + i, x: R.x0 + i * R.step, y: R.y0 + j * R.step, top: v, lo });
   }
-  const over = {}, tested = new Set();
-  for (const c of cand) tested.add(c.k);
+  const over = {};
   let found = await probeOverhangs(R, cand, over, false);
+  // une maille rejetee au premier sondage reste a sonder de proche en proche (coeur de la cime de l'arbre geant de S13
+  // E101 : sa voisine la plus basse etait encore dans la cime, pas au sol)
+  const tested = new Set(found);
   for (let pass = 0; found.length && pass < 400; pass++) {
     const next = [];
     for (const k of found) {
@@ -247,17 +252,25 @@ async function overhangs(R) {
 // Sondage d'une liste de mailles candidates : rayon descendant jusqu'au relief, rayon montant jusqu'au dessous de la
 // roche ; ecrit les surplombs trouves dans over (et le relief de la maille dans R.z), rend leurs indices. rocks : le
 // rayon descendant traverse aussi les rochers (maille deja reconnue a l'air libre, sol attendu proche de c.g, a 6 m pres)
+// Sol rocheux (plateau de cuivre de S13 E101, 25/10/2026 : cime d'un arbre geant TitanTree de 227 a 242 m au-dessus d'un
+// sol de falaise CliffMesh a 162 m, colonne vide entre les deux, vue comme un massif plein ; le courant des foreuses
+// faisait un detour par la cuvette) : un contact qui n'est pas le relief nu est pris pour le sol s'il est au niveau du sol
+// voisin (6 m pres) et que de l'air l'y relie, balayage horizontal a 2 m au-dessus depuis la voisine (premier sondage) ou
+// depuis le surplomb voisin (sondage de proche en proche, deja fait avant l'appel)
 async function probeOverhangs(R, cand, over, rocks) {
   const H = OVER_H, batch = sweepBatch, built = builtHit;
   const land = (h) => /Landscape/.test((h.component || {}).cls || '');
+  const nearG = (c) => (c.from ? c.g : c.lo.z); // sol de la voisine
+  const rocky = (c, h) => h && h.hit && !built(h) && !land(h) && Math.abs(h.location.z - nearG(c)) <= 600;
   // les batiments sous la roche (rails et quais d'une gare passee sous l'arche) sont traverses, en repartant 20 cm
-  // apres chaque contact (6 fois au plus ; 12, rochers compris, pour une maille reconnue a l'air libre)
+  // apres chaque contact (6 fois au plus ; 12, rochers compris, pour une maille reconnue a l'air libre ; un sol rocheux
+  // au niveau de la voisine arrete le rayon)
   // relances groupees : un appel par etape pour tous les rayons a relancer (un appel par rayon attendait chaque fois un
   // tour de jeu : des milliers d'appels sous l'arche et dans les arbres de la cuvette de S13 E101, 24/10/2026)
-  const through = async (hits, items, dir, pass) => {
+  const through = async (hits, items, dir, pass, stop) => {
     for (let t = 0; t < (pass ? 12 : 6); t++) {
       const redo = [];
-      hits.forEach((h, n) => { if (h && h.hit && (built(h) || (pass && !land(h)))) redo.push(n); });
+      hits.forEach((h, n) => { if (h && h.hit && (built(h) || (pass && !land(h) && !(stop && stop(n, h))))) redo.push(n); });
       if (!redo.length) break;
       const again = await batch(redo.map((n) => ({ from: Object.assign({}, items[n].from, { z: hits[n].location.z + 20 * dir }), to: items[n].to, half: H })));
       redo.forEach((n, m) => { hits[n] = again[m]; });
@@ -265,14 +278,24 @@ async function probeOverhangs(R, cand, over, rocks) {
     return hits;
   };
   const downItems = cand.map((c) => ({ from: { x: c.x, y: c.y, z: c.top - 50 }, to: { x: c.x, y: c.y, z: -10000 }, half: H }));
-  const down = await through(await batch(downItems), downItems, -1, rocks);
-  const under = cand.filter((c, n) => {
+  const down = await through(await batch(downItems), downItems, -1, rocks, (n, h) => rocky(cand[n], h));
+  const under0 = cand.filter((c, n) => {
     const h = down[n];
-    if (!h || !h.hit || !land(h) || c.top - h.location.z <= 800) return false;
+    if (!h || !h.hit || c.top - h.location.z <= 800) return false;
+    if (!land(h) && !rocky(c, h)) return false;
     if (rocks && Math.abs(h.location.z - c.g) > 600) return false;
     c.ground = h.location.z;
+    c.rocky = !land(h);
     return true;
   });
+  // sol rocheux du premier sondage : de l'air depuis la voisine, sinon c'est l'interieur d'un rocher
+  const soft = under0.filter((c) => c.rocky && !c.from);
+  const air = soft.length ? await batch(soft.map((c) => {
+    const z = Math.max(c.lo.z, c.ground) + 200;
+    return { from: { x: c.lo.x, y: c.lo.y, z }, to: { x: c.x, y: c.y, z }, half: H };
+  })) : [];
+  const shut = new Set(soft.filter((c, n) => air[n] && air[n].hit && !built(air[n])));
+  const under = under0.filter((c) => !shut.has(c));
   const upItems = under.map((c) => ({ from: { x: c.x, y: c.y, z: c.ground + 50 }, to: { x: c.x, y: c.y, z: c.top + 100 }, half: H }));
   const up = await through(await batch(upItems), upItems, 1, false);
   const found = [];
@@ -894,7 +917,14 @@ async function planBelt() {
   let len = 0;
   for (let k = 1; k < line.points.length; k++) len += Math.hypot(line.points[k].x - line.points[k - 1].x, line.points[k].y - line.points[k - 1].y);
   console.log('ligne', nom, ':', Math.round(len / 100), 'm,', pts.length, 'poteaux,', stats.expanded, 'noeuds en', Math.round((Date.now() - t0) / 1000), 's ->', path.relative(__dirname, file));
-  for (const p of pts) console.log('  ', p.x, p.y, (p.z / 100).toFixed(1) + ' m');
+  // sol exact au pied de chaque poteau (beltline le cherche la, a la verticale) : le releve en mailles le lisse au bord
+  // d'une marche. Caterium 169 de S13 E101 (25/10/2026) : poteau prevu a 126 m, pose a 115 m au pied d'une marche de
+  // 11 m, troncon suivant refuse (FGCDInvalidPlacement) ; deplace de 6 m sur le haut de la marche
+  const exact = (await call('reliefPoints', pts.map((p) => ({ x: p.x, y: p.y })), 40000, -10000)).z;
+  pts.forEach((p, k) => {
+    const e = exact[k];
+    console.log('  ', p.x, p.y, (p.z / 100).toFixed(1) + ' m', e != null && Math.abs(e - p.z) > 150 ? ' ATTENTION : sol exact ' + (e / 100).toFixed(1) + ' m (marche ou bord : deplacer ce poteau sur le sol prevu avant la pose)' : '');
+  });
 }
 
 // --- commandes ---------------------------------------------------------------------------------------------------------

@@ -395,8 +395,11 @@ async function buildPlatforms(plan, frame, state) {
   for (let k = state.platforms.length; k < plan.platforms.count; k++) {
     const endU = plan.platforms.firstAt + k * plan.platforms.length;
     const at = frame.world([endU - 4, 0, 0]);
-    const recipe = plan.platforms.recipe || RECIPES.freight;
-    const ray = [{ x: at.x, y: at.y, z: at.z + 4000 }, { x: at.x, y: at.y, z: at.z - 1000 }];
+    // recette par quai (platforms.recipes, ex. quais fluides et quai vide), sinon commune
+    const recipe = (plan.platforms.recipes && plan.platforms.recipes[k]) || plan.platforms.recipe || RECIPES.freight;
+    // depart du rayon : 40 m au-dessus, ou platforms.aimAbove (uu) sous un etage superieur (gares empilees du hub : a 40 m,
+    // le rayon touchait la gare de l'etage du dessus, 25 m plus haut, et le quai s'y accrochait, 26/10/2026)
+    const ray = [{ x: at.x, y: at.y, z: at.z + (plan.platforms.aimAbove || 4000) }, { x: at.x, y: at.y, z: at.z - 1000 }];
     // A blanc d'abord : le quai doit s'etre accroche dans le prolongement (centre a mi-longueur du quai suivant)
     // Quai retourne (platforms.reversed) : le cote des entrees / sorties de convoyeur en depend. Le jeu tourne le quai
     // par rapport au batiment auquel il s'accroche (touche R du pistolet) : rotation = cap voulu - cap du precedent
@@ -418,7 +421,7 @@ async function buildPlatforms(plan, frame, state) {
     state.built.push(res.actor);
     const { mRailroadTrack: track } = await call('dump', res.actor, 1, 1, ['mRailroadTrack']);
     state.integrated.push(track);
-    if (plan.platforms.load != null) await call('platformLoadMode', res.actor, plan.platforms.load);
+    if (plan.platforms.load != null && !/PlatformEmpty/.test(recipe)) await call('platformLoadMode', res.actor, plan.platforms.load);
     const conns = (await call('rails', track)).connections;
     const far = conns.find((c) => Math.abs(frame.local(c.location)[0] - (endU + plan.platforms.length)) < 0.2);
     const near = conns.find((c) => Math.abs(frame.local(c.location)[0] - endU) < 0.2);

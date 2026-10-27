@@ -1,0 +1,25 @@
+{
+ "nom": "s13e101-cuvette",
+ "description": "Cuvette de S13 E101 : pieds des descentes de falaise (518, 513, 515, 514, 517, du nord au sud) vers les pieds d'ascenseur des tampons des quais 2 a 4. c0 et c1 = colonnes de l'essai du 25/10/2026. Diagonale du traceur (traces/s13e101-tronc-cuvette), sorties au nord de la poche sous la gare : c10 pour q2 et q3, c11 pour q4-a, dans l'axe de son pied (celui de q4-b, a 2 m de la paroi de la banquette, est tourne contre elle).",
+ "colonnes": [
+  { "x": 121800, "y": 2000 },
+  { "x": 121200, "y": 2800 },
+  { "x": 120800, "y": 3600 },
+  { "x": 120100, "y": 4200 },
+  { "x": 119600, "y": 4900 },
+  { "x": 117935, "y": 6080 },
+  { "x": 115570, "y": 7360 },
+  { "x": 113205, "y": 8640 },
+  { "x": 110839, "y": 9920 },
+  { "x": 108474, "y": 11200 },
+  { "x": 107250, "y": 12600, "socle": 3 },
+  { "x": 107150, "y": 14600, "socle": 1 }
+ ],
+ "lignes": [
+  { "id": "518", "etage": 1, "de": "Build_ConveyorLiftMk6_C_2145933242.ConveyorAny1", "entree": 0, "sortie": 11, "a": "Build_ConveyorLiftMk6_C_2145967863.ConveyorAny0" },
+  { "id": "513", "etage": 2, "de": "Build_ConveyorLiftMk6_C_2145933060.ConveyorAny1", "entree": 1, "sortie": 10, "a": "Build_ConveyorLiftMk6_C_2145973585.ConveyorAny0" },
+  { "id": "515", "etage": 3, "de": "Build_ConveyorLiftMk6_C_2145821450.ConveyorAny1", "entree": 2, "sortie": 10, "a": "Build_ConveyorLiftMk6_C_2145972718.ConveyorAny0" },
+  { "id": "514", "etage": 4, "de": "Build_ConveyorLiftMk6_C_2145821252.ConveyorAny1", "entree": 3, "sortie": 10, "a": "Build_ConveyorLiftMk6_C_2145972389.ConveyorAny0" },
+  { "id": "517", "etage": 5, "de": "Build_ConveyorLiftMk6_C_2145821057.ConveyorAny1", "entree": 4, "sortie": 10, "a": "Build_ConveyorLiftMk6_C_2145972020.ConveyorAny0" }
+ ]
+}
