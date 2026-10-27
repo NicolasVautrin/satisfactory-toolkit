@@ -19,6 +19,7 @@ Les scripts génériques sont décrits ailleurs :
 | `arrivee-minerai-stators.js` | Minerai de fer des modules de stators 1 à 4 depuis la gare hub0-est1, avec tampons |
 | `gare27-vers-40.js` | Gare 27 en déchargement du couple 40 -> 27 (raccords en sortie des tampons) |
 | `bouts-anneaux.js` | Bouts des anneaux de la voie basse remis à 7 m d'axe en axe (`liste`, `essai`, `pose <anneau> <W|E|X>`) |
+| `usine-beton.js` | Usine de béton commune du nucléaire (chenal est, au sud des arches) : 24 raffineries Wet Concrete sur deux étages, 20 extracteurs, calcaire par quatre têtes (gisements 110, 124, 54_833), courant ; fins de ligne des gisements dans `traces/calcaire-*-fin-ligne.json` (`beltline.js`) |
 
 ## Eau
 

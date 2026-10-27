@@ -27,11 +27,20 @@
 // node tracer.js controler <nom>  trace dessine a la main : relief, obstacles et rayon avec le modele de la recherche
 // node tracer.js convoyeur --de <acteur>.<connecteur> --a <acteur>.<connecteur> --nom <nom> [--poteau m] [--marge m] [--releve m]
 //   [--releve-grossier m] (releve plus fin que 4 m : a deux finesses, grossier a 4 m par defaut, fin dans les mailles accidentees)
-//   ligne de convoyeur au sol (utilisateur, 23/10/2026 : « etends le traceur aux convoyeurs ») : sur poteaux de --poteau m
-//   (2 par defaut) qui suivent le relief ; A* sur une grille de 4 m (8 directions, virages penalises), puis raccourcis en
-//   lignes droites de cap quelconque (« grandes lignes droites sans escaliers, mais en suivant les vallees ») ; poteaux
-//   tous les 40 m au plus, pente de 30 deg au plus entre deux poteaux, convoyeur degage du relief entre eux ; jamais sous
-//   l'eau. Sortie : plans/traces/<nom>-ligne.json, fichier de ligne de beltline.js (node beltline.js <fichier> build).
+//   [--remplace <acteur>.<connecteur> [--sortie <connecteur>]] (ligne existante suivie depuis ce connecteur, ignoree)
+//   [--par x,y;x,y] (points de passage, dans l'ordre) [--eviter x0,y0,x1,y1;...] (rectangles interdits)
+//   ligne de convoyeur au sol (utilisateur, 23/10/2026 : « etends le traceur aux convoyeurs ») : sur poteaux qui suivent
+//   le relief, convoyeur de 1 a 6 m au-dessus du sol (--poteau m de preference, 2 par defaut) ; A* sur une grille de 4 m
+//   (8 directions, virages penalises), chaque noeud gardant les hauteurs encore possibles ; ascenseurs aux falaises de 8 m
+//   et plus (relais en l'air du cote haut, jusqu'a 3 colonnes de 47 m) ; puis raccourcis en lignes droites de cap
+//   quelconque (« grandes lignes droites sans escaliers, mais en suivant les vallees ») ; poteaux tous les 40 m au plus,
+//   pente de 30 deg au plus entre deux poteaux, convoyeur degage du relief entre eux ; jamais sous l'eau. Sortie :
+//   plans/traces/<nom>-ligne.json, fichier de ligne de beltline.js (node beltline.js <fichier> build).
+// node tracer.js diag-convoyeur --de <acteur>.<connecteur> [--poteau m] [--marge m] [--releve m] [--sortie <connecteur>]
+//   ligne deja posee, suivie depuis --de et rejouee dans le modele de la recherche : ou et pourquoi la grille la refuse
+// node tracer.js coupe --de x,y|<acteur> --a x,y|<acteur> [--pas m] [--dz m] | coupe --ligne traces/<nom>-ligne.json
+//   coupe verticale du relief, des surplombs et des batiments ; profil en long d'une ligne tracee (convoyeur, poteaux,
+//   ascenseurs) ; --ligne avec --de et --a : segment coupe dans le releve de la ligne
 // node tracer.js carte --centre x,y|<acteur> [--rayon m] [--pas m] [--bande m] [--points "F:x,y;A:x,y"] [--acteurs a,b]
 //   carte du relief « en fil de fer » (utilisateur, 23/10/2026 : « juste que tu puisses te faire une carte mentale du
 //   relief ») : une case par maille de --pas m (8), chiffre ou lettre = tranche d'altitude de --bande m (5) depuis le
@@ -76,10 +85,13 @@ async function relief(box, step) {
   const x0 = Math.floor(box.x0 / step) * step, y0 = Math.floor(box.y0 / step) * step;
   const nx = Math.ceil((box.x1 - x0) / step) + 1, ny = Math.ceil((box.y1 - y0) / step) + 1;
   fs.mkdirSync(CACHE, { recursive: true });
-  // relief5 : surplombs au-dessus d'un sol rocheux (relief4 : sous le seul relief nu, Landscape) ; relief4 : zone chargee
-  // par des sources de streaming (relief3 et avant : rochers seulement pres du joueur ; relief3 : surplombs etendus sous
-  // les arches larges ; relief2 : leurs bords seulement ; relief_ : aucun surplomb)
-  const file = path.join(CACHE, `relief5_${x0}_${y0}_${nx}_${ny}_${step}.json`);
+  // relief8 : maille rejetee resondee depuis une voisine d'un autre niveau ; relief7 : voisines d'un surplomb atteintes a 2,
+  // 6 ou 12 m (relief6 : a 2 m) ; relief6 : voisines d'un surplomb fermees
+  // d'un cote sondees depuis les autres ; relief5 : surplombs au-dessus d'un sol
+  // rocheux (relief4 : sous le seul relief nu, Landscape) ; relief4 : zone chargee par des sources de streaming (relief3 et
+  // avant : rochers seulement pres du joueur ; relief3 : surplombs etendus sous les arches larges ; relief2 : leurs bords
+  // seulement ; relief_ : aucun surplomb)
+  const file = path.join(CACHE, `relief8_${x0}_${y0}_${nx}_${ny}_${step}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
   const sources = await loadArea({ x0, y0, x1: x0 + (nx - 1) * step, y1: y0 + (ny - 1) * step });
   try {
@@ -113,7 +125,7 @@ async function reliefMulti(box, coarse, fine) {
   const x0 = Math.floor(box.x0 / coarse) * coarse, y0 = Math.floor(box.y0 / coarse) * coarse;
   const cx = Math.ceil((box.x1 - x0) / coarse) + 1, cy = Math.ceil((box.y1 - y0) / coarse) + 1;
   fs.mkdirSync(CACHE, { recursive: true });
-  const file = path.join(CACHE, `relief5m_${x0}_${y0}_${cx}_${cy}_${coarse}_${fine}.json`);
+  const file = path.join(CACHE, `relief8m_${x0}_${y0}_${cx}_${cy}_${coarse}_${fine}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
   const sources = await loadArea({ x0, y0, x1: x0 + (cx - 1) * coarse, y1: y0 + (cy - 1) * coarse });
   try {
@@ -229,6 +241,9 @@ async function overhangs(R) {
   let found = await probeOverhangs(R, cand, over, false);
   // une maille rejetee au premier sondage reste a sonder de proche en proche (coeur de la cime de l'arbre geant de S13
   // E101 : sa voisine la plus basse etait encore dans la cime, pas au sol)
+  // Une voisine fermee depuis un surplomb (rocher entre les deux, pente qui monte) reste a sonder depuis les autres : elle
+  // n'est marquee testee qu'une fois trouvee (avant : des le premier balayage, ferme ou non ; ilot de mailles a 193 m sous
+  // l'arche CliffPillar_320 de la ligne de calcaire 110, en travers de la ligne posee a la main, 27/10/2026)
   const tested = new Set(found);
   for (let pass = 0; found.length && pass < 400; pass++) {
     const next = [];
@@ -238,14 +253,27 @@ async function overhangs(R) {
         const a = i + di, b = j + dj, kk = b * R.nx + a;
         if (a < 0 || b < 0 || a >= R.nx || b >= R.ny || tested.has(kk) || R.z[kk] === null) continue;
         if (R.z[kk] - g <= 800) continue; // voisine au niveau du sol : rien a chercher dessous
-        tested.add(kk);
         next.push({ k: kk, x: R.x0 + a * R.step, y: R.y0 + b * R.step, top: R.z[kk], g, from: { x: R.x0 + i * R.step, y: R.y0 + j * R.step, z: g + 200 } });
       }
     }
-    // de l'air entre le surplomb et sa voisine, a 2 m au-dessus de son sol (batiments ignores : convoyeurs, poteaux)
-    const reach = await sweepBatch(next.map((c) => ({ from: c.from, to: { x: c.x, y: c.y, z: c.from.z }, half: OVER_H })));
-    const open = next.filter((c, n) => !(reach[n] && reach[n].hit && !builtHit(reach[n])));
-    found = open.length ? await probeOverhangs(R, open, over, true) : [];
+    // de l'air entre le surplomb et sa voisine, a 2, 6 ou 12 m au-dessus de son sol (batiments ignores : convoyeurs,
+    // poteaux) : a 2 m seulement, un bloc au sol fermait le passage du caterium de la cote (ligne posee a 80 m sur un sol a
+    // 70 m, mailles restees au toit, a 278 m, 27/10/2026). Le sondage decide ensuite : un pilier plein ne donne pas de
+    // dessous. Une voisine atteinte par plusieurs surplombs est sondee une fois, depuis le premier qui la voit a l'air libre
+    const LIFTS = [200, 600, 1200];
+    const reach = await sweepBatch(next.flatMap((c) => LIFTS.map((dz) => ({ from: { x: c.from.x, y: c.from.y, z: c.g + dz }, to: { x: c.x, y: c.y, z: c.g + dz }, half: OVER_H }))));
+    const free = (n) => LIFTS.some((dz, m) => { const h = reach[n * LIFTS.length + m]; return !(h && h.hit && !builtHit(h)); });
+    // une maille rejetee reste a sonder depuis une voisine d'un autre niveau : le sondage cherche le sol a 6 m pres de celui
+    // de la voisine, et une premiere voisine plus basse de 7 m la rejetait pour de bon (passage du caterium, 27/10/2026)
+    const seen = new Set();
+    const open = next.filter((c, n) => {
+      const id = c.k + ':' + Math.round(c.g / 600);
+      if (!free(n) || tested.has(c.k) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    found = open.length ? [...new Set(await probeOverhangs(R, open, over, true))] : [];
+    for (const k of found) tested.add(k);
   }
   return over;
 }
@@ -325,6 +353,18 @@ function hAt(R, x, y) {
     if (v !== null && v > best) best = v;
   }
   return best;
+}
+
+// Altitude du relief en (x, y) : plus basse des 4 mailles voisines (pied d'un poteau au bord d'une marche)
+function hMin(R, x, y) {
+  const fi = (x - R.x0) / R.step, fj = (y - R.y0) / R.step;
+  let best = Infinity;
+  for (const i of [Math.floor(fi), Math.ceil(fi)]) for (const j of [Math.floor(fj), Math.ceil(fj)]) {
+    if (i < 0 || j < 0 || i >= R.nx || j >= R.ny) continue;
+    const v = R.z[j * R.nx + i];
+    if (v !== null && v < best) best = v;
+  }
+  return best === Infinity ? -Infinity : best;
 }
 
 // Altitude du relief interpolee entre les 4 mailles voisines (sol reel sous un poteau, la ou hAt majore sur une pente)
@@ -669,49 +709,178 @@ const BELT = {
   CLEAR: 30, // relief au moins 30 cm sous le convoyeur entre deux poteaux
   SEA: -1730, // surface de la mer : jamais de convoyeur dessous
   TURN: 600, // cout d'un virage de 45 deg (uu) : peu de virages, de grandes lignes droites
+  // Hauteurs du convoyeur au-dessus du sol essayees par la grille et les lignes droites (uu), de 1 a 6 m : le jeu donne un
+  // poteau 1 m plus court que demande et 7 m au plus. Avant le 27/10/2026, poteaux de --poteau m partout : la grille
+  // refusait un creux de 4 m ou un talus de 6 m que la ligne posee a la main enjambait sur des poteaux plus hauts (lignes de
+  // calcaire 110 et 54 de l'usine de beton, diag-convoyeur)
+  HS: [100, 200, 300, 400, 500, 600],
+  POLE_COST: 500, // cout par maille et par metre de la plus basse hauteur possible au-dessus de --poteau (6 m : 2 000)
 };
 const DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
 
-// Gabarit du convoyeur en (x, y) a l'altitude z (cap de la ligne en radians) : obstacle touche, ou null
-function beltHitAt(W, x, y, z, a) {
-  const nx = -Math.sin(a), ny = Math.cos(a);
+// Gabarit du convoyeur en (x, y) entre les altitudes zlo et zhi (cap de la ligne en radians) : obstacle touche, ou null.
+// Tranches de 6 m au plus : hitColumn ne teste un convoyeur ou un tuyau qu'en bas, au milieu et en haut de sa colonne
+// Zones a eviter (--eviter, W.avoid : rectangles) : obstacle a toute hauteur
+function beltHitSpan(W, x, y, zlo, zhi, a) {
+  const nx = -Math.sin(a), ny = Math.cos(a), tall = zhi - zlo + 160, n = Math.max(1, Math.ceil(tall / 600));
   for (const o of [-BELT.HALF, 0, BELT.HALF]) {
-    const h = hitColumn(W, x + o * nx, y + o * ny, z - 60, z + 100, Infinity);
-    if (h) return h;
+    const px = x + o * nx, py = y + o * ny;
+    if (W.avoid && W.avoid.some((r) => px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1)) return 'zone evitee';
+    for (let k = 0; k < n; k++) {
+      const h = hitColumn(W, x + o * nx, y + o * ny, zlo - 60 + (k * tall) / n, zlo - 60 + ((k + 1) * tall) / n, Infinity);
+      if (h) return h;
+    }
   }
   return null;
 }
+// Gabarit du convoyeur a l'altitude z
+const beltHitAt = (W, x, y, z, a) => beltHitSpan(W, x, y, z, z, a);
 
-// Ligne droite en plan de a a b sur poteaux de hauteur H qui suivent le relief : poteaux tous les SPAN au plus (portee
-// raccourcie si le relief l'impose), pente, degagement sous le convoyeur, obstacles, mer. { poles } ou { why }
-function beltRun(W, a, b, H) {
+// Le jeu pose les bouts d'un convoyeur a l'horizontale sur chaque poteau : entre deux poteaux, la courbe passe sous la corde
+// du cote bas (mesure le 27/10/2026 sur 10 troncons poses de la ligne 110 : jusqu'a 4,4 % du denivele de la portee, 0,35 m
+// pour 8 m sur 32 m). Degagement sous la corde : BELT.CLEAR plus BELT.SAG fois le denivele de la portee
+BELT.SAG = 0.05;
+// Ecart en plan le plus grand entre une ligne droite et les points de la recherche qu'elle saute : une maille (les marches
+// d'escalier de la grille a 8 directions restent en dessous) ; au-dela, poteau au coude
+BELT.BEND = 400;
+
+// Ligne droite en plan de a a b sur poteaux qui suivent le relief, convoyeur de BELT.HS[0] a BELT.HS[dernier] au-dessus du
+// sol, au plus pres de T. Poteaux sur les cretes du relief (utilisateur, 27/10/2026 : « quand le terrain ondule, il faut
+// placer des poteaux sur les maximums locaux, sinon le belt risque de traverser le terrain ») : tant qu'une portee depasse
+// SPAN, un poteau au plus haut du relief de son tiers central ; tant que le relief passe trop pres sous une portee, un poteau
+// au plus haut du relief de cette portee. A defaut (portees trop courtes, poteau sur un obstacle), poteaux regulierement
+// espaces, de plus en plus serres. Pente, degagement sous le convoyeur, obstacles, mer. Bouts : altitude a.z / b.z si elle
+// est donnee (sinon sol + T) ; un bout anchor est un connecteur (relais, pied d'ascenseur), sans poteau. { poles } ou { why }
+function beltRun(W, a, b, T) {
   const L = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
-  let why = 'vide';
-  // portees de plus en plus courtes, une a une : un poteau qui tombe sur un obstacle (convoyeur franchi par-dessus)
-  // se decale au nombre de portees suivant
-  for (let n = Math.max(1, Math.ceil(L / BELT.SPAN)); L / n >= Math.min(BELT.MIN_SPAN, L); n++) {
-    const poles = [];
-    for (let k = 0; k <= n; k++) {
-      const x = a.x + ((b.x - a.x) * k) / n, y = a.y + ((b.y - a.y) * k) / n;
-      const g = hAt(W.relief, x, y);
-      poles.push({ x, y, g, z: (k === 0 && a.z != null ? a.z : k === n && b.z != null ? b.z : g + H) });
+  const lo = BELT.HS[0], hi = BELT.HS[BELT.HS.length - 1];
+  if (L < 50) return { why: 'trop court' };
+  const at = (t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  // relief tous les 2 m le long de la ligne
+  const M = Math.max(2, Math.ceil(L / 200)), prof = [];
+  for (let s = 0; s <= M; s++) { const p = at(s / M); prof.push(hAt(W.relief, p.x, p.y)); }
+  const clear = (p, q) => BELT.CLEAR + BELT.SAG * Math.abs(q.z - p.z);
+  // poteaux aux fractions ts de a a b (bouts compris)
+  const build = (ts) => {
+    const poles = ts.map((t, k) => {
+      const { x, y } = at(t), g = hAt(W.relief, x, y);
+      const end = k === 0 ? a : k === ts.length - 1 ? b : null, fixed = end ? (end.z != null ? end.z : g + T) : null;
+      // poteau entre deux mailles : 1 m au-dessus de la plus haute, 6 m au plus au-dessus de la plus basse (au bord d'une
+      // marche, beltline trouvait le sol 8,5 m sous la plus haute : poteau de 10 m, ligne 110, 27/10/2026)
+      return { t, x, y, g, lo: fixed != null ? fixed : g + lo, hi: fixed != null ? fixed : hMin(W.relief, x, y) + hi, tz: fixed != null ? fixed : g + T, anchor: !!(end && end.anchor), fixed: fixed != null };
+    });
+    const sl = (k) => BELT.SLOPE * (poles[k + 1].t - poles[k].t) * L; // denivele permis sur la portee k -> k + 1
+    // altitudes : intervalles permis resserres par la pente dans les deux sens, puis la plus proche de sol + T, de proche
+    // en proche (chaque valeur d'un intervalle a une suivante compatible apres le passage retour)
+    const settle = () => {
+      for (let k = 1; k < poles.length; k++) { poles[k].lo = Math.max(poles[k].lo, poles[k - 1].lo - sl(k - 1)); poles[k].hi = Math.min(poles[k].hi, poles[k - 1].hi + sl(k - 1)); }
+      for (let k = poles.length - 2; k >= 0; k--) { poles[k].lo = Math.max(poles[k].lo, poles[k + 1].lo - sl(k)); poles[k].hi = Math.min(poles[k].hi, poles[k + 1].hi + sl(k)); }
+      if (poles.some((p) => p.lo > p.hi + 1)) return false;
+      poles.forEach((p, k) => {
+        const l2 = k ? Math.max(p.lo, poles[k - 1].z - sl(k - 1)) : p.lo, h2 = k ? Math.min(p.hi, poles[k - 1].z + sl(k - 1)) : p.hi;
+        p.z = Math.max(l2, Math.min(h2, p.tz));
+      });
+      return true;
+    };
+    return { poles, settle };
+  };
+  // plus fort manque de degagement sous la portee p -> q (points du profil entre les deux) : { d, s (rang dans le profil) }
+  const deficit = (p, q) => {
+    let w = { d: 0, s: -1 };
+    for (let s = Math.floor(p.t * M + 1e-9) + 1; s < q.t * M - 1e-9; s++) {
+      const t = (s / M - p.t) / (q.t - p.t), d = prof[s] + clear(p, q) - (p.z + (q.z - p.z) * t);
+      if (d > w.d) w = { d, s };
     }
-    why = null;
-    for (let k = 0; k < n && !why; k++) {
-      const p = poles[k], q = poles[k + 1], span = L / n;
-      if (p.g === -Infinity || q.g === -Infinity || Math.min(p.z, q.z) < BELT.SEA + 100) { why = 'mer'; break; }
-      if (Math.abs(q.z - p.z) / span > BELT.SLOPE) { why = 'pente'; break; }
+    return w;
+  };
+  // poteaux aux fractions ts : altitudes, poteaux remontes (convoyeur jusqu'a 6 m du sol) la ou le relief passe encore trop
+  // pres (utilisateur, 27/10/2026 : « regle la densite des poteaux » ; le plus fort manque d'une portee remonte ses deux
+  // poteaux, ou l'autre seul d'autant plus que le point est pres du bout fixe ; 8 passes au plus), puis controles
+  const lift = (ts) => {
+    const { poles, settle } = build(ts);
+    if (!settle()) return { why: 'pente' };
+    let low = true;
+    for (let it = 0; it < 8 && low; it++) {
+      low = false;
+      for (let k = 0; k + 1 < poles.length; k++) {
+        const p = poles[k], q = poles[k + 1], w = deficit(p, q);
+        if (w.d <= 0) continue;
+        low = true;
+        if (p.fixed && q.fixed) break;
+        const tw = (w.s / M - p.t) / (q.t - p.t);
+        if (p.fixed) q.lo = Math.max(q.lo, q.z + w.d / Math.max(tw, 0.1) + 1);
+        else if (q.fixed) p.lo = Math.max(p.lo, p.z + w.d / Math.max(1 - tw, 0.1) + 1);
+        else { p.lo = Math.max(p.lo, p.z + w.d + 1); q.lo = Math.max(q.lo, q.z + w.d + 1); }
+      }
+      if (low && !settle()) break;
+    }
+    return low ? { why: 'relief' } : { poles };
+  };
+  const checks = (poles) => {
+    for (let k = 0; k + 1 < poles.length; k++) {
+      const p = poles[k], q = poles[k + 1], span = (q.t - p.t) * L;
+      if ((!p.anchor && p.g === -Infinity) || (!q.anchor && q.g === -Infinity) || Math.min(p.z, q.z) < BELT.SEA + 100) return { why: 'mer' };
+      if (Math.abs(q.z - p.z) / span > BELT.SLOPE + 1e-3) return { why: 'pente' };
       const m = Math.max(2, Math.ceil(span / 200));
       for (let s = 0; s <= m; s++) {
         const t = s / m, x = p.x + (q.x - p.x) * t, y = p.y + (q.y - p.y) * t, z = p.z + (q.z - p.z) * t;
-        if (s > 0 && s < m && hAt(W.relief, x, y) > z - BELT.CLEAR) { why = 'relief'; break; }
+        if (s > 0 && s < m && hAt(W.relief, x, y) > z - clear(p, q)) return { why: 'relief' };
         const h = beltHitAt(W, x, y, z, ang);
-        if (h) { why = h; break; }
+        if (h) return { why: h };
       }
       // poteau : colonne du sol au convoyeur (sauf aux deux bouts de la ligne, accroches a des batiments)
-      if (!why && k + 1 < n) { const h = hitColumn(W, q.x, q.y, q.g, q.z, Infinity); if (h) why = 'poteau sur ' + h; }
+      if (k + 2 < poles.length) { const h = hitColumn(W, q.x, q.y, q.g, q.z, Infinity); if (h) return { why: 'poteau sur ' + h }; }
     }
-    if (!why) return { poles };
+    return { poles: poles.map(({ x, y, g, z, anchor }) => ({ x, y, g, z, anchor })) };
+  };
+  const placed = (ts) => { const r = lift(ts); return r.poles ? checks(r.poles) : r; };
+  // poteaux imposes sur les cretes (utilisateur, 27/10/2026 : « le jeu ne detecte pas quand un belt traverse le decor, il
+  // faut que tu imposes certains poteaux, les maximums locaux ») : une portee plus longue que SPAN est coupee a sa crete ;
+  // une portee dont le relief passe trop pres sous le convoyeur recoit un poteau a sa crete (la portee au plus fort manque
+  // d'abord) ; poteaux remontes seulement quand une portee trop courte ne peut plus etre coupee. Crete d'une portee : point
+  // du relief le plus haut au-dessus de la corde entre ses deux poteaux (sur une pente, le plus haut point tout court est le
+  // bout haut : 38 poteaux au lieu de 34 sur la ligne 110 avec lui). { poles }, { why } ou null (portees trop courtes)
+  const crest = () => {
+    const ts = [0, 1], minS = Math.max(1, Math.ceil(Math.min(BELT.MIN_SPAN, L) / (L / M)));
+    const top = (p, q, u0, u1) => {
+      let best = -1, bv = -Infinity;
+      for (let s = u0; s <= u1; s++) { const v = prof[s] - (p.z + ((q.z - p.z) * (s / M - p.t)) / (q.t - p.t)); if (v > bv) { bv = v; best = s; } }
+      return best;
+    };
+    for (let it = 0; it < 60; it++) {
+      const { poles, settle } = build(ts);
+      if (!settle()) return { why: 'pente' };
+      let add = null, worst = 0;
+      for (let k = 0; k + 1 < poles.length && add === null; k++) {
+        const p = poles[k], q = poles[k + 1], s0 = Math.round(p.t * M), s1 = Math.round(q.t * M);
+        if ((q.t - p.t) * L > BELT.SPAN) { const c = Math.max(minS, Math.ceil((s1 - s0) / 3)); add = top(p, q, s0 + c, s1 - c); }
+      }
+      if (add === null) {
+        for (let k = 0; k + 1 < poles.length; k++) {
+          const p = poles[k], q = poles[k + 1], w = deficit(p, q);
+          if (w.d > worst) { worst = w.d; add = top(p, q, Math.round(p.t * M) + minS, Math.round(q.t * M) - minS); }
+        }
+      }
+      if (add === null || (add < 0 && worst > 0)) {
+        // plus de crete a couper (ou portee trop courte pour l'etre) : poteaux remontes, puis controles
+        const r = lift(ts);
+        return r.poles ? checks(r.poles) : r;
+      }
+      if (add < 0) return null;
+      ts.push(add / M);
+      ts.sort((u, v) => u - v);
+    }
+    return null;
+  };
+  const c = crest();
+  if (c && c.poles) return c;
+  // poteaux regulierement espaces, de plus en plus serres : un poteau qui tombe sur un obstacle (convoyeur franchi
+  // par-dessus) se decale au nombre de portees suivant
+  let why = 'vide';
+  for (let n = Math.max(1, Math.ceil(L / BELT.SPAN)); L / n >= Math.min(BELT.MIN_SPAN, L); n++) {
+    const r = placed(Array.from({ length: n + 1 }, (_, k) => k / n));
+    if (r.poles) return r;
+    why = r.why;
     if (why !== 'relief' && why !== 'pente' && !/^poteau sur/.test(why)) break; // obstacle ou mer : des portees plus courtes n'y changent rien
   }
   return { why };
@@ -720,129 +889,343 @@ function beltRun(W, a, b, H) {
 // Franchissement d'un convoyeur existant : par-dessus, sur poteaux plus hauts (BELT.OVER de plus)
 const isBelt = (why) => /ConveyorBelt|ConveyorLift|poteau sur Build_ConveyorBelt/.test(String(why));
 BELT.OVER = 400; // 4 m au-dessus de la ligne normale (convoyeur franchi a 2 m : 3,4 m d'ecart)
-BELT.OVER_COST = 2000; // cout d'une maille franchie en hauteur (uu) : franchir seulement s'il le faut
 BELT.POLE_BIAS = 100; // le jeu donne un poteau 1 m plus court que demande
 
-// A* en grille (8 directions, virages penalises, demi-tours interdits) de s a g ({x, y} et direction de depart dir),
-// puis raccourcis en lignes droites : de chaque point, le plus loin atteignable par beltRun
-function beltSearch(W, s, g, dir, H, stats) {
-  const C = BELT.CELL, x0 = W.box.x0, y0 = W.box.y0;
+// Ascenseurs aux falaises (utilisateur, 27/10/2026 : « fais les deux » ; « grandes hauteurs : lignes a plat + ascenseurs ») :
+// relais en l'air (fusionneur) du cote haut, puis colonnes de 47 m au plus (scripts de chantier), chacune 4 m plus loin que
+// la precedente. Mesure en jeu le 27/10/2026 (descente de la 634 de S13 E101, ligne 54 de l'usine de beton) : connecteurs
+// d'un ascenseur sur l'axe de sa colonne, colonne a 3 m du connecteur du relais (4 m de son centre), 4 m entre deux colonnes
+BELT.LIFT = {
+  MIN: 400, // hauteur la plus faible d'un ascenseur (jeu : 4 m)
+  MAX: 4700, // hauteur la plus forte d'un ascenseur (jeu : 48 m ; 47 dans les scripts de chantier)
+  GAP: 400, // centre du relais -> premiere colonne ; colonne -> colonne suivante
+  MAXN: 3, // ascenseurs bout a bout au plus
+  REACH: 4000, // convoyeur a plat du dernier poteau du haut a la colonne : 40 m au plus (aucun poteau en l'air)
+  CLIFF: 800, // denivele le plus faible franchi par un ascenseur (en dessous, poteaux et pentes suffisent)
+  COST: 3000, // cout d'un ascenseur (uu)
+};
+
+// Hauteurs libres d'une maille (masque de bits sur BELT.HS) : convoyeur au-dessus de la mer, gabarit libre selon chacun
+// des caps angs ; obstacle touche a la hauteur la plus proche de H compte dans stats.hits
+function beltMask(W, x, y, angs, H, stats) {
+  const g = hAt(W.relief, x, y), HS = BELT.HS;
+  let m = 0;
+  HS.forEach((h, b) => { if (g + h > BELT.SEA + 100) m |= 1 << b; });
+  // une colonne du plus bas au plus haut gabarit : libre (cas courant), toutes les hauteurs le sont
+  if (!m || !angs.some((an) => beltHitSpan(W, x, y, g + HS[0], g + HS[HS.length - 1], an))) return m;
+  const bH = HS.reduce((u, h, b) => (Math.abs(h - H) < Math.abs(HS[u] - H) ? b : u), 0);
+  HS.forEach((h, b) => {
+    if (!(m & (1 << b))) return;
+    const hit = angs.map((an) => beltHitAt(W, x, y, g + h, an)).find(Boolean);
+    if (!hit) return;
+    m &= ~(1 << b);
+    if (b === bH && stats) stats.hits[hit] = (stats.hits[hit] || 0) + 1;
+  });
+  return m;
+}
+
+// Regles d'un pas de la grille de a a b ({ x, y, g }), celles de beltRun : fonction (za, zb) -> vrai si le convoyeur passe
+// de l'altitude za a zb (pente, relief 30 cm dessous au tiers d'un pas en diagonale, gabarit au milieu du pas, oriente le
+// long du pas : un convoyeur fin passait entre deux centres de mailles, ligne fe3 a travers fe1, 23/10/2026)
+function beltPair(W, a, b) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x), lim = BELT.SLOPE * len;
+  const ns = Math.max(2, Math.ceil(len / 200)), r = [];
+  for (let q = 1; q < ns; q++) r.push([q / ns, hAt(W.relief, a.x + ((b.x - a.x) * q) / ns, a.y + ((b.y - a.y) * q) / ns)]);
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, HS = BELT.HS;
+  let midFree;
+  return (za, zb) => {
+    if (Math.abs(zb - za) > lim) return false;
+    for (const [t, h] of r) if (h > za + (zb - za) * t - BELT.CLEAR - BELT.SAG * Math.abs(zb - za)) return false;
+    if (midFree === undefined) midFree = !beltHitSpan(W, mx, my, Math.min(a.g, b.g) + HS[0], Math.max(a.g, b.g) + HS[HS.length - 1], ang);
+    return midFree || !beltHitAt(W, mx, my, (za + zb) / 2, ang);
+  };
+}
+
+// Hauteurs de b (parmi le masque mb) atteignables depuis une hauteur de a (masque ma)
+function beltStep(W, a, ma, b, mb) {
+  const ok = beltPair(W, a, b), HS = BELT.HS;
+  let out = 0;
+  for (let jb = 0; jb < HS.length; jb++) {
+    if (!(mb & (1 << jb))) continue;
+    for (let ja = 0; ja < HS.length; ja++) if ((ma & (1 << ja)) && ok(a.g + HS[ja], b.g + HS[jb])) { out |= 1 << jb; break; }
+  }
+  return out;
+}
+
+// Convoyeur a plat a l'altitude z de p a q (du dernier poteau du haut a une colonne d'ascenseur, relais compris) : relief
+// 30 cm dessous, gabarit libre. 'relief', obstacle touche, ou null
+function flatRun(W, p, q, z) {
+  const L = Math.hypot(q.x - p.x, q.y - p.y), ang = Math.atan2(q.y - p.y, q.x - p.x), m = Math.max(1, Math.ceil(L / 200));
+  for (let k = 0; k <= m; k++) {
+    const x = p.x + ((q.x - p.x) * k) / m, y = p.y + ((q.y - p.y) * k) / m;
+    if (hAt(W.relief, x, y) > z - BELT.CLEAR) return 'relief';
+    const h = beltHitAt(W, x, y, z, ang);
+    if (h) return h;
+  }
+  return null;
+}
+
+// Colonnes d'ascenseurs de zTop au pied, en s'eloignant du relais dans le sens w (unitaire) : premiere colonne en anchor
+// (descente), ou derniere colonne, celle du pied, en anchor (montee : fixedFoot). Pied 1 m au-dessus du plus haut sol sous
+// la colonne du pied (a 1,5 m pres) et 5 m au-dela (point d'approche), comme dans les scripts de chantier ; colonnes libres
+// de relief, de surplombs et de batiments. { cols: [{ x, y, zb, zt }] du haut vers le pied, foot, relay } ou null
+function liftCols(W, anchor, w, zTop, fixedFoot) {
+  const LI = BELT.LIFT, ang = Math.atan2(w.y, w.x);
+  const around = (c) => Math.max(...[[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]].map(([dx, dy]) => hAt(W.relief, c.x + dx, c.y + dy)));
+  for (let n = 1; n <= LI.MAXN; n++) {
+    const c0 = fixedFoot ? { x: anchor.x - (n - 1) * LI.GAP * w.x, y: anchor.y - (n - 1) * LI.GAP * w.y } : anchor;
+    const col = (k) => ({ x: c0.x + k * LI.GAP * w.x, y: c0.y + k * LI.GAP * w.y });
+    const F = col(n - 1), ground = Math.max(around(F), hAt(W.relief, F.x + 500 * w.x, F.y + 500 * w.y));
+    if (!(ground > BELT.SEA)) return null;
+    const foot = ground + 100, height = zTop - foot;
+    if (height < LI.MIN) return null;
+    if (height > n * LI.MAX) continue;
+    const cols = [];
+    for (let k = 0; k < n; k++) {
+      const c = col(k), zt = zTop - (k * height) / n, zb = zTop - ((k + 1) * height) / n;
+      if (k < n - 1 && around(c) > zb - 50) return null;
+      if (beltHitSpan(W, c.x, c.y, zb, zt, ang)) return null;
+      cols.push({ x: Math.round(c.x), y: Math.round(c.y), zb: Math.round(zb), zt: Math.round(zt) });
+    }
+    return { cols, foot: Math.round(foot), relay: { x: Math.round(c0.x - LI.GAP * w.x), y: Math.round(c0.y - LI.GAP * w.y) } };
+  }
+  return null;
+}
+
+// A* en grille (8 directions, virages penalises, demi-tours interdits) de l'un des departs srcs ([{ s, dir, start }]) a g
+// ({x, y}), tous a cout nul : une seule recherche, le depart decoule du chemin (foreuse orientee apres coup). Chaque
+// noeud porte les hauteurs de convoyeur encore possibles (masque sur BELT.HS : la grille enjambe un creux sur des poteaux
+// plus hauts) ; ascenseurs aux falaises : descente (convoyeur a plat jusqu'au relais, colonnes jusqu'au pied, la ligne
+// repart du pied tout droit) ou montee (la ligne arrive au pied, colonnes jusqu'au relais, convoyeur a plat jusqu'au haut).
+// Puis hauteurs choisies de l'arrivee vers le depart (au plus pres de H) et raccourcis en lignes droites : de chaque point,
+// le plus loin atteignable par beltRun. start : { z, d } (connecteur de depart, a d de s, sens dir) ; sortie au-dessus du vide (foreuse
+// au sommet d'une aiguille) : depart en l'air, seule une descente en part. via : points de passage ({x, y}, --par) a
+// atteindre dans l'ordre (le noeud porte le nombre de points deja atteints ; les lignes droites ne les sautent pas).
+// { poles (poteaux { x, y, g, z, h } et ascenseurs { lift }), cost (uu de la recherche), src (rang du depart) }, { fail } ou null
+function beltSearch(W, srcs, g, H, stats, via = []) {
+  const C = BELT.CELL, x0 = W.box.x0, y0 = W.box.y0, HS = BELT.HS, LI = BELT.LIFT;
   const nx = Math.floor((W.box.x1 - x0) / C) + 1, ny = Math.floor((W.box.y1 - y0) / C) + 1;
   const cell = (p) => [Math.round((p.x - x0) / C), Math.round((p.y - y0) / C)];
   const pt = (i, j) => ({ x: x0 + i * C, y: y0 + j * C });
-  // maille : 0 fermee, 1 libre a la hauteur normale, 2 libre seulement par-dessus un convoyeur (H + OVER)
-  const free = new Map();
-  const level = (x, y, ang2) => {
-    const gr = hAt(W.relief, x, y);
-    if (!(gr > BELT.SEA + 100 - H)) return 0;
-    const hit = (hh) => ang2.map((an) => beltHitAt(W, x, y, gr + hh, an)).find(Boolean) || null;
-    const h1 = hit(H);
-    if (!h1) return 1;
-    stats.hits[h1] = (stats.hits[h1] || 0) + 1;
-    return isBelt(h1) && !hit(H + BELT.OVER) ? 2 : 0;
-  };
-  const isFree = (i, j) => {
-    const k = i * ny + j;
-    if (!free.has(k)) { const p = pt(i, j); free.set(k, level(p.x, p.y, [0, Math.PI / 2])); }
-    return free.get(k);
-  };
-  const [si, sj] = cell(s), [gi, gj] = cell(g);
-  const d0 = Math.round(((Math.atan2(dir.y, dir.x) / (Math.PI / 4)) % 8 + 8) % 8) % 8;
-  const key = (i, j, d) => (i * ny + j) * 8 + d;
-  const h = (i, j) => C * Math.hypot(gi - i, gj - j);
-  const open = new Heap();
+  const inside = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny;
+  const gc = new Map(), fc = new Map(), memo = new Map();
+  const G = (i, j) => { const k = i * ny + j; if (!gc.has(k)) { const p = pt(i, j); gc.set(k, hAt(W.relief, p.x, p.y)); } return gc.get(k); };
+  const at = (i, j) => Object.assign(pt(i, j), { g: G(i, j) });
+  const isFree = (i, j) => { const k = i * ny + j; if (!fc.has(k)) { const p = pt(i, j); fc.set(k, beltMask(W, p.x, p.y, [0, Math.PI / 2], H, stats)); } return fc.get(k); };
+  const cached = (k, fn) => { if (!memo.has(k)) memo.set(k, fn()); return memo.get(k); };
+  const bits = (m) => HS.map((h, b) => b).filter((b) => m & (1 << b));
+  const nearest = (m, dz) => bits(m).reduce((u, b) => (u < 0 || Math.abs(HS[b] - dz) < Math.abs(HS[u] - dz) ? b : u), -1);
+  const pen = (m) => (Math.max(0, HS[bits(m)[0]] - H) / 100) * BELT.POLE_COST;
+  const [gi, gj] = cell(g);
+  // departs : premier poteau a 0,25 de pente pres du connecteur (fit l'ajuste ensuite)
+  const roots = srcs.map(({ s, dir, start }, src) => {
+    const [si, sj] = cell(s), d0 = Math.round(((Math.atan2(dir.y, dir.x) / (Math.PI / 4)) % 8 + 8) % 8) % 8;
+    const g0 = G(si, sj), tol = 0.25 * start.d + 50;
+    let m0 = 0;
+    HS.forEach((h, b) => { if (Math.abs(g0 + h - start.z) <= tol) m0 |= 1 << b; });
+    const air = !m0 && start.z - g0 - HS[HS.length - 1] > tol ? start.z : null;
+    if (!m0 && air === null) m0 = 1 << nearest((1 << HS.length) - 1, start.z - g0);
+    return { i: si, j: sj, d: d0, m: m0, air, straight: false, c: 0, parent: null, src };
+  });
+  // points de passage : etape du noeud = points deja atteints ; estimation = distance au prochain, puis de point en point
+  const wp = via.map(cell), NW = wp.length, legs = [...wp, [gi, gj]];
+  const rest = legs.map((c, k) => { let r = 0; for (let m = k + 1; m < legs.length; m++) r += C * Math.hypot(legs[m][0] - legs[m - 1][0], legs[m][1] - legs[m - 1][1]); return r; });
+  const advance = (i, j, st) => { while (st < NW && wp[st][0] === i && wp[st][1] === j) st++; return st; };
+  const key = (n) => ((((n.i * ny + n.j) * 8 + n.d) * 2) + (n.straight ? 1 : 0)) * (NW + 1) + n.stage;
+  const h = (n) => C * Math.hypot(legs[n.stage][0] - n.i, legs[n.stage][1] - n.j) + rest[n.stage];
+  const open = new Heap(), labels = new Map();
   let seq = 0;
-  const best = new Map();
-  const start = { i: si, j: sj, d: d0, c: 0, f: h(si, sj), seq: seq++, parent: null };
-  open.push(start); best.set(key(si, sj, d0), 0);
+  // un noeud est ecarte si un autre, a la meme maille, dans le meme sens et a la meme etape, coute moins et permet au
+  // moins ses hauteurs
+  const push = (n) => {
+    n.stage = advance(n.i, n.j, n.parent ? n.parent.stage : 0);
+    n.wp = n.stage > (n.parent ? n.parent.stage : 0);
+    const k = key(n), L = labels.get(k) || [];
+    if (L.some((o) => o.c <= n.c && (o.m | n.m) === o.m)) return;
+    for (const o of L) if (o.c >= n.c && (o.m | n.m) === n.m) o.dead = true;
+    labels.set(k, L.filter((o) => !o.dead).concat([n]));
+    n.f = n.c + h(n); n.seq = seq++;
+    open.push(n);
+  };
+  wp.forEach(([i, j], k) => { if (!inside(i, j) || !isFree(i, j)) console.log('ATTENTION : point de passage', k + 1, 'hors de la zone ou ferme a toutes les hauteurs'); });
+  // ascenseurs depuis le noeud n (en a) : colonne a k mailles dans le sens d, pas depuis un pied ou un haut d'ascenseur
+  const liftEdges = (n, a) => {
+    if (n.lift) return;
+    const top = n.air !== null ? [null] : bits(n.m);
+    const zMax = n.air !== null ? n.air : a.g + HS[top[top.length - 1]];
+    for (const dd of n.straight ? [0] : [-1, 0, 1]) {
+      const d = (n.d + dd + 8) % 8, [di, dj] = DIRS[d], l1 = C * Math.hypot(di, dj), u = { x: (di * C) / l1, y: (dj * C) / l1 };
+      for (let k = n.air !== null ? 1 : 2; k * l1 <= LI.REACH; k++) {
+        const i = n.i + k * di, j = n.j + k * dj;
+        if (!inside(i, j)) break;
+        const Y = at(i, j), dist = k * l1, cliff = Math.max(LI.CLIFF, BELT.SLOPE * dist);
+        if (!(Y.g > -Infinity)) continue;
+        // descente : convoyeur a plat de a a la colonne (relais 4 m avant elle), puis colonnes jusqu'au pied
+        if (zMax - Y.g - 100 >= cliff) {
+          for (const b of top) {
+            const zTop = b === null ? n.air : a.g + HS[b];
+            if (zTop - Y.g - 100 < cliff) continue;
+            if (cached('f' + a.x + ',' + a.y + ',' + i + ',' + j + ',' + zTop, () => flatRun(W, a, Y, zTop))) continue;
+            const lc = cached('d' + i + ',' + j + ',' + d + ',' + zTop, () => liftCols(W, Y, u, zTop, false));
+            if (!lc) continue;
+            const F = lc.cols[lc.cols.length - 1], [fi, fj] = cell(F);
+            if (!inside(fi, fj) || Math.hypot(fi - gi, fj - gj) < 3) break;
+            const mf = isFree(fi, fj), hb = nearest(mf, lc.foot - G(fi, fj));
+            if (hb < 0 || Math.abs(G(fi, fj) + HS[hb] - lc.foot) > 150) break;
+            push({ i: fi, j: fj, d, m: 1 << hb, straight: true, air: null, parent: n,
+              c: n.c + dist + LI.GAP * (lc.cols.length - 1) + LI.COST * lc.cols.length + BELT.TURN * Math.abs(dd),
+              lift: { kind: 'descente', hFrom: b, top: zTop, foot: lc.foot, cols: lc.cols, u, relay: lc.relay } });
+            break;
+          }
+        }
+        // montee : la ligne arrive au pied, en a ; colonnes vers Y, relais, convoyeur a plat jusqu'a Y
+        if (n.air === null && n.parent && Y.g - a.g >= cliff) {
+          for (const b of bits(isFree(i, j))) {
+            const zTop = Y.g + HS[b];
+            const lc = cached('m' + a.x + ',' + a.y + ',' + d + ',' + zTop, () => liftCols(W, a, { x: -u.x, y: -u.y }, zTop, true));
+            if (!lc) continue;
+            const c0 = lc.cols[0];
+            if (Math.hypot(Y.x - c0.x, Y.y - c0.y) < LI.GAP + 300) continue; // relais, puis 2 m de convoyeur au moins
+            if (cached('f' + c0.x + ',' + c0.y + ',' + i + ',' + j + ',' + zTop, () => flatRun(W, c0, Y, zTop))) continue;
+            const hf = nearest(n.m, lc.foot - a.g);
+            if (hf < 0 || Math.abs(a.g + HS[hf] - lc.foot) > 150) break;
+            push({ i, j, d, m: 1 << b, straight: false, air: null, parent: n,
+              c: n.c + dist + LI.COST * lc.cols.length + BELT.TURN * Math.abs(dd) + pen(1 << b),
+              lift: { kind: 'montee', hFrom: hf, top: zTop, foot: lc.foot, cols: lc.cols, u, relay: lc.relay } });
+            break;
+          }
+        }
+      }
+    }
+  };
+  for (const r of roots) push(r);
   let found = null, expanded = 0;
   while (open.size) {
     const n = open.pop();
-    if (best.get(key(n.i, n.j, n.d)) < n.c) continue;
-    if (n.i === gi && n.j === gj) { found = n; break; }
-    if (++expanded > 400000) break;
-    for (let dd = -2; dd <= 2; dd++) {
-      const d = (n.d + dd + 8) % 8, [di, dj] = DIRS[d], i = n.i + di, j = n.j + dj;
-      if (i < 0 || j < 0 || i >= nx || j >= ny || !isFree(i, j)) continue;
-      const a = pt(n.i, n.j), b = pt(i, j);
-      // memes regles que beltRun (pente du convoyeur, relief 30 cm dessous au milieu du pas) : plus souple, la grille
-      // passait sur une bosse que les lignes droites refusaient ensuite (ligne cu1, colline est, 23/10/2026)
-      const ga = hAt(W.relief, a.x, a.y), gb = hAt(W.relief, b.x, b.y), step = C * Math.hypot(di, dj);
-      if (Math.abs(gb - ga) / step > BELT.SLOPE) continue;
-      // relief sous le convoyeur aux memes points que beltRun (tiers d'un pas en diagonale) : la grille ne testait que le
-      // milieu, et acceptait un pas que les lignes droites refusaient ensuite (« troncon impossible », ligne de la 634)
-      const ns = Math.max(2, Math.ceil(step / 200));
-      let bump = false;
-      for (let q = 1; q < ns && !bump; q++) { const t = q / ns; bump = hAt(W.relief, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) > ga + (gb - ga) * t + H - BELT.CLEAR; }
-      if (bump) continue;
-      // milieu du pas, gabarit oriente le long du pas : un convoyeur fin passait entre deux centres de mailles (ligne
-      // fe3 a travers la ligne fe1 posee juste avant, 23/10/2026)
-      const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const lm = level(m.x, m.y, [Math.atan2(dj, di)]);
-      if (!lm) continue;
-      const over = (isFree(i, j) === 2 ? 1 : 0) + (lm === 2 ? 1 : 0);
-      const c = n.c + C * Math.hypot(di, dj) + BELT.TURN * Math.abs(dd) + BELT.OVER_COST * over;
-      const k = key(i, j, d);
-      if (best.has(k) && best.get(k) <= c) continue;
-      best.set(k, c);
-      open.push({ i, j, d, c, f: c + h(i, j), seq: seq++, parent: n });
+    if (n.dead) continue;
+    if (n.i === gi && n.j === gj && n.air === null && n.stage === NW) { found = n; break; }
+    if (++expanded > 400000) { stats.abandon = true; break; }
+    const a = at(n.i, n.j);
+    if (n.air === null) {
+      for (const dd of n.straight ? [0] : [-2, -1, 0, 1, 2]) {
+        const d = (n.d + dd + 8) % 8, [di, dj] = DIRS[d], i = n.i + di, j = n.j + dj;
+        if (!inside(i, j)) continue;
+        const mb = isFree(i, j);
+        if (!mb) continue;
+        const m = beltStep(W, a, n.m, at(i, j), mb);
+        if (!m) continue;
+        push({ i, j, d, m, air: null, straight: false, parent: n, c: n.c + C * Math.hypot(di, dj) + BELT.TURN * Math.abs(dd) + pen(m) });
+      }
     }
+    liftEdges(n, a);
   }
   stats.expanded += expanded;
   if (!found) return null;
-  const cells = [];
-  for (let n = found; n; n = n.parent) cells.unshift(pt(n.i, n.j));
-  const P = [s, ...cells.slice(1, -1), g];
-  // raccourcis : de P[i], le point P[j] le plus loin joignable en ligne droite, a la hauteur normale, sinon par-dessus
-  // un convoyeur (poteaux de ce troncon plus hauts : champ h)
-  const poles = [Object.assign({}, s, { g: hAt(W.relief, s.x, s.y), h: H })];
-  let i = 0;
-  while (i < P.length - 1) {
-    let j = P.length - 1, run = null, hRun = H;
-    for (; j > i; j--) {
-      const a = Object.assign({}, P[i], { z: poles[poles.length - 1].z });
-      run = beltRun(W, a, P[j], H); hRun = H;
-      if (!run.poles && isBelt(run.why)) { run = beltRun(W, a, P[j], H + BELT.OVER); hRun = H + BELT.OVER; }
-      if (run.poles) break;
+  const nodes = [];
+  for (let n = found; n; n = n.parent) nodes.unshift(n);
+  const s = srcs[nodes[0].src].s;
+  // hauteurs, de l'arrivee vers le depart : au plus pres de H parmi celles qui passent vers le noeud suivant (toute hauteur
+  // d'un masque en a une : le masque est fait des hauteurs atteintes) ; avant un ascenseur, celle de son haut ou de son pied
+  for (let q = nodes.length - 1; q >= 0; q--) {
+    const n = nodes[q], nn = nodes[q + 1];
+    Object.assign(n, at(n.i, n.j));
+    if (n.air !== null) { n.z = n.air; continue; }
+    let b = -1;
+    if (nn && nn.lift) b = nn.lift.hFrom;
+    else {
+      const ok = nn ? beltPair(W, n, nn) : null;
+      b = bits(n.m).sort((u, v) => Math.abs(HS[u] - H) - Math.abs(HS[v] - H)).find((c) => !ok || ok(n.g + HS[c], nn.z));
     }
-    if (!run || !run.poles) return { fail: 'troncon impossible depuis ' + Math.round(P[i].x) + ',' + Math.round(P[i].y) + ' (' + (run ? run.why : '?') + ')' };
-    poles.push(...run.poles.slice(1).map((p) => Object.assign(p, { h: hRun })));
-    i = j;
+    if (b == null || b < 0) throw new Error('hauteurs incoherentes en ' + n.x + ',' + n.y);
+    n.z = n.g + HS[b];
   }
-  // le point d'approche reste a la hauteur normale (convoyeur d'arrivee vers le connecteur)
-  return { poles };
+  // troncons entre ascenseurs : poteaux de la grille, bouts accroches aux connecteurs (anchor ; exit : la ligne en part)
+  const pieces = [[]], lifts = [];
+  nodes.forEach((n, q) => {
+    const p = { x: q === 0 ? s.x : q === nodes.length - 1 ? g.x : n.x, y: q === 0 ? s.y : q === nodes.length - 1 ? g.y : n.y, z: n.z, keep: n.wp };
+    const L = n.lift;
+    if (!L) { if (n.air === null) pieces[pieces.length - 1].push(p); return; }
+    const u = L.u, F = L.cols[L.cols.length - 1], cur = pieces[pieces.length - 1];
+    if (L.kind === 'descente') {
+      cur.push({ x: L.relay.x - 100 * u.x, y: L.relay.y - 100 * u.y, z: L.top, anchor: true, u });
+      pieces.push([{ x: F.x, y: F.y, z: L.foot, anchor: true, exit: true, u }]);
+    } else {
+      cur.pop(); // maille du pied : la ligne y arrive par le connecteur du pied
+      cur.push({ x: F.x, y: F.y, z: L.foot, anchor: true, u });
+      pieces.push([{ x: L.relay.x + 100 * u.x, y: L.relay.y + 100 * u.y, z: L.top, anchor: true, exit: true, u }, p]);
+    }
+    lifts.push(L);
+  });
+  // raccourcis : de Q[i], le point Q[j] le plus loin joignable en ligne droite, a la hauteur normale, sinon par-dessus un
+  // convoyeur ; a 45 deg au plus du sens d'un connecteur d'ascenseur ou de relais
+  const out = [];
+  for (let pi = 0; pi < pieces.length; pi++) {
+    if (pi) out.push({ lift: lifts[pi - 1] });
+    const Q = pieces[pi];
+    if (Q.length && !Q[0].anchor) out.push({ x: Q[0].x, y: Q[0].y, g: hAt(W.relief, Q[0].x, Q[0].y), z: Q[0].z });
+    let i = 0;
+    while (i < Q.length - 1) {
+      const stop = Q.findIndex((q, k) => k > i && q.keep); // point de passage : jamais saute
+      let j = stop > 0 ? stop : Q.length - 1, run = null;
+      for (; j > i; j--) {
+        const dx = Q[j].x - Q[i].x, dy = Q[j].y - Q[i].y, dl = Math.hypot(dx, dy) || 1;
+        const along = (u) => (dx * u.x + dy * u.y) / dl >= 0.7;
+        if ((Q[i].exit && !along(Q[i].u)) || (Q[j].anchor && !Q[j].exit && !along(Q[j].u))) continue;
+        // coudes du chemin : la ligne droite ne s'ecarte pas de plus de BELT.BEND des points de la recherche qu'elle saute
+        // (poteau impose au coude, le maximum local en plan ; utilisateur, 27/10/2026 : « le jeu ne detecte pas quand un
+        // belt traverse le decor, il faut que tu imposes certains poteaux, les maximums locaux sur le plan horizontal ou
+        // vertical »)
+        let bend = 0;
+        for (let k = i + 1; k < j; k++) bend = Math.max(bend, Math.abs((Q[k].x - Q[i].x) * dy - (Q[k].y - Q[i].y) * dx) / dl);
+        if (bend > BELT.BEND) continue;
+        run = beltRun(W, Q[i], Q[j], H);
+        if (!run.poles && isBelt(run.why)) run = beltRun(W, Q[i], Q[j], H + BELT.OVER);
+        if (run.poles) break;
+      }
+      if (!run || !run.poles) return { fail: 'troncon impossible depuis ' + Math.round(Q[i].x) + ',' + Math.round(Q[i].y) + ' (' + (run ? run.why : 'sens du connecteur') + ')' };
+      out.push(...run.poles.slice(1).filter((p) => !p.anchor));
+      i = j;
+    }
+  }
+  for (const p of out) if (!p.lift) p.h = p.z - p.g;
+  return { poles: out, cost: found.c, src: nodes[0].src };
 }
 
-async function planBelt() {
-  const nom = opt('nom');
-  if (!nom) throw new Error('--nom requis');
-  const H = 100 * Number(opt('poteau', 2));
-  const ends = {};
-  for (const k of ['de', 'a']) {
-    const ref = opt(k), i = ref.lastIndexOf('.');
-    const actor = ref.slice(0, i), name = ref.slice(i + 1);
-    const full = actor.includes('/') ? actor : '/Game/FactoryGame/Map/GameLevel01/Persistent_Level.Persistent_Level:PersistentLevel.' + actor;
-    const c = (await call('connections', full)).find((cc) => cc.name === name);
-    if (!c) throw new Error('connecteur introuvable : ' + ref);
-    const hn = Math.hypot(c.normal.x, c.normal.y) || 1;
-    ends[k] = { path: full, name, at: c.location, n: { x: c.normal.x / hn, y: c.normal.y / hn } };
-  }
-  const D = ends.de, A = ends.a;
+// Connecteur de convoyeur <acteur>.<connecteur> : { path, name, at, n (normale en plan, unitaire) }
+async function beltEnd(ref) {
+  const i = ref.lastIndexOf('.');
+  const actor = ref.slice(0, i), name = ref.slice(i + 1);
+  const full = actor.includes('/') ? actor : '/Game/FactoryGame/Map/GameLevel01/Persistent_Level.Persistent_Level:PersistentLevel.' + actor;
+  const c = (await call('connections', full)).find((cc) => cc.name === name);
+  if (!c) throw new Error('connecteur introuvable : ' + ref);
+  const hn = Math.hypot(c.normal.x, c.normal.y) || 1;
+  return { path: full, name, at: c.location, n: { x: c.normal.x / hn, y: c.normal.y / hn } };
+}
+
+// Ligne de convoyeur de moindre cout de l'un des departs Ds au connecteur A : une seule recherche partie de tous les departs
+// a la fois, le depart retenu decoule du chemin (foreuses.js : les sorties des 8 caps d'une foreuse pas encore posee, path
+// null ; utilisateur, 27/10/2026 : « on trouve le path et seulement ensuite on oriente la foreuse, le path ne doit pas
+// dependre de l'orientation de celle-ci »). D.extra : obstacles lies a ce depart (emprise de la foreuse a ce cap), tous
+// comptes. o : { nom, H, via, avoid, RS, RC, marge, box0 (zone du releve imposee), remplace, recette, write (false : aucun
+// fichier) }. Ecrit traces/<nom>-ligne.json. { best: { D, line, file, cost, lifts }, tries: [{ D, fail }], box0 } ; best null
+// sans ligne
+async function traceBelt(Ds, A, o) {
+  const H = o.H, via = o.via || [], avoid = o.avoid || [];
   // point d'approche : 4 m devant la sortie de depart ; a l'arrivee, deux poteaux dans l'axe de l'entree, a 12 et 6 m
   // (la recherche vise celui de 12 m) : les deux derniers troncons sont droits et alignes sur le connecteur. Un dernier
   // troncon court qui tournait de 69 deg en montant de 2 m etait refuse (FGCDConveyorTooSteep, cuivre, 23/10/2026)
   const g6 = { x: A.at.x + 600 * A.n.x, y: A.at.y + 600 * A.n.y };
   // un seul releve pour toute la zone : bornes des connecteurs, elargies de la marge et des 20 m ou peuvent tomber les
   // points de depart et d'arrivee
-  const marge0 = 100 * Number(opt('marge', 60)) + 2000;
-  const box0 = { x0: Math.min(D.at.x, A.at.x) - marge0, x1: Math.max(D.at.x, A.at.x) + marge0, y0: Math.min(D.at.y, A.at.y) - marge0, y1: Math.max(D.at.y, A.at.y) + marge0 };
+  const marge0 = o.marge + 2000;
+  const ex = [...Ds.map((D) => D.at.x), A.at.x, ...via.map((p) => p.x)], ey = [...Ds.map((D) => D.at.y), A.at.y, ...via.map((p) => p.y)];
+  const box0 = o.box0 || { x0: Math.min(...ex) - marge0, x1: Math.max(...ex) + marge0, y0: Math.min(...ey) - marge0, y1: Math.max(...ey) + marge0 };
   // --releve <m> : pas du releve du relief (4 m par defaut) ; 2 m pour se faufiler entre des blocs (passage sous l'arche
   // de la cuvette de bauxite de S13 E101, 24/10/2026 : couloir de 4 a 6 m entre deux rochers, ferme a 4 m). Plus fin que
   // 4 m : releve a deux finesses, grossier a --releve-grossier m (4 par defaut : compare le 24/10/2026 sur 200 m de la cuvette de
   // bauxite, 2 m partout en reference : grossier 10 m, 7 657 points, 71 % de mailles fines, 1 rocher manque ; 6 m, 6 555 ; 4 m,
   // 6 050 points, 38 %, aucun manque. Sur terrain accidente, les grandes mailles sont presque toutes relevees finement)
-  const RS = Math.round(100 * Number(opt('releve', 4)));
-  const RC = Math.round(100 * Number(opt('releve-grossier', 4)));
+  const RS = o.RS, RC = o.RC;
   const R0 = RS < 400 ? await reliefMulti(box0, RC, RS) : await relief(box0, RS);
   // poteaux sur le sol raide refuses par le jeu (beltline les decale alors de 3 a 6 m, hors de l'axe : premier poteau du
   // caterium, foreuse a flanc de colline, contre un poteau electrique, 23/10/2026) : premier point de l'axe sur un sol
@@ -852,79 +1235,320 @@ async function planBelt() {
   const first = (E, ds) => ({ x: E.at.x + ds[0] * E.n.x, y: E.at.y + ds[0] * E.n.y, d: ds[0] });
   // depart : de preference un point ou le premier troncon reste doux (poteau de 1 m au moins, pente de bout 0,2) ; sortie
   // d'un fusionneur pose au sol, sol 1,4 m plus haut a 4 m (S13 E101, 24/10/2026 : « troncon de bout trop raide »)
-  const softStart = (p) => hBil(R0, p.x, p.y) + 100 <= D.at.z + 0.2 * p.d + 25;
-  const s = onAxis(D, [400, 800, 1200, 1600], softStart) || onAxis(D, [400, 800, 1200, 1600]) || first(D, [400]);
+  const starts = Ds.map((D) => {
+    const softStart = (p) => hBil(R0, p.x, p.y) + 100 <= D.at.z + 0.2 * p.d + 25;
+    return onAxis(D, [400, 800, 1200, 1600], softStart) || onAxis(D, [400, 800, 1200, 1600]) || first(D, [400]);
+  });
   const g = onAxis(A, [1200, 1600, 2000]) || first(A, [1200]);
-  const marge = 100 * Number(opt('marge', 60));
-  const box = { x0: Math.min(s.x, g.x) - marge, x1: Math.max(s.x, g.x) + marge, y0: Math.min(s.y, g.y) - marge, y1: Math.max(s.y, g.y) + marge };
-  const W = { box, width: 2 * BELT.HALF, height: 160 };
-  W.relief = R0; // la zone du releve couvre celle de la recherche
-  // la foreuse de depart reste un obstacle (le point d'approche est devant sa sortie) ; l'ascenseur d'arrivee est ignore
-  W.near = index(await obstacles(box, new Set([A.path.split('.').pop()])));
-  // depart : la recherche part de la maille la plus proche du point d'approche, ramenee jusqu'a 2,8 m vers la foreuse
-  // quand sa sortie n'est pas dans l'axe de la grille (caterium, cap 160, 23/10/2026 : « grille fermee », foreuse touchee
-  // tout autour). Point d'approche recule le long de l'axe (jusqu'a 20 m) tant que lui ou sa maille touche un obstacle.
-  const ang0 = Math.atan2(D.n.y, D.n.x);
-  const blocked = (p) => [p, { x: box.x0 + Math.round((p.x - box.x0) / BELT.CELL) * BELT.CELL, y: box.y0 + Math.round((p.y - box.y0) / BELT.CELL) * BELT.CELL }]
-    .some((q) => beltHitAt(W, q.x, q.y, hAt(W.relief, q.x, q.y) + H, ang0));
-  if (blocked(s)) {
-    for (let d = s.d + 400; d <= 2000; d += 400) {
-      const p = { x: D.at.x + d * D.n.x, y: D.at.y + d * D.n.y, d };
-      if (!steep(p) && !blocked(p)) { Object.assign(s, p); console.log('depart recule a', d / 100, 'm de la sortie (obstacle au plus pres)'); break; }
-    }
+  const marge = o.marge;
+  const sx = [...starts.map((s) => s.x), g.x, ...via.map((p) => p.x)], sy = [...starts.map((s) => s.y), g.y, ...via.map((p) => p.y)];
+  const box = { x0: Math.min(...sx) - marge, x1: Math.max(...sx) + marge, y0: Math.min(...sy) - marge, y1: Math.max(...sy) + marge };
+  const W0 = { box, width: 2 * BELT.HALF, height: 160, avoid };
+  W0.relief = R0; // la zone du releve couvre celle de la recherche
+  if (via.length || avoid.length) console.log('points de passage :', via.length, '; zones evitees :', avoid.length);
+  // la foreuse de depart reste un obstacle (le point d'approche est devant sa sortie) ; l'ascenseur d'arrivee est ignore.
+  // --remplace <acteur>.<connecteur> : ligne existante suivie depuis ce connecteur (comme diag-convoyeur), ignoree avec ses
+  // poteaux et les convoyeurs branches aux autres sorties de ses repartiteurs : trace de remplacement, ou essai du traceur
+  // sur une ligne posee a la main (lignes de calcaire 110 et 54 de l'usine de beton, 27/10/2026)
+  const ignore = new Set([A.path.split('.').pop()]);
+  let keep = () => true;
+  if (o.remplace) {
+    const old = await followLine(o.remplace, A.path);
+    for (const p of old.parts.concat(old.side)) ignore.add(p.path.split('.').pop());
+    keep = (ob) => !(ob.kind === 'box' && /ConveyorPole|ConveyorCeiling|ConveyorWall/.test(ob.what) && old.line.some((p) => Math.hypot(p.x - ob.c.x, p.y - ob.c.y) < 150));
+    console.log('ligne remplacee :', old.parts.length, 'pieces ignorees (et', old.side.length, 'branchees a cote), fin :', old.end ? old.end.what : '?');
   }
-  const stats = { expanded: 0, hits: {} };
+  W0.near = index((await obstacles(box, ignore)).filter(keep));
   const t0 = Date.now();
-  const res = beltSearch(W, s, g, D.n, H, stats);
-  if (!res || res.fail) throw new Error('aucune ligne : ' + (res ? res.fail : 'grille fermee') + ' (obstacles les plus frequents : ' + JSON.stringify(topHits(stats.hits)) + ')');
+  // obstacles propres aux departs (emprise de la foreuse a poser, a chacun de ses caps) : tous a la fois, le chemin ne
+  // depend pas de l'orientation de la foreuse (utilisateur, 27/10/2026 : « on trouve le path et seulement ensuite on oriente
+  // la foreuse »)
+  const extra = Ds.flatMap((D) => D.extra || []);
+  const W = extra.length ? Object.assign({}, W0, { near: (x, y) => W0.near(x, y).concat(extra) }) : W0;
+  Ds.forEach((D, k) => {
+    const s = starts[k];
+    // depart : la recherche part de la maille la plus proche du point d'approche, ramenee jusqu'a 2,8 m vers la foreuse
+    // quand sa sortie n'est pas dans l'axe de la grille (caterium, cap 160, 23/10/2026 : « grille fermee », foreuse touchee
+    // tout autour). Point d'approche recule le long de l'axe (jusqu'a 20 m) tant que lui ou sa maille touche un obstacle.
+    const ang0 = Math.atan2(D.n.y, D.n.x);
+    const blocked = (p) => [p, { x: box.x0 + Math.round((p.x - box.x0) / BELT.CELL) * BELT.CELL, y: box.y0 + Math.round((p.y - box.y0) / BELT.CELL) * BELT.CELL }]
+      .some((q) => beltHitAt(W, q.x, q.y, hAt(W.relief, q.x, q.y) + H, ang0));
+    if (blocked(s)) {
+      for (let d = s.d + 400; d <= 2000; d += 400) {
+        const p = { x: D.at.x + d * D.n.x, y: D.at.y + d * D.n.y, d };
+        if (!steep(p) && !blocked(p)) { Object.assign(s, p); if (Ds.length === 1) console.log('depart recule a', d / 100, 'm de la sortie (obstacle au plus pres)'); break; }
+      }
+    }
+  });
+  // une seule recherche depuis tous les departs, a cout nul : le depart retenu decoule du chemin
+  const stats = { expanded: 0, hits: {} };
+  const res = beltSearch(W, Ds.map((D, k) => ({ s: starts[k], dir: D.n, start: { z: D.at.z, d: starts[k].d } })), g, H, stats, via);
+  // abandon : la limite de noeuds atteinte ne dit pas que la grille est fermee (les deux etaient confondus avant le
+  // diagnostic des lignes de calcaire de l'usine de beton, 27/10/2026)
+  const fail = !res || res.fail ? (res ? res.fail : stats.abandon ? 'recherche abandonnee apres ' + stats.expanded + ' noeuds' : 'grille fermee') + ' (obstacles les plus frequents : ' + JSON.stringify(topHits(stats.hits)) + ')' : null;
+  const k0 = fail ? 0 : res.src;
+  const tries = [{ D: Ds[k0], s: starts[k0], W, res, stats, fail, cost: fail ? null : res.cost, lifts: fail ? 0 : res.poles.filter((p) => p.lift).length }];
   // troncons de bout, droits, a pente moyenne de END_SLOPE au plus : un troncon court a bouts horizontaux est une
   // courbe d'Hermite dont la pente au milieu vaut 1,5 fois la moyenne (0,55 de moyenne sur 5 m : refuse). Sol reel sous
   // les poteaux (interpole) ; poteaux de 1 a 7 m. Du connecteur d'arrivee vers l'amont : poteau a 6 m, puis a 12 m.
   // sauf si le sol y est raide (bord de colline : le jeu refuse le poteau et beltline le decale de 6 m, hors de l'axe ;
   // cuivre 2, 23/10/2026) : alors le poteau de l'axe plus loin, sur le plat, va droit au connecteur
-  const skip6 = steep(g6) || g.d > 1200;
-  if (!skip6) res.poles.push(Object.assign({}, g6, { g: hBil(W.relief, g6.x, g6.y) }));
   // 0,2 : 0,3 sur les 6 derniers metres etait encore refuse (FGCDConveyorTooSteep) au bout d'une ligne sur poteaux de
   // 6 m (cuivre des mines, 23/10/2026)
   const END_SLOPE = 0.2;
-  const fit = (p, c, d) => {
-    p.g = hBil(W.relief, p.x, p.y);
-    const want = Math.max(c.z - END_SLOPE * d, Math.min(c.z + END_SLOPE * d, p.g + (p.h || H)));
-    p.h = Math.max(100, Math.min(700, want - p.g)); p.z = p.g + p.h;
-    if (Math.abs(p.z - c.z) / Math.max(d, 1) > END_SLOPE + 0.05) throw new Error('troncon de bout trop raide en ' + Math.round(p.x) + ',' + Math.round(p.y) + ' : ' + ((p.z - c.z) / 100).toFixed(1) + ' m sur ' + (d / 100).toFixed(1) + ' m (connecteur a tourner vers un sol au meme niveau)');
+  const finish = (t) => {
+    const { D, s, W, res } = t, poles = res.poles.map((p) => Object.assign({}, p));
+    const skip6 = steep(g6) || g.d > 1200;
+    if (!skip6) poles.push(Object.assign({}, g6, { g: hBil(W.relief, g6.x, g6.y) }));
+    const fit = (p, c, d) => {
+      if (p.lift) return; // ascenseur au bout : son relais ou son pied est un connecteur, pas un poteau
+      p.g = hBil(W.relief, p.x, p.y);
+      const want = Math.max(c.z - END_SLOPE * d, Math.min(c.z + END_SLOPE * d, p.g + (p.h || H)));
+      p.h = Math.max(100, Math.min(700, want - p.g)); p.z = p.g + p.h;
+      if (Math.abs(p.z - c.z) / Math.max(d, 1) > END_SLOPE + 0.05) throw new Error('troncon de bout trop raide en ' + Math.round(p.x) + ',' + Math.round(p.y) + ' : ' + ((p.z - c.z) / 100).toFixed(1) + ' m sur ' + (d / 100).toFixed(1) + ' m (connecteur a tourner vers un sol au meme niveau)');
+    };
+    const nP = poles.length;
+    if (skip6) fit(poles[nP - 1], A.at, g.d);
+    else { fit(poles[nP - 1], A.at, 600); fit(poles[nP - 2], poles[nP - 1], 600); }
+    fit(poles[0], D.at, s.d);
+    return poles;
   };
-  const nP = res.poles.length;
-  if (skip6) fit(res.poles[nP - 1], A.at, g.d);
-  else { fit(res.poles[nP - 1], A.at, 600); fit(res.poles[nP - 2], res.poles[nP - 1], 600); }
-  fit(res.poles[0], D.at, s.d);
+  let best = null;
+  if (!fail) { try { best = Object.assign(tries[0], { poles: finish(tries[0]) }); } catch (e) { tries[0].fail = e.message; } }
+  if (!best) return { best: null, tries, box0 };
+  const { D, poles } = best;
   // fichier de ligne de beltline : depart (connecteur), poteaux (z = sol), point d'approche, raccord final
   // poteaux d'un franchissement ou de bout : hauteur propre au sommet (beltline : poleHeight du sommet, en m). Le jeu
   // donne un poteau 1 m plus court que demande (references/convoyeurs.md) : on demande 1 m de plus (sans cela, dernier
   // troncon refuse FGCDConveyorTooSteep aux deux lignes du cuivre, 23/10/2026)
   const ask = (h) => Math.round((h + BELT.POLE_BIAS) / 10) / 10;
-  const pts = res.poles.map((p) => Object.assign({ x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.g) }, p.h && p.h !== H ? { poleHeight: ask(p.h) } : {}));
+  // ascenseur : relais en (x, y) a l'altitude top, colonnes du haut vers le pied ; entry : connecteur ou la ligne arrive
+  // (entree du relais en descente, pied en montee), exit : connecteur d'ou elle repart (pied en descente, sortie du relais)
+  const r3 = (p) => ({ x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z) });
+  const liftPoint = (L) => {
+    const u = L.u, F = L.cols[L.cols.length - 1], foot = { x: F.x, y: F.y, z: L.foot };
+    const rIn = { x: L.relay.x - 100 * u.x, y: L.relay.y - 100 * u.y, z: L.top }, rOut = { x: L.relay.x + 100 * u.x, y: L.relay.y + 100 * u.y, z: L.top };
+    return { lift: L.kind, x: L.relay.x, y: L.relay.y, z: Math.round(L.top), top: Math.round(L.top), foot: L.foot, u: { x: Math.round(u.x * 1e4) / 1e4, y: Math.round(u.y * 1e4) / 1e4 }, cols: L.cols, entry: r3(L.kind === 'descente' ? rIn : foot), exit: r3(L.kind === 'descente' ? foot : rOut) };
+  };
+  // top : altitude du convoyeur au poteau ; beltline regle la hauteur du poteau sur le sol qu'il trouve (le releve prend la
+  // plus haute des mailles voisines : 8,5 m d'ecart au pied d'une marche sur la ligne 110 de l'usine de beton, 27/10/2026)
+  const pts = poles.map((p) => (p.lift ? liftPoint(p.lift) : Object.assign({ x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.g), top: Math.round(p.z) }, p.h && Math.abs(p.h - H) > 5 ? { poleHeight: ask(p.h) } : {})));
+  const recipe = o.recette || 'Recipe_ConveyorBeltMk6_C';
   const line = {
-    recipe: opt('recette', 'Recipe_ConveyorBeltMk6_C'),
+    recipe,
+    liftRecipe: recipe.replace('ConveyorBelt', 'ConveyorLift'),
     start: { path: D.path, name: D.name },
     points: [{ x: Math.round(D.at.x), y: Math.round(D.at.y), z: Math.round(D.at.z) }, ...pts, { x: Math.round(A.at.x), y: Math.round(A.at.y), z: Math.round(A.at.z) }],
     poleHeight: ask(H),
     groundAbove: 15,
+    // releve du relief de la recherche (coupe --ligne le relit : les surplombs trouves dependent de la zone relevee)
+    releve: { box: box0, step: RS, coarse: RC },
     end: { path: A.path, name: A.name },
   };
-  fs.mkdirSync(TRACES, { recursive: true });
-  const file = path.join(TRACES, nom + '-ligne.json');
-  fs.writeFileSync(file, JSON.stringify(line, null, 1));
   let len = 0;
   for (let k = 1; k < line.points.length; k++) len += Math.hypot(line.points[k].x - line.points[k - 1].x, line.points[k].y - line.points[k - 1].y);
-  console.log('ligne', nom, ':', Math.round(len / 100), 'm,', pts.length, 'poteaux,', stats.expanded, 'noeuds en', Math.round((Date.now() - t0) / 1000), 's ->', path.relative(__dirname, file));
-  // sol exact au pied de chaque poteau (beltline le cherche la, a la verticale) : le releve en mailles le lisse au bord
-  // d'une marche. Caterium 169 de S13 E101 (25/10/2026) : poteau prevu a 126 m, pose a 115 m au pied d'une marche de
-  // 11 m, troncon suivant refuse (FGCDInvalidPlacement) ; deplace de 6 m sur le haut de la marche
-  const exact = (await call('reliefPoints', pts.map((p) => ({ x: p.x, y: p.y })), 40000, -10000)).z;
-  pts.forEach((p, k) => {
-    const e = exact[k];
-    console.log('  ', p.x, p.y, (p.z / 100).toFixed(1) + ' m', e != null && Math.abs(e - p.z) > 150 ? ' ATTENTION : sol exact ' + (e / 100).toFixed(1) + ' m (marche ou bord : deplacer ce poteau sur le sol prevu avant la pose)' : '');
-  });
+  best.len = len;
+  const lifts = pts.filter((p) => p.lift), ground = pts.filter((p) => !p.lift);
+  let file = null;
+  if (o.write !== false) {
+    fs.mkdirSync(TRACES, { recursive: true });
+    file = path.join(TRACES, o.nom + '-ligne.json');
+    fs.writeFileSync(file, JSON.stringify(line, null, 1));
+  }
+  console.log('ligne', o.nom, ':', Math.round(len / 100), 'm,', ground.length, 'poteaux,', lifts.length ? lifts.length + ' ascenseurs (' + lifts.reduce((n, p) => n + p.cols.length, 0) + ' colonnes), ' : '', stats.expanded, 'noeuds en', Math.round((Date.now() - t0) / 1000), 's' + (file ? ' -> ' + path.relative(__dirname, file) : ''));
+  // sol exact au pied de chaque poteau, cherche comme beltline (a la verticale, de 15 m au-dessus a 30 m sous le sol prevu :
+  // depuis 400 m, le rayon touchait le dessus de l'arche CliffPillar_320 de la ligne 110, 27/10/2026) : le releve en mailles
+  // le lisse au bord d'une marche. beltline regle la hauteur du poteau sur ce sol (top) ; alerte si elle sort de 1 a 7 m.
+  // Caterium 169 de S13 E101 (25/10/2026, avant top) : poteau prevu a 126 m, pose a 115 m au pied d'une marche de 11 m,
+  // troncon suivant refuse (FGCDInvalidPlacement) ; deplace de 6 m sur le haut de la marche
+  if (o.write !== false) {
+    for (const p of pts) {
+      if (p.lift) {
+        console.log('   ' + p.lift, 'relais', p.x, p.y, 'a', (p.top / 100).toFixed(1), 'm, pied a', (p.foot / 100).toFixed(1), 'm,', p.cols.length, 'colonne(s) :', p.cols.map((c) => c.x + ',' + c.y).join(' '));
+        continue;
+      }
+      let e = (await call('reliefPoints', [{ x: p.x, y: p.y }], p.z + 100 * line.groundAbove, p.z - 3000)).z[0], on = '';
+      // pas de sol naturel dans la fenetre : beltline cherche le sol sans ignorer les batiments (ligne 110, 27/10/2026 :
+      // fondation a 76 m au-dessus d'un trou, sol naturel a 11 m)
+      if (e == null) { const gb = (await call('ground', p.x, p.y, p.z + 100 * line.groundAbove, p.z - 3000)).z; if (gb != null) { e = gb; on = ' sur un batiment'; } }
+      const ph = e == null ? null : p.top - e;
+      const note = e == null ? ' ATTENTION : pas de sol de ' + ((p.z / 100) + line.groundAbove).toFixed(0) + ' a ' + ((p.z - 3000) / 100).toFixed(0) + ' m'
+        : on ? ' (' + on.trim() + ' a ' + (e / 100).toFixed(1) + ' m : poteau de ' + (ph / 100).toFixed(1) + ' m)'
+        : ph < 100 || ph > 700 ? ' ATTENTION : sol exact ' + (e / 100).toFixed(1) + ' m, poteau de ' + (ph / 100).toFixed(1) + ' m (hors de 1 a 7 m : deplacer ce poteau avant la pose)'
+          : Math.abs(e - p.z) > 150 ? ' (sol exact ' + (e / 100).toFixed(1) + ' m : poteau de ' + (ph / 100).toFixed(1) + ' m)' : '';
+      console.log('  ', p.x, p.y, 'sol', (p.z / 100).toFixed(1) + ' m, convoyeur', (p.top / 100).toFixed(1) + ' m' + note);
+    }
+  }
+  Object.assign(best, { line, file });
+  return { best, tries, box0 };
+}
+
+async function planBelt() {
+  const nom = opt('nom');
+  if (!nom) throw new Error('--nom requis');
+  // --par x,y;x,y : points de passage, dans l'ordre (utilisateur, 27/10/2026 : « tu imposes pas des points de passage au
+  // tracer pour le piloter un minimum ? » : passage connu, couloir) ; --eviter x0,y0,x1,y1;... : rectangles interdits
+  // (zone d'extension future, abords d'un batiment). Positions en uu
+  const nums = (s) => s.split(',').map(Number);
+  const via = String(opt('par', '')).split(';').filter(Boolean).map((s) => { const [x, y] = nums(s); return { x, y }; });
+  const avoid = String(opt('eviter', '')).split(';').filter(Boolean).map((s) => { const [a, b, c, d] = nums(s); return { x0: Math.min(a, c), y0: Math.min(b, d), x1: Math.max(a, c), y1: Math.max(b, d) }; });
+  if ([...via.flatMap((p) => [p.x, p.y]), ...avoid.flatMap((r) => [r.x0, r.y0, r.x1, r.y1])].some((v) => !Number.isFinite(v))) throw new Error('--par x,y;x,y ou --eviter x0,y0,x1,y1;... : nombres en uu');
+  const D = await beltEnd(opt('de')), A = await beltEnd(opt('a'));
+  const r = await traceBelt([D], A, beltOpts({ nom, via, avoid, remplace: opt('remplace') }));
+  if (!r.best) throw new Error('aucune ligne : ' + r.tries[0].fail);
+}
+
+// Options de traceBelt lues sur la ligne de commande (--poteau, --marge, --releve, --releve-grossier, --recette)
+function beltOpts(o) {
+  return Object.assign({ H: 100 * Number(opt('poteau', 2)), marge: 100 * Number(opt('marge', 60)), RS: Math.round(100 * Number(opt('releve', 4))), RC: Math.round(100 * Number(opt('releve-grossier', 4))), recette: opt('recette', 'Recipe_ConveyorBeltMk6_C') }, o);
+}
+
+// Ligne posee, suivie vers l'aval depuis le connecteur ref (convoyeurs, ascenseurs, repartiteurs a une seule sortie
+// branchee, sinon --sortie) jusqu'au premier fusionneur ou batiment (la ligne y rejoint une autre, ou arrive).
+// { c0 (connecteur de depart), parts [{ kind, path, pts }], end { what, path? }, line (points dans le sens du flux),
+// side [{ path }] (acteurs branches aux autres sorties des repartiteurs : convoyeur en cul-de-sac) }
+async function followLine(ref, stopAt) {
+  const PRE = '/Game/FactoryGame/Map/GameLevel01/Persistent_Level.Persistent_Level:PersistentLevel.';
+  const short = (p) => p.split('.').pop();
+  const kind = (p) => short(p).replace(/_\d+$/, '');
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  let conn = ref.includes('/') ? ref : PRE + ref;
+  const c0 = (await call('connections', conn.slice(0, conn.lastIndexOf('.')))).find((c) => c.name === short(conn));
+  if (!c0) throw new Error('connecteur introuvable : ' + ref);
+  const parts = [], side = [];
+  let end = null;
+  for (let n = 0; n < 400 && !end; n++) {
+    const next = (await call('dump', conn, 1, 1, ['mConnectedComponent'])).mConnectedComponent;
+    if (!next) { end = { what: 'connecteur libre ' + conn.split('.').slice(-2).join('.') }; break; }
+    const owner = next.slice(0, next.lastIndexOf('.')), entered = short(next), cls = kind(owner);
+    if (stopAt && short(owner) === short(stopAt)) { end = { what: cls, path: owner }; break; } // batiment d'arrivee
+    const outs = (await call('connections', owner)).filter((p) => p.name !== entered && p.direction !== 'input');
+    const pose = await call('pose', owner);
+    let pts;
+    if (/ConveyorBelt/.test(cls)) pts = sampleSpline((await call('dump', owner, 3, 50, ['mSplineData'])).mSplineData || [], pose.location, pose.rotation.yaw);
+    else if (/ConveyorLift/.test(cls)) {
+      const d = await call('dump', owner, 3, 50, ['mTopTransform']);
+      const t = (d.mTopTransform && (d.mTopTransform.Translation || d.mTopTransform.translation)) || { X: 0, Y: 0, Z: 0 };
+      const a = rad(pose.rotation.yaw || 0), b = pose.location;
+      pts = [b, { x: b.x + t.X * Math.cos(a) - t.Y * Math.sin(a), y: b.y + t.X * Math.sin(a) + t.Y * Math.cos(a), z: b.z + t.Z }];
+    } else if (/Splitter/.test(cls)) {
+      const live = outs.filter((p) => p.connected), pick = live.find((p) => p.name === opt('sortie')) || (live.length === 1 ? live[0] : null);
+      if (!pick) { end = { what: cls + ' (sorties branchees : ' + live.map((p) => p.name).join(', ') + ' ; --sortie pour choisir)', path: owner }; break; }
+      for (const o of live.filter((p) => p !== pick)) {
+        const other = (await call('dump', owner + '.' + o.name, 1, 1, ['mConnectedComponent'])).mConnectedComponent;
+        if (other) side.push({ path: other.slice(0, other.lastIndexOf('.')) });
+      }
+      pts = [pose.location];
+      outs.splice(0, outs.length, pick);
+    } else if (/Merger/.test(cls) && !(await call('connections', owner)).some((p) => p.direction === 'input' && p.name !== entered && p.connected)) {
+      pts = [pose.location]; // relais : fusionneur ou n'arrive que cette ligne (ligne du caterium de la cote, 26/10/2026)
+    } else { end = { what: cls, path: owner }; break; }
+    parts.push({ kind: /Lift/.test(cls) ? 'ascenseur' : /Belt/.test(cls) ? 'convoyeur' : 'raccord', path: owner, pts });
+    if (outs.length !== 1) { end = { what: cls + ' sans sortie unique' }; break; }
+    conn = owner + '.' + outs[0].name;
+  }
+  // points de la ligne dans le sens du flux (chaque piece retournee si besoin)
+  const line = [Object.assign({}, c0.location)];
+  for (const p of parts) {
+    const last = line[line.length - 1];
+    if (dist(p.pts[0], last) > dist(p.pts[p.pts.length - 1], last)) p.pts.reverse();
+    line.push(...p.pts);
+  }
+  return { c0, parts, end, line, side };
+}
+
+// Diagnostic d'une ligne posee (utilisateur, 27/10/2026 : « diag tracer » ; lignes de calcaire des gisements 110 et 54_833
+// de l'usine de beton, « grille fermee » au traceur, posees ensuite a la main) : la ligne reelle (followLine), rejouee tous
+// les 4 m dans le modele de la recherche (releve et obstacles comme pour convoyeur, la ligne et ses poteaux ignores) : ce
+// que la grille aurait refuse et pourquoi (mer, maille fermee par un obstacle a toutes les hauteurs de poteau, aucune
+// hauteur de poteau qui passe depuis l'echantillon precedent : falaise, la ou le traceur pose un ascenseur), hauteur reelle
+// du convoyeur au-dessus du sol du modele, ascenseurs de la ligne.
+async function diagBelt() {
+  const H = 100 * Number(opt('poteau', 2));
+  const ref = opt('de');
+  if (!ref) throw new Error('--de <acteur>.<connecteur> requis');
+  const short = (p) => p.split('.').pop();
+  const kind = (p) => short(p).replace(/_\d+$/, '');
+  // 1. la ligne, de connecteur en connecteur
+  const { parts, end, line } = await followLine(ref);
+  // echantillons tous les 4 m en plan (abscisse s, cap de la ligne)
+  const S = [];
+  let acc = 0, nextS = 0;
+  for (let k = 1; k < line.length; k++) {
+    const a = line[k - 1], b = line[k], d = Math.hypot(b.x - a.x, b.y - a.y);
+    for (; nextS <= acc + d && d > 0; nextS += BELT.CELL) {
+      const t = (nextS - acc) / d;
+      S.push({ s: nextS, x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, ang: Math.atan2(b.y - a.y, b.x - a.x) });
+    }
+    acc += d;
+  }
+  const count = (k) => parts.filter((p) => p.kind === k).length;
+  console.log('ligne :', count('convoyeur'), 'convoyeurs,', count('ascenseur'), 'ascenseurs,', count('raccord'), 'raccords,', Math.round(acc / 100), 'm en plan ; fin :', end ? end.what : '?');
+  // 2. modele : releve (sources de streaming comprises) et obstacles, la ligne ignoree
+  // marge de convoyeur (60 m + 20) : un surplomb n'est trouve que par contraste avec des mailles hors de la roche
+  const marge = 100 * Number(opt('marge', 60)) + 2000;
+  const xs = line.map((p) => p.x), ys = line.map((p) => p.y);
+  const box = { x0: Math.min(...xs) - marge, x1: Math.max(...xs) + marge, y0: Math.min(...ys) - marge, y1: Math.max(...ys) + marge };
+  const RS = Math.round(100 * Number(opt('releve', 4))), RC = Math.round(100 * Number(opt('releve-grossier', 4)));
+  const W = { box, width: 2 * BELT.HALF, height: 160 };
+  W.relief = RS < 400 ? await reliefMulti(box, RC, RS) : await relief(box, RS);
+  const ignore = new Set(parts.map((p) => short(p.path)).concat(end && end.path ? [short(end.path)] : []));
+  const nearLine = (c) => line.some((p) => Math.hypot(p.x - c.x, p.y - c.y) < 150);
+  const obs = (await obstacles(box, ignore)).filter((o) => !(o.kind === 'box' && /ConveyorPole|ConveyorCeiling|ConveyorWall/.test(o.what) && nearLine(o.c)));
+  W.near = index(obs);
+  // 3. chaque echantillon : refus de la grille (hauteurs de poteau de BELT.HS, propagees d'echantillon en echantillon) et
+  // ecarts avec la ligne reelle
+  const label = (h) => kind(h).replace(/^Build_/, '');
+  const hs = BELT.HS.map((h) => h / 100).join('-');
+  let reach = null;
+  for (let k = 0; k < S.length; k++) {
+    const p = S[k], why = [], st = { hits: {} };
+    p.g = hAt(W.relief, p.x, p.y);
+    p.bout = p.s < 400 || p.s > acc - 1200; // hors recherche : point d'approche du depart, deux poteaux d'arrivee
+    const cm = beltMask(W, p.x, p.y, [0, Math.PI / 2], H, st);
+    let m = cm;
+    if (!(p.g > BELT.SEA + 100 - BELT.HS[BELT.HS.length - 1])) why.push('mer');
+    else if (!cm) why.push('maille fermee' + (Object.keys(st.hits)[0] ? ' par ' + label(Object.keys(st.hits)[0]) : ''));
+    else if (k > 0 && reach) {
+      const q = S[k - 1];
+      m = beltStep(W, q, reach, p, cm);
+      if (!m) {
+        const dz = p.g - q.g;
+        why.push('aucune hauteur de ' + hs + ' m ne passe (sol ' + (dz / 100).toFixed(1) + ' m en ' + (Math.hypot(p.x - q.x, p.y - q.y) / 100).toFixed(1) + ' m' + (Math.abs(dz) >= BELT.LIFT.CLIFF ? ' : falaise -> ascenseur du traceur' : '') + ')');
+        m = cm;
+      }
+    }
+    reach = cm ? m : null;
+    p.why = why.join(', ');
+    // ligne reelle dans le modele : relief du modele au-dessus d'elle, obstacle a sa hauteur
+    const real = [];
+    if (p.g > p.z - BELT.CLEAR) real.push('sol du modele ' + ((p.g - p.z) / 100).toFixed(1) + ' m au-dessus');
+    const h = beltHitAt(W, p.x, p.y, p.z, p.ang);
+    if (h) real.push(label(h));
+    p.real = real.join(', ');
+  }
+  // 4. troncons de meme verdict
+  const m1 = (v) => (v / 100).toFixed(0);
+  const runs = [];
+  for (const p of S) {
+    const r = runs[runs.length - 1];
+    if (r && r.why === p.why && r.real === p.real && r.bout === p.bout) { r.b = p; continue; }
+    runs.push({ a: p, b: p, why: p.why, real: p.real, bout: p.bout });
+  }
+  console.log('\n  s (m)       sol modele   convoyeur reel   refus de la grille (poteaux de ' + hs + ' m)   | ligne reelle dans le modele');
+  for (const r of runs) {
+    console.log('  ' + (m1(r.a.s) + '-' + m1(r.b.s)).padEnd(11) + (m1(r.a.g) + '->' + m1(r.b.g) + ' m').padEnd(13) + (m1(r.a.z) + '->' + m1(r.b.z) + ' m').padEnd(17)
+      + (r.bout ? '(bout) ' : '') + (r.why || 'libre') + (r.real ? '   | ' + r.real : ''));
+  }
+  for (const p of parts.filter((q) => q.kind === 'ascenseur')) {
+    const [a, b] = p.pts, at = S.reduce((u, q) => (Math.hypot(q.x - a.x, q.y - a.y) < Math.hypot(u.x - a.x, u.y - a.y) ? q : u), S[0]);
+    console.log('ascenseur', short(p.path), 'a', m1(at.s), 'm :', m1(a.z), '->', m1(b.z), 'm en', Math.round(a.x) + ',' + Math.round(a.y));
+  }
+  const tally = {};
+  for (const p of S) if (!p.bout && p.why) for (const w of p.why.split(', ')) { const k = w.replace(/ \(.*\)$/, ''); tally[k] = (tally[k] || 0) + 1; }
+  const first = S.find((p) => !p.bout && p.why);
+  console.log('\nrefus (echantillons de 4 m, bouts exclus) :', JSON.stringify(Object.entries(tally).sort((a, b) => b[1] - a[1])));
+  console.log(first ? 'premier refus a ' + m1(first.s) + ' m (' + Math.round(first.x) + ',' + Math.round(first.y) + ') : ' + first.why : 'la grille accepte toute la ligne reelle : l\'echec vient d\'ailleurs (limite de noeuds, depart ou arrivee)');
 }
 
 // --- commandes ---------------------------------------------------------------------------------------------------------
@@ -1078,14 +1702,104 @@ async function carte() {
   if (n) console.log('acteurs :', String(opt('acteurs')).split(',').map((a, i) => String.fromCharCode(65 + (i % 26)) + ' ' + a).join(', '));
 }
 
+// Coupe verticale (utilisateur, 27/10/2026 : « est-ce que tu fais des profils de coupe aussi dans une direction donnee ? ») le
+// long d'un segment (--de x,y|<acteur> --a x,y|<acteur>) ou d'une ligne de tracer.js (--ligne traces/<nom>-ligne.json :
+// profil en long, convoyeur, poteaux et ascenseurs dessines). Une colonne tous les --pas m (une ligne de 160 colonnes au
+// plus par defaut), une rangee tous les --dz m (une quarantaine par defaut). # relief et roche (sous un surplomb : vide
+// entre le sol et le dessous de la roche), ~ mer, o batiment, = convoyeur, | poteau, H ascenseur
+async function coupe() {
+  const PRE = '/Game/FactoryGame/Map/GameLevel01/Persistent_Level.Persistent_Level:PersistentLevel.';
+  const where = async (s) => {
+    const m = /^(-?[\d.]+),(-?[\d.]+)$/.exec(s || '');
+    if (m) return { x: +m[1], y: +m[2] };
+    if (!s) throw new Error('coupe : --de et --a (x,y ou acteur), ou --ligne traces/<nom>-ligne.json');
+    return (await call('pose', s.includes('/') ? s : PRE + s)).location;
+  };
+  // sommets du trajet ; pour une ligne, altitude du convoyeur (z), colonnes d'ascenseur (col), poteaux (pole)
+  const V = [];
+  let L = null;
+  // --ligne avec --de et --a : coupe sur ce segment, dans le releve de la ligne (meme modele que sa recherche)
+  const seg = opt('de') && opt('a');
+  if (opt('ligne')) L = JSON.parse(fs.readFileSync(path.resolve(__dirname, opt('ligne')), 'utf8'));
+  if (L && !seg) {
+    L.points.forEach((p, k) => {
+      if (!p.lift) { V.push({ x: p.x, y: p.y, z: k === 0 || k === L.points.length - 1 ? p.z : p.top != null ? p.top : p.z + 100 * (p.poleHeight || L.poleHeight || 3) - 100, pole: k > 0 && k < L.points.length - 1 }); return; }
+      const cols = p.lift === 'descente' ? p.cols : [...p.cols].reverse();
+      V.push(Object.assign({}, p.entry));
+      for (const c of cols) {
+        const [z0, z1] = p.lift === 'descente' ? [c.zt, c.zb] : [c.zb, c.zt];
+        V.push({ x: c.x, y: c.y, z: z0, col: [c.zb, c.zt] }, { x: c.x, y: c.y, z: z1 });
+      }
+      V.push(Object.assign({}, p.exit));
+    });
+  } else V.push(await where(opt('de')), await where(opt('a')));
+  // abscisse le long du trajet
+  V[0].s = 0;
+  for (let k = 1; k < V.length; k++) V[k].s = V[k - 1].s + Math.hypot(V[k].x - V[k - 1].x, V[k].y - V[k - 1].y);
+  const Ltot = V[V.length - 1].s;
+  const P = 100 * Number(opt('pas', Math.max(4, Math.ceil(Ltot / 100 / 160))));
+  // releve aussi large que celui de convoyeur : un surplomb n'est trouve que par contraste avec des mailles hors de la roche
+  // (a 20 m de marge, la ligne du caterium de la cote, toute sous le toit, avait un sol a 275 m au lieu de 80 m)
+  // et, pour une ligne, le releve meme de sa recherche (cache) : les surplombs trouves dependent de la zone relevee
+  const xs = V.map((p) => p.x), ys = V.map((p) => p.y), m0 = 100 * Number(opt('marge', 60)) + 2000;
+  const RL = L && L.releve;
+  const box = RL ? RL.box : { x0: Math.min(...xs) - m0, x1: Math.max(...xs) + m0, y0: Math.min(...ys) - m0, y1: Math.max(...ys) + m0 };
+  const RS = RL ? RL.step : Math.round(100 * Number(opt('releve', 4)));
+  const rl = RS < 400 ? await reliefMulti(box, RL ? RL.coarse : 400, RS) : await relief(box, RS);
+  const near = index(await obstacles(box, new Set()));
+  const Wb = { relief: Object.assign({}, rl, { over: null }), near }; // batiments seuls
+  // echantillons : position, sol, surplombs, convoyeur interpole (pas sur un segment vertical)
+  const S = [];
+  for (let s = 0; s <= Ltot + 1; s += P) {
+    let k = 1;
+    while (k < V.length - 1 && V[k].s < s) k++;
+    const a = V[k - 1], b = V[k], t = b.s > a.s ? Math.min(1, Math.max(0, (s - a.s) / (b.s - a.s))) : 1;
+    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+    S.push({ s, x, y, g: hAt(rl, x, y), over: overAt(rl, x, y), belt: L && !seg && a.z != null && b.z != null ? a.z + (b.z - a.z) * t : null });
+  }
+  const at = (p) => S.reduce((u, q, i) => (Math.abs(q.s - p.s) < Math.abs(S[u].s - p.s) ? i : u), 0);
+  const poles = new Map(), cols = new Map();
+  for (const p of V) { if (p.pole) poles.set(at(p), p.z); if (p.col) cols.set(at(p), p.col); }
+  // rangees
+  const zsAll = S.flatMap((q) => [q.g, q.belt, ...q.over.map((o) => o[1])]).filter((z) => z != null && z > -Infinity);
+  const zmin = Math.max(Math.min(...S.map((q) => q.g).filter((z) => z > -Infinity)) - 300, BELT.SEA - 300), zmax = Math.max(...zsAll) + 300;
+  const nice = [1, 2, 5, 10, 20, 50, 100];
+  const DZ = 100 * Number(opt('dz', nice.find((n) => (zmax - zmin) / 100 / n <= 45) || 100));
+  const lines = [];
+  for (let zr = Math.floor(zmax / DZ) * DZ; zr >= zmin - DZ; zr -= DZ) {
+    let l = ((zr / 100).toFixed(0) + ' m').padStart(7) + ' ';
+    S.forEach((q, i) => {
+      const lo = zr, hi = zr + DZ;
+      const c = cols.get(i);
+      if (c && hi > c[0] && lo <= c[1]) { l += 'H'; return; }
+      if (q.belt != null && q.belt >= lo && q.belt < hi) { l += '='; return; }
+      const pz = poles.get(i);
+      if (pz != null && lo < pz && hi > q.g) { l += '|'; return; }
+      if (hitColumn(Wb, q.x, q.y, lo, hi, Infinity)) { l += 'o'; return; }
+      if (lo < q.g || q.over.some(([u, t]) => hi > u && lo < t)) { l += '#'; return; }
+      if (q.g < BELT.SEA && lo < BELT.SEA) { l += '~'; return; }
+      l += ' ';
+    });
+    lines.push(l);
+  }
+  let axis = ' '.repeat(8), lab = ' '.repeat(8);
+  S.forEach((q, i) => { axis += i % 10 === 0 ? '|' : '-'; if (i % 10 === 0) lab += String(Math.round(q.s / 100)).padEnd(10); });
+  console.log((L && !seg ? 'profil en long de ' + opt('ligne') : 'coupe de ' + Math.round(V[0].x) + ',' + Math.round(V[0].y) + ' a ' + Math.round(V[1].x) + ',' + Math.round(V[1].y) + ', cap ' + Math.round(norm360((Math.atan2(V[1].y - V[0].y, V[1].x - V[0].x) * 180) / Math.PI))) + ' : ' + Math.round(Ltot / 100) + ' m, une colonne tous les ' + P / 100 + ' m, une rangee tous les ' + DZ / 100 + ' m');
+  console.log(lines.join('\n'));
+  console.log(axis + '\n' + lab + ' (m)');
+  console.log('# relief et roche, ~ mer, o batiment' + (L && !seg ? ', = convoyeur, | poteau, H ascenseur' : ''));
+}
+
 if (require.main === module) {
   (async () => {
     if (argv[0] === 'rail') await planRail();
     else if (argv[0] === 'valider') await valider();
     else if (argv[0] === 'controler') await controler();
     else if (argv[0] === 'convoyeur') await planBelt();
+    else if (argv[0] === 'diag-convoyeur') await diagBelt();
     else if (argv[0] === 'carte') await carte();
-    else throw new Error('usage : node tracer.js rail --de x,y,z@cap --a x,y,z@cap --nom <nom> [...] | valider <nom> | convoyeur --de <acteur>.<connecteur> --a <acteur>.<connecteur> --nom <nom> | carte --centre x,y [--rayon m]');
+    else if (argv[0] === 'coupe') await coupe();
+    else throw new Error('usage : node tracer.js rail --de x,y,z@cap --a x,y,z@cap --nom <nom> [...] | valider <nom> | convoyeur --de <acteur>.<connecteur> --a <acteur>.<connecteur> --nom <nom> [--par x,y;x,y] [--eviter x0,y0,x1,y1;...] | diag-convoyeur --de <acteur>.<connecteur> | carte --centre x,y [--rayon m] | coupe --de x,y --a x,y | coupe --ligne traces/<nom>-ligne.json');
   })().catch((e) => { console.error('ECHEC :', e.message); process.exitCode = 1; });
 }
-module.exports = { relief, reliefMulti, obstacles, index, hitAt, hitColumn, hAt, overAt, hermite, step, profile };
+module.exports = { relief, reliefMulti, obstacles, index, hitAt, hitColumn, hAt, overAt, hermite, step, profile, beltEnd, traceBelt, loadArea };

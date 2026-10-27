@@ -5,10 +5,13 @@
 Leçons de la gare des mines (23/10/2026) : le relief découvert en échouant, des lignes tracées une par une qui se barrent la route, le courant posé avant les convoyeurs. Ordre à suivre :
 
 1. **Carte du relief**, avant de placer quoi que ce soit : `node tracer.js carte --centre x,y|<acteur> [--rayon 150] [--pas 8] [--bande 5] [--acteurs a,b]`. Une case par maille, un chiffre ou une lettre par tranche d'altitude, `^` surplomb, `~` mer, `o` bâtiment au sol. On y lit les falaises, les plateaux, les arches. L'utilisateur : « juste que tu puisses te faire une carte mentale du relief ».
-2. **Foreuses**, sortie orientée d'après le relief : `node foreuses.js <gisement>[@auto|@<cap>] ... --vers x,y|<acteur> --nom <chantier> [--dry]`.
-   - Parmi les 8 directions, il retient celles où le sol devant la sortie laisse la place d'un premier poteau, sans bâtiment, puis prend la plus proche de `--vers`.
+2. **Foreuses**, orientées par le chemin de leur ligne : `node foreuses.js <gisement>[@auto|@<cap>] ... --ligne-vers <acteur>.<connecteur> --nom <chantier> [--ligne-nom <nom>] [--dry]`.
+   - Le chemin d'abord, l'orientation ensuite (utilisateur, 27/10/2026 : « on trouve le path et seulement ensuite on oriente la foreuse, le path ne doit pas dépendre de l'orientation de celle-ci »). Une seule recherche du traceur part à la fois des sorties des 8 caps, à coût égal. La foreuse à poser compte comme obstacle à tous ses caps, son emprise étant lue dans `clearanceData.json`. Le cap est celui de la sortie d'où part le chemin.
+   - Sortie prévue à 8 m du centre du gisement, dans l'axe du cap, et 1,3 m au-dessus. Après la pose, la ligne est retracée depuis la vraie sortie, sur le même relevé : `traces/<--ligne-nom, foreuse-<gisement>>-ligne.json`, à poser par `beltline.js`.
+   - Essais à blanc du 27/10/2026, avec `--remplace` de la ligne posée à la main : le gisement 110 donne le cap 45 (foreuse refaite par l'utilisateur au cap 40) ; le 54_833 donne le cap 135 (l'utilisateur sort par le côté d'un répartiteur, au cap 120).
+   - Sans `--ligne-vers`, ancien choix : parmi les 8 directions où le sol devant la sortie laisse la place d'un premier poteau, sans bâtiment, la plus proche de `--vers`. C'est ce choix qui avait mal orienté les foreuses de calcaire de l'usine de béton.
    - Il pose ensuite à 250 % avec 3 éclats.
-   - Il réessaie si une bête est trop près, et signale une zone non chargée (décor simplifié `StaticMeshProxy` au-dessus du gisement : rapprocher le joueur).
+   - La zone est chargée par une source de streaming le temps de la visée et de la pose. Il réessaie si une bête est trop près, et signale un gisement déjà exploité.
 3. **Parties hautes** propres à la gare (tampons en l'air : relais, convoyeur court, ascenseur par entrée) : script de la gare, modèle `convoyeurs-mines.js`.
 4. **Plan groupé des lignes** : `node lignes-gare.js <plan.json> [--trace] [--pose]`.
    - Il affecte les départs aux arrivées en minimisant les croisements, avec des groupes : le cuivre ne va qu'aux entrées du cuivre.
@@ -34,17 +37,33 @@ node tracer.js convoyeur --de <acteur>.<connecteur> --a <acteur>.<connecteur> --
 node beltline.js traces/<nom>-ligne.json build --nom <nom>-sol
 ```
 
-- Ligne au sol sur poteaux (2 m par défaut) qui suivent le relief. Elle part d'un point 4 m devant la sortie de départ et arrive à un point d'approche 5 m devant l'entrée d'arrivée.
+- Ligne au sol sur poteaux qui suivent le relief : le convoyeur passe de 1 à 6 m au-dessus du sol, à `--poteau` m (2 par défaut) de préférence. Elle part d'un point 4 m devant la sortie de départ et arrive à un point d'approche 5 m devant l'entrée d'arrivée.
 - **Recherche** :
   - A* sur une grille de 4 m, en 8 directions, avec un virage de 45° compté comme 6 m de plus ;
-  - puis raccourcis en lignes droites de cap quelconque : de chaque point, le plus loin joignable.
+  - chaque nœud garde l'ensemble des hauteurs de convoyeur encore possibles (1 à 6 m au-dessus du sol), propagé de maille en maille par les règles des lignes droites : la grille enjambe un creux ou un talus sur des poteaux plus hauts. Chaque mètre de la plus basse hauteur possible au-dessus de `--poteau` coûte 5 m par maille ;
+  - **ascenseurs** aux falaises de 8 m et plus : relais en l'air (fusionneur) du côté haut, convoyeur à plat jusqu'à lui (40 m au plus), jusqu'à 3 colonnes de 47 m, chacune 4 m plus loin que la précédente, pied 1 m au-dessus du plus haut sol sous la colonne et 5 m au-delà. En descente, la ligne repart du pied tout droit ; en montée, elle arrive au pied. Un ascenseur coûte 30 m ;
+  - puis raccourcis en lignes droites de cap quelconque : de chaque point, le plus loin joignable, à 45° au plus du sens d'un connecteur de relais ou d'ascenseur ;
+  - départ au-dessus du vide (foreuse au sommet d'une aiguille) : seule une descente en part.
   - L'utilisateur demande « grandes lignes droites sans escaliers, mais en suivant les vallées ».
+- **`--remplace <acteur>.<connecteur> [--sortie <connecteur>]`** : ignore une ligne existante, suivie depuis ce connecteur comme le fait `diag-convoyeur`, avec ses poteaux et les convoyeurs branchés aux autres sorties de ses répartiteurs. Sert à retracer une ligne, ou à essayer le traceur sur une ligne posée à la main.
+- **Piloter la recherche** (utilisateur, 27/10/2026 : « tu imposes pas des points de passage au tracer pour le piloter un minimum ? ») :
+  - `--par x,y;x,y` : points de passage, en uu, atteints dans l'ordre. Chaque nœud porte le nombre de points déjà atteints : la recherche reste optimale, et les lignes droites ne sautent jamais un point de passage. Un point fermé à toutes les hauteurs est signalé ;
+  - `--eviter x0,y0,x1,y1;…` : rectangles interdits à toute hauteur (zone d'extension future, abords d'un bâtiment), pris en compte par tous les contrôles du gabarit, ascenseurs et lignes droites compris.
+- **Grille de 4 m, aveugle aux passages étroits et aux grottes** (choix de l'utilisateur, 27/10/2026 : « je préfère un tracer un peu plus rapide qui reste aveugle à ce genre de passage ») : le relevé prend la plus haute des 4 mailles voisines, un obstacle déborde donc jusqu'à 4 m. Sous un grand toit de roche, les surplombs ne sont trouvés que de proche en proche : des mailles restent au toit, et lesquelles dépend de la zone relevée. Passage du caterium de la côte (2147219490, sol 55-79 m, toit vers 150 m, roche jusqu'à 280-380 m) : fermé même avec `--par` et `--releve 2` ; `diag-convoyeur` de la ligne posée y voit des dizaines de mailles au toit. Un tel passage se trace à la main.
+- **Coupe** : `node tracer.js coupe --de x,y|<acteur> --a x,y|<acteur> [--pas m] [--dz m]`, ou `coupe --ligne traces/<nom>-ligne.json` pour le profil en long d'une ligne tracée (convoyeur `=`, poteaux `|`, ascenseurs `H`), ou les deux pour couper un segment dans le relevé de la ligne. Une colonne par pas, une rangée par tranche d'altitude ; `#` relief et roche (vide entre le sol et le dessous d'un surplomb), `~` mer, `o` bâtiment. Le relevé couvre 80 m autour du trajet : un surplomb n'est trouvé que par contraste avec des mailles hors de la roche (à 20 m de marge, toute la ligne du caterium était sous le toit, sol vu à 275 m au lieu de 80 m). Le fichier de ligne garde la zone relevée par la recherche (`releve`) : la coupe relit le même relevé.
+- **Surplombs, relevé `relief8`** (27/10/2026, passage du caterium) : une maille voisine d'un surplomb est sondée si un balayage horizontal l'atteint à 2, 6 ou 12 m au-dessus du sol voisin (à 2 m seulement, un bloc au sol fermait le passage). Une maille rejetée est retentée depuis une voisine d'un autre niveau : le sondage cherche le sol à 6 m près de celui de la voisine.
 - **Une ligne droite est posable si** :
-  - ses poteaux sont espacés de 40 m au plus (portée raccourcie si le relief l'impose) ;
+  - ses poteaux sont espacés de 40 m au plus ;
   - la pente reste sous 0,55 (30°) entre deux poteaux ;
-  - le relief passe au moins 30 cm sous le convoyeur ;
+  - le relief passe sous la corde entre deux poteaux d'au moins 30 cm plus 5 % du dénivelé de la portée ;
   - aucun obstacle ne gêne, ni sur le convoyeur ni sur la colonne d'un poteau ;
   - le convoyeur ne passe jamais sous la mer.
+- **Forme réelle d'une portée** (mesurée le 27/10/2026 sur 10 tronçons posés de la ligne 110) : le jeu pose les bouts à l'horizontale sur chaque poteau, et la courbe passe sous la corde du côté bas, jusqu'à 4,4 % du dénivelé (0,35 m pour 8 m sur 32 m). D'où la marge de 5 %.
+- **Poteaux imposés** (utilisateur, 27/10/2026 : « le jeu ne détecte pas quand un belt traverse le décor, il faut que tu imposes certains poteaux, les maximums locaux sur le plan horizontal ou vertical ») :
+  - **en vertical, sur les crêtes** : une portée de plus de 40 m est coupée à sa crête ; une portée dont le relief passe trop près sous le convoyeur reçoit un poteau à sa crête. La crête est le point du relief le plus haut au-dessus de la corde entre les deux poteaux : sur une pente, le plus haut point tout court serait le bout haut. Les poteaux ne sont remontés (convoyeur jusqu'à 6 m du sol) que lorsqu'une portée est trop courte pour être coupée (8 m au plus court). À défaut, poteaux régulièrement espacés, de plus en plus serrés ;
+  - **en horizontal, aux coudes** : une ligne droite ne s'écarte jamais de plus de 4 m (une maille) des points de la recherche qu'elle saute ; au-delà, elle s'arrête au coude et un poteau y est posé.
+  - Essais du 27/10/2026 (lignes posées à la main ignorées, aucun contact avec la roche au balayage réel) : 110 902 m et 35 poteaux (30 avant, sans crêtes ni coudes ; 61 depuis la sortie prévue de la foreuse, espacement régulier seul), 54 9 poteaux, caterium 8.
+- **Sol sous un poteau** : `tracer.js` le relit dans la fenêtre de `beltline.js` (15 m au-dessus, 30 m sous le sol prévu) ; sans sol naturel, il cherche un bâtiment comme `beltline.js` (fondation au-dessus d'un trou sur la ligne 110). `beltline.js` règle la hauteur du poteau sur le sol trouvé (`top`) : alerte si elle sort de 1 à 7 m.
 - **Obstacles** : ceux de `tracer.js`, plus les ascenseurs, en colonne du pied au sommet (`mTopTransform`). La foreuse de départ reste un obstacle ; seul l'ascenseur d'arrivée est ignoré. Relancer avec `--frais` après chaque ligne posée, pour que la suivante l'évite.
 - **Montée à une entrée en hauteur** (tampons d'une gare en l'air) :
   1. convoyeur court de l'entrée jusqu'au bord de la plateforme, sur un poteau posé dessus ;
@@ -62,6 +81,16 @@ node beltline.js traces/<nom>-ligne.json build --nom <nom>-sol
   - le tracé peut franchir un convoyeur existant par-dessus, sur des poteaux 4 m plus hauts, avec un coût qui limite ces franchissements ;
   - **sol exact sous chaque poteau** : `tracer.js` le relit à la fin et affiche `ATTENTION` quand il s'écarte de plus de 1,5 m du sol prévu. Le relevé en mailles lisse le bord d'une marche, alors que beltline cherche le sol à la verticale du point. Ligne du caterium 169 de S13 E101 (25/10/2026) : un poteau prévu à 126 m a été posé à 115 m, au pied d'une marche de 11 m, et le tronçon suivant a été refusé (`FGCDInvalidPlacement`). Correction : démonter le tronçon et son poteau, retirer le dernier tronçon de l'état, déplacer le point dans `traces/<nom>-ligne.json` sur le sol prévu, puis `beltline ... check` et `build`.
 - **beltline** compare les sommets de poteaux, et non plus les sols, pour sa vérification de pente entre deux bouts. Avant cela, il refusait un poteau haut sous une sortie en surplomb, comme une foreuse à flanc de colline.
+- **Échec** : « recherche abandonnée après N nœuds » (limite de 400 000 atteinte) n'est pas « grille fermée » (aucun chemin dans le modèle).
+- **Diagnostic d'une ligne posée** : `node tracer.js diag-convoyeur --de <foreuse>.Output0 [--sortie <connecteur>]` suit la ligne réelle jusqu'au premier fusionneur. `--sortie` choisit la sortie d'un répartiteur qui en a plusieurs de branchées. La ligne est rejouée tous les 4 m dans le modèle de la recherche. Pour chaque tronçon, il affiche :
+  - le refus de la grille : mer, maille fermée par un obstacle, pente du sol, bosse ;
+  - le sol du modèle et la hauteur réelle du convoyeur ;
+  - les ascenseurs.
+
+  Lignes de calcaire 110 et 54 de l'usine de béton (27/10/2026), posées à la main après « grille fermée » :
+  - le traceur ne pose pas d'ascenseur : une falaise (110, 35 m) ou une foreuse au sommet d'une aiguille (54, 108 m) ferme la grille ;
+  - la grille demande une pente du sol de 0,55 au plus entre deux mailles de 4 m : un creux de 4 m ou un talus de 6 m, que la vraie ligne enjambe sur des poteaux plus hauts, la ferme aussi ;
+  - sous l'arche `CliffPillar_320`, des mailles non sondées ont fait un mur à 193 m, corrigé dans le relevé (`relief6`).
 
 ```bash
 node beltline.js <ligne.json> check|build [--nom <nom>] [--pas <m>] [--jusqua <n>] [--suivre]
@@ -69,6 +98,7 @@ node beltline.js <ligne.json> check|build [--nom <nom>] [--pas <m>] [--jusqua <n
 
 - `<ligne.json>` : recette, connecteur de départ, points du tracé (uu), raccord final facultatif, `groundAbove` (m).
 - Tronçons de 40 m au plus ; le jeu ajoute un poteau au bout de chaque tronçon posé au sol ; état dans `<nom>-state.json`.
+- **Points d'ascenseur** (écrits par `tracer.js`) : `{ lift: "descente"|"montee", x, y (relais), top, foot, u, cols, entry, exit }`. beltline pose le relais en l'air (fusionneur, `ignore: FGCDInvalidFloor`, sortie dans le sens de la ligne), puis les ascenseurs depuis le haut : un ascenseur montant accroché au bout d'un convoyeur se pose à l'envers. Le pied de chacun doit regarder la colonne suivante : molettes 180, 0, 90 et 270 essayées, l'ascenseur est démonté et reposé (1,5 s d'attente) tant que le pied est mal tourné ou la colonne à plus de 2 m du plan. Descente : convoyeur jusqu'à l'entrée du relais, ascenseurs, la ligne repart du pied. Montée : ascenseurs, convoyeur jusqu'au pied, la ligne repart de la sortie du relais. Un ascenseur commencé est repris au lancement suivant (`pending` dans l'état). `check` n'essaie que le relais.
 - Un bout refusé (sol en pente, végétation) est retenté à 3 et 6 m de côté ou 5 m en arrière ; pente maximale 30°.
 - Le premier point du tracé sert de point de départ et n'est pas posé. Avec un raccord final, le dernier point est remplacé par ce raccord : le dernier tronçon part de l'avant-dernier point. Pour imposer un poteau d'approche, ajouter un point après lui.
 - Le sol de chaque bout est cherché dans une fenêtre autour du z du point. Sous une gare ou des quais posés en l'air, prendre ce z sur le relief et non par `ground`, qui touche les bâtiments : sinon le poteau se pose sur le quai.
