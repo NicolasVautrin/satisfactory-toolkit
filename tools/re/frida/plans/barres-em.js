@@ -16,9 +16,10 @@
 //  - minerai : il entre au bout ouest de la rangee du bas ; b1, b2, b3 : il file vers l'est, monte de 32 m au bout est et
 //    revient vers l'ouest en haut ; b4 : cuivre en bas, caterium en haut, chacun vers l'est.
 //  - eau : extracteurs sous la rangee du bas (100 %), un reseau par etage et par cote ; bas : colonne directe (pompe Mk1) ;
-//    haut : relais A a -7 m, colonne, relais B a +37 m (pompe Mk2), comme le bloc cuivre.
+//    haut : relais A a -7 m, colonne, relais B a +37 m (pompe Mk2), comme le bloc cuivre ; 2e pompe Mk2 entre -16 et
+//    -9 m (pompesBasses) : la pompe de la colonne est hors de portee de l'extracteur.
 // usage : node barres-em.js <phase> [--dry]
-//   phases : raffineries | recettes | extracteurs | eau | colonnes | pompes | minerai | lingots | toles | tampons |
+//   phases : raffineries | recettes | extracteurs | eau | colonnes | pompes | pompesBasses | minerai | lingots | toles | tampons |
 //            troncs | cote | piles [etapes pile.js] [Q1,A1,...] | liaisons | sorties | arrivees | courant | verifie
 // Etat : barres-em-state.json (non versionne).
 'use strict';
@@ -59,7 +60,9 @@ const ROWS = [
 ].map(([id, b, e, kind, n, flux]) => ({ id, b, e, kind, n, flux, Y: BANDES[b], Z: ETAGES[e], K: [...Array(n).keys()] }));
 const TYPE = (row, k) => (row.kind === 'cat' ? 'C' : T_CU(k));
 const YAW = { L: 0, T: 180, C: 0 };
-const MONTEE = { 1: true, 2: true, 3: true, 4: false }; // minerai commun aux deux etages, monte au bout est
+// minerai commun aux deux etages, monte au bout est ; b1 et b2 : montee deplacee au bout est du filactif (filactif.js
+// b12Minerai, 27/10/2026), ses pieces sont retirees de l'etat
+const MONTEE = { 1: false, 2: false, 3: true, 4: false };
 const rowOf = (b, e) => ROWS.find((r) => r.b === b && r.e === e);
 // Extracteurs sous la rangee du bas : [k, etage alimente, cote de la ligne] ; x = X(k) - 600 (entre deux raffineries),
 // 3 m vers leur cote, sortie vers ce cote. Reseaux : L 10 m3 et C 24 m3 au sud, T 22,5 m3 au nord, par raffinerie ;
@@ -397,6 +400,28 @@ const PHASES = {
     for (const b of [1, 2, 3, 4]) for (const e of exts(b)) {
       if (e.e === 'bas') await pompe('b' + b + ' pompe ' + e.k, REC.pump1, st.links['b' + b + ' colonne ' + e.k], -1300, -600);
       else await pompe('b' + b + ' pompe ' + e.k, REC.pump2, st.links['b' + b + ' colonne haute ' + e.k], 0, 2500);
+    }
+  },
+
+  // 2e pompe Mk2 en bas des colonnes du haut (utilisateur, 27/10/2026 : « la raffinerie de cat rod selectionnee n'a pas
+  // d'eau ») : la pompe de la colonne (0 a 25 m) etait hors de portee de l'extracteur (-18 m) ; l'eau n'y montait pas,
+  // extracteur plein, raffineries sans eau. Pompe sur le tuyau extracteur -> relais A, entre -16 et -9 m, cablee au poteau
+  // le plus proche qui a une place libre. Essai sur b4 extracteur 2 : l'eau arrive, une raffinerie a 100 % en 20 s.
+  async pompesBasses() {
+    for (const b of [1, 2, 3, 4]) for (const e of exts(b).filter((q) => q.e === 'haut')) {
+      const key = 'b' + b + ' pompe basse ' + e.k;
+      await pompe(key, REC.pump2, st.links['b' + b + ' extracteur ' + e.k + ' > A'], -1600, -900);
+      const a = st.actors[key];
+      if (!a || st.wires[key]) continue;
+      const at = (await call('pose', a)).location;
+      let done = false;
+      for (const it of (await call('scan', 'FGBuildablePowerPole', at, 8000, 30, {})).items) {
+        const pw = await call('power', it.path);
+        if (pw.wires >= pw.maxWires || pw.circuitId < 0) continue;
+        const r = await call('wire', it.path, a, {});
+        if (r.built) { st.wires[key] = r.actor || true; save(); console.log(('cable ' + key).padEnd(44), short(it.path), Math.round(it.distance / 100) + ' m'); done = true; break; }
+      }
+      if (!done) throw new Error(key + ' : aucun poteau libre a moins de 80 m');
     }
   },
 

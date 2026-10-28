@@ -33,8 +33,12 @@
 //                                     // "mode": "ascenseur" : ligne 4 m derriere le pied, hauteur -6 ou +6
 //     "directes": [ { "entree": "Input2", "depuis": "<nom d'une autre pile>", "sortie": "Output0" } ],
 //     "sortie": "directe",            // facultatif : sortie reprise par une autre pile (pas de collecteur)
+//     "libres": [ "Input2" ],         // facultatif : entrees que la recette n'utilise pas (fabricant a 3 ingredients) :
+//                                     // pas de colonne
+
 //     "collecteur": { "sens": "-lx" },
-//     "poteaux": [ [lx, ly], ... ],   // facultatif (repere de la rangee, m) ; defaut : un par pile devant le collecteur
+//     "poteaux": [ [lx, ly], ... ],   // facultatif (repere de la rangee, m) ; defaut : un par pile devant le collecteur ;
+//                                     // [lx, ly, h] : poteau h m au-dessus de la plateforme
 //     "reseau": "<poteau du reseau>",
 //     "enLAir": true }              // sans fondations : pied des piles et poteaux poses en l air (complexes sur l eau)
 // Reperes : plateforme = origine au centre des fondations, x le long de la grille (cap), y a +90 ; rangee = origine au
@@ -141,8 +145,9 @@ async function geometry(cfg, st) {
   // exterieures (|x| le plus grand) sont pres de la machine, les interieures plus loin : leurs ascenseurs de cote
   // tombent entre deux rangs et ne se croisent pas
   const direct = new Set((cfg.directes || []).map((d) => d.entree));
+  const libres = new Set(cfg.libres || []);
   const maxAbs = Math.max(...ins.map((k) => Math.abs(k.offset.x)));
-  const columns = ins.filter((k) => !direct.has(k.name)).map((k) => {
+  const columns = ins.filter((k) => !direct.has(k.name) && !libres.has(k.name)).map((k) => {
     const ext = ins.length <= 2 || Math.abs(k.offset.x) > maxAbs - 100;
     const back = ins.length <= 2 ? DESIGN.SPLITTER_BACK : ext ? DESIGN.SPLITTER_BACK_EXT : DESIGN.SPLITTER_BACK_INT;
     return { input: k.name, x: k.offset.x, y: k.offset.y - back, z: k.offset.z, outer: k.offset.x > 0 ? 1 : -1, ext };
@@ -321,17 +326,25 @@ const PHASES = {
     const available = await call('recipes', null);
     const recipe = RECIPES.poles.find((x) => available.indexOf(x) >= 0);
     if (!recipe) throw new Error('aucun poteau electrique debloque');
-    const spots = cfg.poteaux ? cfg.poteaux.map(([lx, ly]) => [lx * 100, ly * 100]) : g.stacks.map((lx) => [lx, g.merger.y + DESIGN.COLLECTOR_FRONT + DESIGN.POLE_FRONT]);
+    // hauteur facultative du poteau au-dessus de la plateforme (piles hautes : cables de 100 m au plus ; oscillateurs,
+    // 27/10/2026 : 9 etages de 14 m, second rang de poteaux a +70 m)
+    const spots = cfg.poteaux ? cfg.poteaux.map(([lx, ly, h]) => [lx * 100, ly * 100, (h || 0) * 100]) : g.stacks.map((lx) => [lx, g.merger.y + DESIGN.COLLECTOR_FRONT + DESIGN.POLE_FRONT, 0]);
     const poles = [];
-    for (const [k, [lx, ly]] of spots.entries()) poles.push(await ops.build('poles', 'poteau ' + k, recipe, g.W(lx, ly, g.pf.dessus), g.machineYaw, cfg.enLAir ? AIR : {}));
+    for (const [k, [lx, ly, h]] of spots.entries()) poles.push(await ops.build('poles', 'poteau ' + k, recipe, g.W(lx, ly, g.pf.dessus + h), g.machineYaw, cfg.enLAir ? AIR : {}));
     if (poles.some((p) => !p)) return;
     // pile k sur le poteau k (modulo le nombre de poteaux) ; poteaux chaines, le premier relie au reseau. Au moins deux
     // poteaux par pile (pp) : les etages de la pile s se partagent les poteaux s, s + piles, s + 2 x piles... par tranches
     // (piles de 10 fonderies du module alu, 25/10/2026 : 10 machines + chaine + reseau depassaient les 10 connexions
     // d'un poteau Mk3)
+    // Chaine : chaque poteau au plus proche des precedents (bloc d'acier compacte, 27/10/2026 : 10 piles, le 1er poteau de la
+    // seconde serie est a 144 m du dernier de la premiere)
     const plan = [];
     if (cfg.reseau) plan.push([poles[0], cfg.reseau]);
-    for (let k = 1; k < poles.length; k++) plan.push([poles[k], poles[k - 1]]);
+    for (let k = 1; k < poles.length; k++) {
+      const d = (j) => Math.hypot(spots[k][0] - spots[j][0], spots[k][1] - spots[j][1]);
+      const near = [...Array(k).keys()].reduce((b, j) => (d(j) < d(b) ? j : b), k - 1);
+      plan.push([poles[k], poles[near]]);
+    }
     const ns = g.stacks.length, pp = Math.floor(poles.length / ns);
     for (const s of g.stacks.keys()) {
       for (let i = 0; i < g.floors; i++) {

@@ -17,7 +17,7 @@
 // Azote du puits « N for nuke & rocket fuel » vers N204 O100 : azoteCharge ; charbon de la balise « coal for rocket
 // fuel » : charbonCharge. Petrole de la balise « petrole for rocket fuel » : puitsPetrole [cap], petrole.
 // usage : node gares-carburant.js <tampons|nitrique|azote|charbon|tamponsCharge|nitriqueN211|azoteCharge|charbonCharge|
-//   soufreDemonte|soufre|puitsPetrole|petrole|verifie> [--dry]
+//   azoteCourant|soufreDemonte|soufre|puitsPetrole|petrole|verifie> [--dry]
 // Etat : gares-carburant-state.json (non versionne).
 'use strict';
 
@@ -224,9 +224,18 @@ const PHASES = {
   // l'est jusqu'a x -233 500, au nord jusqu'a y -202 300 (13 m au sud des rails des anneaux ; poteau Mk2 a x -232 320),
   // a l'est le long de la cote jusqu'a x -102 500 (falaises au sud jusqu'a y -199 500 / -200 500), au sud sous la sortie
   // de N204 O100 jusqu'a y -199 000, puis montee avec pompe Mk2 jusqu'au reservoir q1 (ConnectionAny0, au sud).
+  // Depart refait le 28/10/2026 (le depart de l'utilisateur a disparu avec l'ancien site nucleaire ; utilisateur :
+  // « reformer le pipe qui allait a l'est ») : jonction d0 a l'est des extracteurs 2147355280 (au sud, par Connection2)
+  // et 2147355600 (au nord, par Connection3), a l'est le long de y -186 450 (jonctions tous les 45 m), au nord le long
+  // de XO jusqu'a a0, puis le trace d'origine. Releve du relief : la mer de -17 a -29 m sous tout le trace.
   async azoteCharge() {
-    const z = -1200, DEPART = PREFIX + 'Build_PipelineMK2_C_2146448438', XO = -233500, XE = -102500, YC = -202300;
-    const pts = [['a0', { x: XO, y: -191455, z }, 'Connection0', 'Connection3']];
+    const z = -1200, XO = -233500, XE = -102500, YC = -202300, YD = -186450;
+    const pts = [['d0', { x: -247000, y: YD, z }, 'Connection2', 'Connection1']];
+    for (const x of [-242500, -238000]) pts.push(['d' + x, { x, y: YD, z }, 'Connection0', 'Connection1']);
+    pts.push(['d1', { x: XO, y: YD, z }, 'Connection0', 'Connection3']);
+    pts.push(['a0', { x: XO, y: -191455, z }, 'Connection2', 'Connection3']);
+    // la pompe a coupe le tuyau a3 > fin en deux (amont, aval) : il est pose
+    if (!st.links['azote charge a3 > fin'] && st.links['azote charge a3 > fin (amont)']) st.links['azote charge a3 > fin'] = st.links['azote charge a3 > fin (amont)'];
     for (const y of [-195070, -198685]) pts.push(['n' + y, { x: XO, y, z }, 'Connection2', 'Connection3']);
     pts.push(['a1', { x: XO, y: YC, z }, 'Connection2', 'Connection1']);
     const N = 28;
@@ -235,13 +244,30 @@ const PHASES = {
     pts.push(['a3', { x: XE, y: -199000, z }, 'Connection3', 'Connection1']);
     pts.push(['fin', { x: -98519, y: -199000, z: 524 }, 'Connection0', 'Connection3']);
     await chaine('azote charge', REC.junction, REC.pipe, pts);
-    await link('depart utilisateur > azote charge', REC.pipe, DEPART, 'PipelineConnection1', A('azote charge a0'), 'Connection0');
+    await link('extracteur 2147355280 > azote charge', REC.pipe, PREFIX + 'Build_FrackingExtractor_C_2147355280', 'FGPipeConnectionFactory', A('azote charge d0'), 'Connection2');
+    await link('extracteur 2147355600 > azote charge', REC.pipe, PREFIX + 'Build_FrackingExtractor_C_2147355600', 'FGPipeConnectionFactory', A('azote charge d0'), 'Connection3');
     await link('azote charge > tampon q1', REC.pipe, A('azote charge fin'), 'Connection3', A('chargement tampon azote'), 'ConnectionAny0');
     await pompe('pompe azote charge', 'Recipe_PipelinePumpMk2_C', 'azote charge a3 > fin', -800, 300);
     if (A('pompe azote charge') && !st.links['cable pompe azote charge']) {
       const r = await call('wire', PREFIX + 'Build_PowerPoleMk1_C_2146726235', A('pompe azote charge'), { dryRun: DRY });
       report('cable pompe azote charge', r);
       if (r.built) { st.links['cable pompe azote charge'] = r.actor || true; save(); }
+    }
+  },
+
+  // Courant du pressuriseur du puits d'azote (utilisateur, 28/10/2026 : « il faut retrouver de l'elec pour le pressurizer
+  // d'azote ») : son poteau a disparu avec l'ancien site nucleaire. Poteau Mk3 P1 au nord du pressuriseur, relais P2 en
+  // l'air a mi-chemin du poteau 2147375910 du circuit principal (-258 897 ; -181 661 ; +80 m, 140 m de P1 : un cable
+  // fait 100 m au plus).
+  async azoteCourant() {
+    const SMASHER = PREFIX + 'Build_FrackingSmasher_C_2147363664', MAIN = PREFIX + 'Build_PowerPoleMk1_C_2147375910';
+    const P1 = await build('poteau puits azote', 'Recipe_PowerPoleMk3_C', { x: -251395, y: -188700, z: -1378 }, 0);
+    const P2 = await build('poteau relais puits azote', 'Recipe_PowerPoleMk3_C', { x: -255146, y: -185180, z: 3300 }, 0);
+    for (const [key, a, b] of [['cable pressuriseur', P1, SMASHER], ['cable puits > relais', P2, P1], ['cable relais > reseau', MAIN, P2]]) {
+      if (st.links[key] || !a || !b) continue;
+      const r = await call('wire', a, b, { dryRun: DRY });
+      report(key, r);
+      if (r.built) { st.links[key] = r.actor || true; save(); }
     }
   },
 

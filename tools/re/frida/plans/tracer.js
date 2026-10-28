@@ -65,7 +65,7 @@ const MAX_RAIL = 9000; // troncon le plus long (sous les 100 m du jeu)
 // Virage le plus fort d'un troncon : au-dela, les courbes d'Hermite des deux voies d'une double voie s'ecartent de leur
 // arc et se rapprochent (5,9 m au milieu d'un troncon de 79 m tournant de 30 deg, vu a blanc le 22/10/2026)
 const MAX_TURN = 20;
-const SPACING = 650; // double voie : 6,5 m d'axe en axe
+const SPACING = 750; // double voie : 7,5 m d'axe en axe (standard de l'utilisateur, 28/10/2026)
 const rad = (d) => (d * Math.PI) / 180;
 const norm360 = (a) => ((a % 360) + 360) % 360;
 const angDiff = (a, b) => { const d = norm360(a - b); return d > 180 ? d - 360 : d; };

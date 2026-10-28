@@ -53,6 +53,25 @@ Vers un point lointain (plus de 1,9 km) dont l'altitude est inconnue (balise pos
   - étage 1 bis : Mk2 à -12,5 m (50 m de poussée, lu en jeu ; 55 au maximum), puis Mk1 à +20 m.
 - Une Mk2 posée dans le coude de la colonne est refusée (`FGCDPipeAttachmentTooSharpTurn`).
 - Quand on retire une pompe, le jeu recolle les deux moitiés en un seul tuyau. Quand on en insère une, il crée deux tuyaux nouveaux, inconnus de l'agent : pour les démonter, il faut `dismantle` avec `force`.
+- Pompe et vanne : Connection0 = entrée, Connection1 = sortie (relevé sur la pompe d'une cellule et sur celles du tampon du module 1).
+
+## Réseau de fluides : ce que dit le code (Ghidra, 28/10/2026)
+
+Lu dans `AFGPipeNetwork::UpdateFlow`, `UpdatePressureGroups`, le constructeur de `PipeJunction` et `AFGBuildablePipeReservoir::BeginPlay`.
+- **Débit** entre deux pièces voisines (tuyau, jonction, réservoir, pompe) : différence de leurs colonnes de pression, c'est-à-dire la hauteur de fluide au-dessus du raccord. Le débit garde de l'élan d'une image à l'autre. Il est borné par la plus petite limite de débit des deux pièces.
+- **Groupes de pression** : les pièces pleines forment un groupe. Son sommet est le plus haut de deux niveaux : la surface d'un réservoir qui le touche, ou le haut d'une pompe plus sa levée (ajoutée seulement si la pompe est alimentée). À l'intérieur du groupe, les pièces poussent selon leur trop-plein.
+- **Clapet** : seulement à l'entrée d'une pompe ou d'une vanne (connecteur « consommateur »), marqué à la construction du réseau, donc même sans courant.
+  - Pompe : côté pompe, la pression comptée face à l'amont est nulle. Rien ne reflue, et la pression de l'amont ne passe pas : la pompe repart de sa propre hauteur plus sa levée.
+  - Vanne : toute différence qui pousserait vers l'amont est annulée, et la pression de l'amont passe vers l'aval.
+  - Une vanne derrière une pompe ne sert donc à rien comme clapet. L'utilisateur l'a retirée du tampon du module 1 : « inutile ».
+- **La vanne n'a pas de classe à elle** : c'est une pompe de levée nulle (`AFGBuildablePipelinePump`). Sa limite de débit est `mUserFlowLimit`, et -1 veut dire aucune limite.
+- **Réservoir (tampon)** :
+  - contenance = sa capacité, hauteur de colonne = `mStackingHeight`. Petit tampon : 400 m³ sur 8 m ; industriel : 2 400 m³ sur 12 m ;
+  - le bas de la colonne est à la hauteur de ses connecteurs, 1,75 m au-dessus de la base ;
+  - limite de 600 m³/min par connecteur (valeur par défaut du code), trop-plein de 1 % ;
+  - sa poussée vaut son remplissage multiplié par sa hauteur de colonne, au-dessus des connecteurs.
+- **Conséquence : surélever un tampon qui doit passer devant des extracteurs.** Ceux-ci poussent jusqu'à 10 m au-dessus de leur sortie. Posé au niveau de la ligne, un tampon ne monte pas plus haut et n'a aucune priorité. Surélevé, connecteurs au-dessus du point le plus haut à alimenter, il passe devant dès qu'il a de l'eau. Son niveau se stabilise là où sa poussée équilibre celle des extracteurs : 85 à 300 m³ au module 1.
+- **Lecture** : `fluidContent` ne lit que les réservoirs. `mFluidBox` n'expose rien à la réflexion, ni sur un tuyau ni sur une jonction.
 
 ## Sol refusé
 

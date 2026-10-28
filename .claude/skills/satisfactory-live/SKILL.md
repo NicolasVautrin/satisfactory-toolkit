@@ -27,7 +27,7 @@ curl -s -X POST http://127.0.0.1:8766/shutdown      # arrêt (retire proprement 
 
 Ces règles viennent de l'utilisateur ou d'incidents réels. La raison suit chaque règle, pour juger des cas limites.
 
-- **Sauvegarder avant tout changement important** : `node plans/fg.js save <etiquette>` avant une démolition, une grande construction ou des réglages en série. L'utilisateur veut pouvoir revenir en arrière facilement. Citer le nom de la sauvegarde dans la réponse : c'est lui qui la recharge.
+- **Ne sauvegarder la partie que sur demande** (`node plans/fg.js save <etiquette>`). Pas de sauvegarde de ma propre initiative, même avant une démolition ou une grande construction : utilisateur, 28/10/2026, « arrête de sauvegarder, on n'a jamais eu l'occasion de récupérer une sauvegarde ».
 - **Ne toucher que ce que la demande vise.** Une nouvelle consigne porte sur la tâche suivante, pas sur ce qui vient d'être fait. Le 21/10/2026, j'ai démonté 14 rails que l'utilisateur ne visait pas (« ma requête concernait uniquement la prochaine tâche »).
 - **Ne téléporter le joueur qu'avec son accord.** L'accord vaut pour la tournée demandée, pas pour la suite. Deux cas :
   - **« amène-moi en … »** : `node fg.js goto <x,y> [m]`. Le joueur est posé à 3 m du poteau raccordé le plus proche, à sa hauteur : il vole et a besoin du courant, le sol ne compte pas. Les coordonnées données par l'utilisateur sont en mètres (`goto -1621,-1489 m`). Il n'y a pas de retour, sauf demande (`fg.js retour`). Utilisateur, 27/10/2026 : « comment faire en sorte que tu n'aies plus à chercher comment me téléporter ».
@@ -50,7 +50,7 @@ Règles de jeu de l'utilisateur, détaillées dans la mémoire du projet :
 - ne jamais arrêter la chaîne d'approvisionnement des centrales ;
 - pas de convoyeur sous l'eau ;
 - voies à 10 % de pente au plus, sauf raccords de gare et hélices ;
-- double voie à 7 m d'axe en axe (6,5 m avant le 26/10/2026 : trop juste pour les bouts d'anneau et les hélices), circulation à gauche ;
+- double voie à 7,5 m d'axe en axe depuis le 28/10/2026 (6,5 m avant le 26/10, puis 7 m : deux déraillements, à 7 m au pied des hélices et à 6,5 m en courbe), circulation à gauche ;
 - gares sur le modèle validé ;
 - ne jamais raccorder après coup un convoyeur déjà construit (`SetConnection` fait planter le jeu).
 

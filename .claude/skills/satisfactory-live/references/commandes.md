@@ -33,7 +33,7 @@ node fg.js call <fonction> [arg...]                      # appel brut de n'impor
 `node fg.js call smartRules <répartiteur> '[{"item":"any","output":0},{"item":"overflow","output":1}]'` remplace ses règles de tri.
 - `item` : `any`, `overflow`, `none`, `undefined`, ou le chemin d'une classe d'objet.
 - Sans règles, la commande lit les règles en place.
-- `output` 0 = centre (`Output1`), 1 = `Output2` : vérifié au débit le 21/10/2026 (trop-plein mis sur 1, seul `Output2` raccordé, la foreuse en amont n'est plus bloquée). 2 = `Output3`, par déduction.
+- `output` 0 = centre (`Output1`), 1 = `Output2` : vérifié au débit le 21/10/2026 (trop-plein mis sur 1, seul `Output2` raccordé, la foreuse en amont n'est plus bloquée). 2 = `Output3` : vérifié au trieur de N211 O143 et à celui de la gare 33 (27/10/2026). Le 23/10, des règles posées avec « 0 = Output2 » ont envoyé le caterium dans les raffineries de cuivre et le cuivre au broyeur.
 - Le trop-plein ne part que si les autres sorties sont bloquées et que le tampon du répartiteur est au moins à moitié plein.
 
 ## Noms des gares

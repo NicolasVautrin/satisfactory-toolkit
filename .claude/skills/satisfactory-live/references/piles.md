@@ -29,7 +29,20 @@ Le fichier de configuration donne :
 Exemple : atelier de silice du complexe d'acide, 2 piles de 8. État : `plans/<nom>-pile-state.json`.
 
 - **Poteaux** : `poteaux: [[lx, ly], ...]` (m, repère de la rangée). Avec au moins deux poteaux par pile, les étages de chaque pile se partagent ses poteaux par tranches. Sinon, une pile entière va sur un poteau, et un Mk3 (10 connexions) ne suffit pas pour une pile de 10 plus la chaîne et le réseau. Exemple : module alu, 4 poteaux pour 2 piles de 10 fonderies, câbles de 92 m au plus.
+- **Les essais à blanc de bâtiments ne voient pas les rails** (filactif, 27/10/2026) : 15 raffineries ont été acceptées puis posées sur la double voie nord-sud à l'est des bandes (x -75 827 / -75 177). Avant de prolonger une rangée, chercher les voies (`scan FGBuildableRailroadTrack`, `fg.js rails`) et s'arrêter 10 m avant.
+- **Constructeur à 3 ingrédients** (oscillateurs, 27/10/2026, `plans/oscillateurs.js`) :
+  - `pile.js` monte une colonne par entrée de la machine. L'entrée inutile se déclare dans `libres: ["Input2"]`, pour ne pas poser une colonne vide.
+  - Écart entre piles : 22 m. À 19 m, les ascenseurs latéraux de deux piles voisines se gênent (soft clearance). Étages de 14 m, comme les piles de l'utilisateur.
+  - Une pile de 9 étages monte à 112 m au-dessus de son pied, et un câble ne dépasse pas 100 m. Il faut donc un second rang de poteaux en hauteur : `poteaux: [[lx, ly, h], ...]`, avec `h` en mètres au-dessus de la plateforme (oscillateurs : `h = 70`). `pile.js` répartit les étages entre les rangs par tranches.
 - **Fonderie simple** : `Build_SmelterMk1_C` se construit avec `Recipe_SmelterBasicMk1_C`, et `Recipe_SmelterMk1_C` construit la fonderie à deux entrées (`Build_FoundryMk1_C`). `rules.js` (`BUILD_RECIPE`) fait la correspondance, et `pile.js` s'arrête si le bâtiment appris n'est pas le producteur de la recette.
+
+## Bloc de fonderies au-dessus des générateurs : `plans/acier-compacte.js`
+
+Lingots d'acier compacté (27/10/2026) : 200 fonderies en 2 rangées de 10 piles de 10, en l'air à +92 m, au-dessus des générateurs du module 1 de carburant pour fusées, au bord sud du champ, côté gares. Leçons :
+- **Fonderie à deux entrées** (`Build_FoundryMk1_C`) : elle se construit avec `Recipe_SmelterMk1_C` (`rules.js` `BUILD_RECIPE`). Entrées 8 m derrière le centre, sortie 8 m devant : les arrivées passent à 28 m derrière l'axe et le collecteur à 20 m devant.
+- **Rangées face à face** : collecteurs au milieu, axes à 24 m du milieu ; poteaux à 17 et 21 m devant l'axe, comme au module alu.
+- **Déplacer une pile** : `pile.js` garde la plateforme dans son état (`<nom>-pile-state.json`, clé `plateforme`) et la préfère à la configuration. Il faut supprimer l'état, une fois les pièces démontées, même s'il ne vient que d'un essai à blanc.
+- **Démontage groupé** (`dismantleMany`) : les 123 ascenseurs d'une rangée ont survécu au premier passage, pourtant comptés comme démontés. Relire l'emprise après coup et repasser.
 
 ## Module de raffineries sur l'eau : `plans/module-alu.js`
 
@@ -60,7 +73,7 @@ Atelier de dissipateurs (25/10/2026) : une unité par groupe du module 1, à +64
 Cuivre de l'atelier de dissipateurs (25/10/2026) : 4 rangées de 31 raffineries (lingots purs et tôles à la vapeur), en 2 bandes à deux étages (0 et +32 m), à l'est du couloir x -36 300. Leçons :
 - **Ligne qui distribue ce qu'elle collecte** : les lingots passent de raffinerie en raffinerie, avec des fusionneurs devant les producteurs et des répartiteurs devant les consommateurs. Le bout amont doit être un producteur, et deux consommateurs se suivent au bout aval : sans cela, le premier consommateur ne reçoit rien. Le surplus sort au bout aval.
 - **Une ligne pour deux étages** : le minerai entre au bout ouest de la rangée du bas, file vers l'est, monte au bout est par un ascenseur de 32 m entre deux fusionneurs à la même verticale, puis revient vers l'ouest en haut.
-- **Eau de l'étage +32 m** : extracteurs sous la rangée du bas. Chaque colonne passe hors de la pile de lignes : relais A à -7 m, 17 m devant l'axe, à 8,5 m au-dessus de la sortie de l'extracteur, qui pousse sur 10 m. Puis une colonne de 44 m monte jusqu'au relais B, 9 m plus loin, avec une pompe Mk2 (50 m) sur la partie verticale. Elle revient ensuite à la ligne par le connecteur ouest de B : un tuyau ne repart pas en arrière vers le connecteur qu'il vient de quitter.
+- **Eau de l'étage +32 m** : extracteurs sous la rangée du bas. Chaque colonne passe hors de la pile de lignes : relais A à -7 m, 17 m devant l'axe, à 8,5 m au-dessus de la sortie de l'extracteur, qui pousse sur 10 m. Puis une colonne de 44 m monte jusqu'au relais B, 9 m plus loin, avec une pompe Mk2 (50 m) sur la partie verticale. Cette pompe, vers 0 m, est hors de portée de l'extracteur : il faut une seconde pompe Mk2 à -14 m sur le tuyau qui va de l'extracteur au relais A (`barres-em.js pompesBasses`, voir `convoyeurs.md`). Elle revient ensuite à la ligne par le connecteur ouest de B : un tuyau ne repart pas en arrière vers le connecteur qu'il vient de quitter.
 - **Câbles** : 100 m au plus (`FGCDWireTooLong` à 120 m).
 - **Réseaux** : quand un poteau gêne un plan, on déplace le poteau, pas le plan. On pose et raccorde le nouveau d'abord, puis on démonte l'ancien (`dismantle <acteur> true` pour un acteur d'une session précédente de l'agent). Ordre de souplesse de l'utilisateur : électricité, puis tuyaux, puis convoyeurs.
 

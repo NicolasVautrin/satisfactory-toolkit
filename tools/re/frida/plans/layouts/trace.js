@@ -1,5 +1,5 @@
 // Plan railplan.js d'un trace calcule par tracer.js (plans/traces/<nom>.json) : une voie (V), ou deux voies decalees de
-// 3,25 m de part et d'autre de l'axe (--double du trace) : aller (A) a gauche du sens de marche, retour (R) a droite,
+// 3,75 m de part et d'autre de l'axe (--double du trace) : aller (A) a gauche du sens de marche, retour (R) a droite,
 // parcouru en sens inverse (circulation a gauche). Chaque voie s'accroche au connecteur de depart du trace s'il y en a
 // (rail existant decrit par ses deux bouts) ; une voie simple, aussi a son connecteur d'arrivee (--arrivee-a du trace).
 // Repere monde, en metres : origine 0,0,0, axe 0.
@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 const LEVEL = '/Game/FactoryGame/Map/GameLevel01/Persistent_Level.Persistent_Level:PersistentLevel.';
-const SPACING = 650; // double voie : 6,5 m d'axe en axe (uu)
+const SPACING = 750; // double voie : 7,5 m d'axe en axe (uu ; standard de l'utilisateur, 28/10/2026)
 
 module.exports = (o = {}) => {
   if (!o.trace) throw new Error('--trace <nom> requis (plans/traces/<nom>.json, ecrit par tracer.js)');

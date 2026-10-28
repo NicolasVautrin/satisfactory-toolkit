@@ -2,7 +2,9 @@
 // precedent et finit sur un poteau que le jeu ajoute lui-meme ; le dernier peut finir sur un connecteur.
 //
 // Usage :
-//   node beltline.js <ligne.json> check|build [--nom <nom>] [--pas <m>] [--jusqua <n>] [--suivre]
+//   node beltline.js <ligne.json> check|build [--nom <nom>] [--pas <m>] [--jusqua <n>] [--suivre] [--forcer-sol]
+//   --forcer-sol : point dont le sol est refuse par le jeu (FGCDInvalidFloor, flanc trop raide) : relais en l'air
+//   (fusionneur a l'altitude du convoyeur) a la place du poteau
 //
 // <ligne.json> :
 //   { "recipe": "Recipe_ConveyorBeltMk6_C",
@@ -54,6 +56,10 @@ const statePath = path.join(__dirname, name + '-state.json');
 const STEP = Number(arg('pas', '40')) * 100;
 const UNTIL = Number(arg('jusqua', '1e9'));
 const FOLLOW = process.argv.includes('--suivre');
+// --forcer-sol : point dont le sol est refuse par le jeu (FGCDInvalidFloor : flanc trop raide pour un poteau ; 27/10/2026,
+// ligne du 113 : pente de ~36 deg en travers de la ligne, voisins compris) : relais en l'air a la place du poteau
+// (airRelay). Le trace du traceur a deja ete controle contre le relief : seul le pied du poteau est en cause
+const FORCE_FLOOR = process.argv.includes('--forcer-sol');
 const TELEPORT_IF = 4000;     // uu : on rapproche le joueur si le bout est plus loin
 const GROUND_ABOVE = (line.groundAbove || 15) * 100; // uu : fenetre de recherche du sol autour du z du point
 const MAX_SLOPE = 0.6;        // pente maximale acceptee pour un bout voisin (~30 deg)
@@ -133,6 +139,29 @@ async function beltTo(from, to, label) {
   if (!r.snapped || r.snapped.some((q) => q === null)) throw new Error(label + ' : bout non accroche ' + JSON.stringify(r.snapped) + ' ; demonter ' + short(r.actor) + ' et le reposer');
   console.log(label + ' : pose (' + short(r.actor) + ')');
   return r.actor;
+}
+
+// Point dont le sol est refuse par le jeu, voisins compris (--forcer-sol) : relais en l'air (fusionneur) a l'altitude du
+// convoyeur, sortie dans le sens de la ligne (vers le point suivant), convoyeur jusqu'a son entree ; la ligne repart de sa
+// sortie. Le poteau automatique d'un convoyeur ne se force pas (le jeu n'acheve pas le placement), le fusionneur si.
+// Reprend un relais pose dont le convoyeur manque (state.pendingRelay). Rend le connecteur d'ou la ligne repart
+async function airRelay(t, from, next, indexed) {
+  const label = 'troncon ' + (state.segments.length + 1) + ' -> relais en l\'air (' + Math.round(t.x / 100) + ', ' + Math.round(t.y / 100) + ') a ' + (t.top / 100).toFixed(1) + ' m';
+  let relay = state.pendingRelay;
+  if (!relay) {
+    const n = next ? (next.lift ? next.entry : next) : null;
+    const d = n ? { x: n.x - t.x, y: n.y - t.y } : { x: t.x - t.from.x, y: t.y - t.from.y };
+    const yaw = Math.round((Math.atan2(d.y, d.x) * 180) / Math.PI);
+    const r = await call('build', MERGER, { x: t.x, y: t.y, z: t.top }, yaw, { ignore: ['FGCDInvalidFloor'] });
+    if (!r.built) throw new Error(label + ' : relais refuse ' + JSON.stringify(r.blocking));
+    relay = state.pendingRelay = r.actor; save();
+  }
+  const belt = await beltTo(from, { path: relay, name: 'Input1' }, label + ', convoyeur');
+  const out = { path: relay, name: 'Output1' };
+  state.segments.push({ ti: indexed ? t.ti : undefined, belt, relay, to: { x: Math.round(t.x), y: Math.round(t.y), z: Math.round(t.top) }, top: Math.round(t.top), next: out });
+  delete state.pendingRelay; save();
+  console.log(label + ' : pose (' + short(belt) + ' + ' + short(relay) + ')');
+  return out;
 }
 
 // Connecteur libre le plus bas d'un ascenseur (son pied quand il est accroche par le haut)
@@ -238,6 +267,11 @@ async function main() {
       to = cand;
       topZ = last ? null : cand.top;
       break;
+    }
+    if (to === null && FORCE_FLOOR && !last && t.top != null && /FGCDInvalidFloor/.test(lastError)) {
+      if (mode === 'check') { console.log('troncon ' + (state.segments.length + 1) + ' : sol refuse, relais en l\'air prevu'); return; }
+      from = await airRelay(t, from, all[i + 1], indexed);
+      continue;
     }
     if (to === null) throw new Error('troncon ' + (state.segments.length + 1) + ' refuse a blanc, voisins compris : ' + lastError);
     if (mode === 'check') { console.log(label + ' : accepte a blanc'); return; }

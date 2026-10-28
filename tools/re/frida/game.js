@@ -2197,8 +2197,12 @@ function trainRecTick() {
 // - Tournee regulee : celle d'une gare portant l'etiquette « regulation » (AActor::Tags, sauvegardees avec la partie,
 //   cf. enableTagsSaveGame). Tous les trains dont l'horaire passe par elle, groupes par horaire (une tournee par suite de
 //   gares), relus toutes les 10 s : demarrage de l'hote, chargement d'une partie, train ajoute ou refait.
-// - Boucle = somme des trajets moyens (depart -> arrivee, moyenne des lineRegs.window dernieres mesures), sans les arrets.
-//   Mesures gardees en etiquette sur la gare de depart : « trajet > <gare suivante> : <mesures en s> ».
+// - Boucle = somme des trajets moyens (moyenne des lineRegs.window dernieres mesures), sans les arrets en gare ; les
+//   attentes en ligne en font partie. Calcul a l'arrivee (OnDocked) seulement : un train arrive juste apres le depart d'un
+//   train retenu de sa tournee n'est pas mesure (il attendait derriere, cf. lineRegArrive). Mesures
+//   gardees en etiquette sur la gare de depart : « trajet > <gare suivante> : <mesures en s> ». Une mesure a plus de
+//   lineRegs.outlier fois la moyenne (ou moins de 1 / outlier) est ecartee, sauf suite de mesures semblables (cf.
+//   lineRegMeasure).
 // - A chaque arrivee (accroche de AFGTrain::OnDocked : un arret sans rien a transferer dure 0,1 s, un releve par seconde
 //   ne le voyait pas), un train arrive moins d'un intervalle apres le depart du precedent de cette gare y est retenu
 //   jusqu'a cet intervalle (stationHold), au plus un intervalle. Departs releves a chaque image, trains a quai seulement.
@@ -2206,7 +2210,7 @@ function trainRecTick() {
 const REG_TAG = 'regulation';
 const LEG_TAG_RE = /^trajet > (.+) : ([\d. ]+)$/i;
 const lineRegs = { lines: new Map(), hook: null, on: false, ticks: 0, scans: 0, lastScan: 0, scanMs: 10000, error: null,
-  window: 10, minHoldS: 5, maxHoldFactor: 1 };
+  window: 10, minHoldS: 5, maxHoldFactor: 1, outlier: 1.5, outlierMax: 3, outlierSpread: 0.25, queueS: 60 };
 
 // Retenue d'un train a quai pendant holdS secondes de plus. La gare garde une copie de la regle de l'arret
 // (mCurrentDockedWithRuleSet) et compte le temps a quai (mCurrentDockForDuration, AFGBuildableRailroadStation::Factory_Tick) ;
@@ -2367,6 +2371,29 @@ function lineRegAdd(holder, key, v) {
   e.v = e.s.reduce((a, b) => a + b, 0) / e.s.length;
 }
 
+// Mesure d'un trajet (utilisateur, 28/10/2026, apres une heure de trains en manuel qui avait triple les moyennes et fait
+// retenir les trains 800 s a quai : « il faut trouver une maniere de plafonner », « on pourrait ecarter les valeurs qui
+// s'eloignent trop de la moyenne ») : des 3 mesures, une valeur hors de [moyenne / outlier, moyenne x outlier] est
+// ecartee et mise en attente. Si les outlierMax dernieres ecartees se suivent et se ressemblent (a outlierSpread pres de
+// leur mediane), le temps de trajet a vraiment change : elles entrent dans la moyenne. Une suite d'incidents ne se
+// ressemble pas (trains en manuel : 3 602, 2 671, 1 087 s) et reste ecartee ; l'ancienne regle acceptait toute suite de 3.
+// Rend { kept, regime }.
+function lineRegMeasure(holder, key, v) {
+  const leg = holder[key];
+  if (!leg || leg.s.length < 3 || (v <= leg.v * lineRegs.outlier && v >= leg.v / lineRegs.outlier)) {
+    lineRegAdd(holder, key, v);
+    holder[key].pending = [];
+    return { kept: true, regime: false };
+  }
+  const p = leg.pending = (leg.pending || []).concat(v).slice(-lineRegs.outlierMax);
+  if (p.length < lineRegs.outlierMax) return { kept: false };
+  const m = p.slice().sort((a, b) => a - b)[Math.floor(p.length / 2)];
+  if (!p.every((x) => Math.abs(x - m) <= m * lineRegs.outlierSpread)) return { kept: false };
+  for (const x of p) lineRegAdd(holder, key, x);
+  leg.pending = [];
+  return { kept: true, regime: true };
+}
+
 function lineRegEvent(line, e) {
   line.events.push(Object.assign({ t: Math.round((Date.now() - line.t0) / 100) / 10 }, e));
   if (line.events.length > 200) line.events.shift();
@@ -2404,7 +2431,8 @@ function lineRegNew(key, order, stationsByName) {
     for (const t of actorTags(st)) {
       const x = LEG_TAG_RE.exec(t);
       if (!x || x[1].toLowerCase() !== next.toLowerCase()) continue;
-      for (const v of x[2].trim().split(/\s+/).map(Number).filter((n) => n > 0)) lineRegAdd(line.legs, order[i] + ' > ' + next, v);
+      // relues avec la meme regle : des mesures aberrantes gardees avant elle (trains en manuel) sont ecartees
+      for (const v of x[2].trim().split(/\s+/).map(Number).filter((n) => n > 0)) lineRegMeasure(line.legs, order[i] + ' > ' + next, v);
     }
   }
   lineRegEvent(line, { start: order.join(' -> '), cycle: lineRegCycle(line) });
@@ -2474,12 +2502,26 @@ function lineRegArrive(line, tr, st, now) {
   const name = stationName(st);
   tr.at = { name, station: st, t: now, hold: 0 };
   try { tr.at.cargo = lineRegCargoArrive(st); } catch (e) { lineRegs.error = 'charge a l\'arrivee : ' + e.message; }
-  if (tr.from) {
-    const key = tr.from.name + ' > ' + name;
-    lineRegAdd(line.legs, key, (now - tr.from.t) / 1000);
-    if (isUObject(tr.from.station)) lineRegSaveLeg(tr.from.station, name, line.legs[key]);
-  }
   const s = line.stations[name] || (line.stations[name] = { lastDep: null, lastTrain: null, lastPath: null });
+  if (tr.from) {
+    const key = tr.from.name + ' > ' + name, v = (now - tr.from.t) / 1000;
+    // Arrive moins de queueS apres le depart d'un train de la tournee retenu ici : il attendait derriere lui, a l'entree de
+    // la gare. Cette attente vient du regulateur : la compter allongeait la boucle, donc l'intervalle et les retenues
+    // (28/10/2026, retour de la N279 mesure 1 450 a 2 000 s pour 240 s). Trajet non mesure. Les autres attentes en ligne
+    // font partie du trajet (utilisateur : « une attente peut etre normale sur un trajet »).
+    if (s.lastHeld && s.lastPath !== tr.path && s.lastDep !== null && (now - s.lastDep) / 1000 < lineRegs.queueS && s.lastDep > tr.from.t) {
+      lineRegEvent(line, { train: tr.name, leg: key, nonMesure: Math.round(v), derriere: s.lastTrain });
+    } else {
+      // trajet aberrant ecarte (deraillement, train arrete en ligne ou en manuel ; utilisateur, 27/10/2026 : « ca va faire
+      // exploser les temps de trajet cet incident »)
+      const r = lineRegMeasure(line.legs, key, v);
+      if (!r.kept) lineRegEvent(line, { train: tr.name, leg: key, ecarte: Math.round(v), moyenne: Math.round(line.legs[key].v) });
+      else {
+        if (r.regime) lineRegEvent(line, { train: tr.name, leg: key, nouveauTemps: Math.round(line.legs[key].v) });
+        if (isUObject(tr.from.station)) lineRegSaveLeg(tr.from.station, name, line.legs[key]);
+      }
+    }
+  }
   const h = lineRegHeadway(line);
   const ev = { train: tr.name, arrive: name, headway: h === null ? null : Math.round(h) };
   if (h !== null && s.lastDep !== null && s.lastPath !== tr.path) {
@@ -2498,7 +2540,7 @@ function lineRegArrive(line, tr, st, now) {
 
 function lineRegDepart(line, tr, now) {
   const a = tr.at, s = line.stations[a.name] || (line.stations[a.name] = { lastDep: null, lastTrain: null, lastPath: null });
-  s.lastDep = now; s.lastTrain = tr.name; s.lastPath = tr.path;
+  s.lastDep = now; s.lastTrain = tr.name; s.lastPath = tr.path; s.lastHeld = !!a.hold;
   if (a.cargo) { try { lineRegCargoDepart(line, a.name, a.cargo); } catch (e) { lineRegs.error = 'charge au depart : ' + e.message; } }
   tr.from = { name: a.name, station: a.station, t: now };
   tr.at = null;
@@ -2513,7 +2555,8 @@ function lineRegOnDocked(train, st) {
   }
 }
 
-// A chaque image : releve des tournees toutes les 10 s, departs des trains a quai. Les erreurs sont gardees
+// A chaque image : releve des tournees toutes les 10 s, departs des trains a quai (aucun calcul : il se fait a l'arrivee,
+// dans OnDocked). Les erreurs sont gardees
 // (lineRegs.error) : une erreur levee retirerait la tache de la boucle du jeu
 function lineRegTick(subsystem) {
   lineRegs.ticks++;

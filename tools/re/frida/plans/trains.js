@@ -78,8 +78,14 @@ async function placeTrain(station, wagonsOpt, name) {
   const quais = tags.map((t) => /^q(\d+) (.+)$/.exec(t)).filter((x) => x && !/^vide/.test(x[2])).map((x) => Number(x[1]));
   const wagons = Number(wagonsOpt != null ? wagonsOpt : quais.length ? Math.max(...quais) : tracks.length - 1);
   if (wagons > tracks.length - 1) throw new Error(wagons + ' wagons pour ' + (tracks.length - 1) + ' quais');
-  const docked = (await call('trains', {})).find((t) => t.dockedAt && t.dockedAt.name === station.name);
+  const all = await call('trains', {});
+  const docked = all.find((t) => t.dockedAt && t.dockedAt.name === station.name);
   if (docked) throw new Error('gare occupee par ' + docked.name + ' (' + short(docked.path) + ') : attendre son depart');
+  // Un train qui vient de partir couvre encore les quais : les wagons poses s'attelaient a sa queue (27/10/2026, 2 wagons
+  // du #3 de N279 partis avec le #2). Aucun vehicule a moins de 12 m du milieu d'une voie de la gare ou d'un quai.
+  const near = (v) => tracks.some((t) => Math.hypot(v.location.x - t.mid.x, v.location.y - t.mid.y, v.location.z - t.mid.z) < 1200);
+  const leaving = all.find((t) => t.vehicles.some(near));
+  if (leaving) throw new Error('voies de la gare occupees par ' + leaving.name + ' (' + short(leaving.path) + ') : attendre qu\'il les ait degagees');
   const plan = [['Recipe_Locomotive_C', tracks[0]]].concat(tracks.slice(1, 1 + wagons).map((t) => ['Recipe_FreightWagon_C', t]));
   let first = null;
   for (const [recipe, t] of plan) {

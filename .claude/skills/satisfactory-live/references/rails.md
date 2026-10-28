@@ -9,6 +9,7 @@
 - Modèle de gare validé
 - Hélices
 - Pièges propres aux rails (aiguillages, quais, démontage, points libres)
+- Conventions de signalisation (convergences, blocs de chemin, gares, lignes)
 
 ## Tracé automatique : `plans/tracer.js`
 
@@ -83,8 +84,21 @@ Prolonger un plan existant : ajouter au plan les nouveaux rails, avec des identi
 
 ## Raccords et distance du joueur
 
+**Un chantier de rails se fait à distance, sans déplacer le joueur**, jusqu'à environ 1 km (utilisateur, 28/10/2026 : « tu as tous les outils pour pouvoir faire ça à distance » ; je lui avais demandé cinq téléportations pour reposer 700 m de voie). Ce qu'il faut savoir, joint par joint :
+
+| Joint | De loin ? | Comment |
+|---|---|---|
+| Départ sur le bout d'un rail neuf, jamais raccordé (chaîne de rails posés à la suite) | oui, jusqu'à ~1 km | `rail` depuis `{ path, name }` du rail précédent |
+| Arrivée sur un bout libéré par un démontage, ou sur un joint existant | oui, si le connecteur est à plat et au pas de 10° | arrivée forcée de la RPC `rail` ; un signal posé ensuite coupe les blocs |
+| Départ sur un bout libéré ou un joint existant | non au-delà de ~140 m | départ en point libre au point exact du connecteur, puis `railLink` ; aucun signal sur ce joint. S'il en faut un, poser le rail dans l'autre sens pour que ce joint soit une arrivée |
+| Arrivée hors du pas de 10° | non | direction libre (`auto`) jusqu'au point exact, puis `railLink`, sans signal |
+
+`voie-7m.js pose` suit ces règles. Ne demander une téléportation que si un joint qui doit porter un signal ne peut être ni une arrivée forcée ni un départ depuis un rail neuf.
+
 - **Joint déjà raccordé** (création d'aiguillage) : un rail qui en part ne s'y raccorde que si le joueur est assez près. C'était le cas à 36, 70 et 139 m, et pas à 170, 336 ni 420 m.
 - **Bout libéré par le démontage d'un voisin** : même limite, au départ comme à l'arrivée. Les bouts bas du canyon, à 280 m, ne se sont raccordés qu'après une téléportation à 40 m (21/10/2026).
+  - Depuis que la RPC `rail` force l'accroche d'arrivée (`mSnappedConnectionComponents` réécrit avant `Construct`), une **arrivée** sur un bout libéré se raccorde de loin, si le connecteur est à plat et au pas de 10°. Le 27/10/2026, la voie sud du canyon s'est raccordée au rail gardé de l'est à environ 1 km du joueur. Le signal reposé sur ce joint coupe bien les blocs (validation 1).
+  - Hors du pas de 10° (cap -5 de N279, 27/10/2026), l'arrivée forcée est refusée (« accroche à l'arrivée impossible hors de portée »). Si le joint ne doit pas porter de signal, poser le rail en direction libre (`auto`) jusqu'au point exact du connecteur, puis le relier par `railLink`. À N279, ce rail de 12 m dans l'axe du quai finissait à 0,000 m du connecteur, avec 0,05° d'écart de cap.
 - **Bout jamais raccordé** : il se raccorde de loin, mais pas au-delà d'environ 1 km. Le 21/10/2026, sur la voie basse, des départs sont restés libres à 1,2 et 1,5 km du joueur ; à 670 m, ils se sont raccordés.
 - **Au-delà de la portée**, le jeu pose le rail mais laisse le bout libre, sans erreur.
 
@@ -109,6 +123,7 @@ Prolonger un plan existant : ajouter au plan les nouveaux rails, avec des identi
 2. appelle `AFGRailroadSubsystem::RemoveTrack` puis `AddTrack` sur le rail A, pour réinscrire ses graphes (itinéraires des trains, courant des rails).
 
 **Un signal posé sur un joint fait par `railLink` ne coupe pas les blocs** (constaté le 24/10/2026 à l'anneau de Lund). Les connecteurs connaissent pourtant le signal (`mFacingSignal` / `mTrailingSignal`), mais le jeu fusionne les blocs des deux côtés. Le signal passe en erreur 3, le bloc contenant alors une boucle, et les trains s'arrêtent. Pour réparer, reposer le rail près du joueur (moins de 140 m environ), pour que le jeu fasse le raccord lui-même, puis reposer le signal. Ensuite, vérifier les blocs avec `railsignals.js` (« le jeu n'en fait qu'UN ») ou `mSignalBlockID` des rails. Un joint fait par `railLink` sans signal fonctionne pour la circulation.
+- **Diagnostic d'un blocage** (anneau de la voie basse, 27/10/2026 : 5 trains en `LongWaitAtSignal`) : lire `mBlockValidation` et `mAspect` des signaux devant chaque train arrêté. Un signal en validation 3 arrête tout. Chercher ensuite, sur les deux rails de son joint, un `mOverlappingTracks` qui cite le rail voisin raccordé : c'est la trace d'un joint fait par `railLink`. Reposer ce rail joueur à moins de 140 m, puis le signal ; les signaux de chemin voisins redeviennent valides.
 
 Le 21/10/2026, à 1,2 km du joueur, `railLink` a relié XSc6 à XSu1, et `verif-plan` est revenu propre. Les rails étaient déjà dans le même graphe : la fusion de deux graphes séparés n'est **pas encore vérifiée**.
 
@@ -120,7 +135,7 @@ Avec beaucoup de rails dans un plan, `build` ne relit que les rails du plan qui 
 
 **Blocs fusionnés par le jeu** : deux voies trop proches « se touchent » (`AFGRailroadTrack.mOverlappingTracks`, calculé à la pose près du joueur). Le jeu met alors leurs rails dans le même bloc, et les signaux passent en erreur (« le bloc contient une boucle »). `railsignals.js` le signale (« le jeu n'en fait qu'UN »). Mesuré le 20/10/2026 avec des paires de rails d'essai : contact à 6 m d'axe en axe, plus de contact dès 6,2 m.
 
-**Une double voie se pose à 7 m d'axe en axe** (utilisateur, 26/10/2026 : « faut passer l'écart des rails à 7m, 6.5 c'est trop juste », puis, après le banc d'essai et la lecture du code du jeu, « on passe le standard à 7m »). Le seuil de contact le plus exigeant est de 6,74 m (hélices voisines R 17, voir « Collisions entre trains ») : 7 m le couvre partout. Les voies posées avant cette date sont à 6,5 m. Les liens A–Z et Z–ouest de l'étage 1 du hub ont été posés à 10 m pendant le passage par un standard de 10 m, fondé sur un calcul faux (caisse de 6,04 m).
+**Une double voie se pose à 7,5 m d'axe en axe** (utilisateur, 28/10/2026 : « on passe le standard d'ecartement a 7.5 »). Le standard était de 7 m depuis le 26/10/2026 (« faut passer l'écart des rails à 7m, 6.5 c'est trop juste », puis, après le banc d'essai et la lecture du code du jeu, « on passe le standard à 7m »). Le seuil de contact calculé le plus exigeant est de 6,74 m (hélices voisines R 17, voir « Collisions entre trains »), mais deux déraillements ont eu lieu le 28/10 : à 7 m au pied des hélices de l'anneau Z, puis à 6,5 m dans les courbes de la ligne o76 (voie-7m.js, refaite à 7,5 m). Les voies posées avant le 26/10 sont à 6,5 m, celles du 26 au 28/10 à 7 m. Les liens A–Z et Z–ouest de l'étage 1 du hub ont été posés à 10 m pendant le passage par un standard de 10 m, fondé sur un calcul faux (caisse de 6,04 m).
 
 Le wiki ne donne aucun écart minimal, mais il confirme le risque : « Trains can collide if they are on the same track with improper signaling or if two tracks are too close » (Tutorial:Trains). Depuis la version 1.2.0.0, la collision porte sur tout le modèle du véhicule (« Collision boxes changed so physical collision applies to the whole model », historique de la page Railway).
 
@@ -137,6 +152,8 @@ Le wiki ne donne aucun écart minimal, mais il confirme le risque : « Trains ca
   - Bout d'anneau (quarts R 18 opposés depuis la double voie, les deux maxima tombent face à J) : contact sous 5 + 2 × 0,82 = **6,64 m**.
   - Quarts R 16,25 (liens à 10 m) : 6,81 m.
   - Hélices voisines R 17 au même niveau : **6,74 m**. Les hélices du hub sont à 7 m depuis le 26/10/2026 (`hub-helices.js` GAP). La descendante D a été rapprochée du côté est : rail de 12,5 m après le coin NE. U et les côtés d'anneau n'ont pas bougé. Mesuré : 7,000 m en bas et à chaque tour, aux 3 anneaux.
+  - **7,5 m depuis le 28/10/2026** : deux trains ont déraillé à 7 m au pied des hélices de l'anneau Z. L'un descendait D, l'autre montait vers U, et leurs têtes se sont touchées à l'entrée des deux quarts R 17 dos à dos. Le seuil de 6,74 m ne suffit donc pas en pratique. L'hélice ouest U a été reculée de 0,5 m (GAP 7,5 ; le côté ouest UW est figé, la droite NW → UDV passe à 25,5 m), D n'a pas bougé. Mesuré : 7,50 m en bas et à chaque tour, aux 3 anneaux.
+  - **Chantier** : `chantier-liens-hub.js --etages 0,1,2 --ecarts` (93 rails, 15 signaux). Il s'est arrêté à la convergence UMG de l'étage 1, le piège connu. La reprise s'est faite étage par étage : les `nB1` (rail qui repart de UMG) d'abord, puis le reste du lot par `railplan build --rails`, et les raccords hors du lot par `railLink`. `--ecarts` relancé ne trouve plus rien. Avant le chantier, tous les trains passent en manuel ; ceux qui sont sur le lot sont relevés puis démontés, et reposés après par `trains.js tournee`.
   - Ou bien 5 m d'écart en hauteur au point le plus proche (la distance se mesure en 3D).
 - **Banc d'essai** (`plans/banc-croisement.js`) : à 6,5 m, déraillement au 6e croisement environ (tête d'ESSAI2 sortant du virage contre le wagon 3 d'ESSAI1). À 7 m, 14 croisements à 65-98 km/h sans contact. C'est conforme au seuil de 6,64 m.
 
@@ -266,6 +283,25 @@ Mesurées à blanc le 21/10/2026 sur un quart de tour :
   - Le cap d'un point libre est arrondi au pas de rotation du jeu (10°) : hors de ce pas, le rail ondule en plan. Choisir un cap multiple de 10°, ou partir d'un bout de voie existant.
 - **Courbes et S** : un quart de cercle se pose en deux rails, 50° puis 40°, pour que le joint du milieu tombe sur un cap multiple de 10°. Un S entre deux voies parallèles se fait en deux arcs de 10° ou 20° : le rayon vaut décalage / (2 (1 − cos θ)), et la longueur 2 × rayon × sin θ.
 
+## Conventions de signalisation
+
+Conventions du projet, recoupées avec le wiki (`satisfactory.wiki.gg/wiki/Train_Signals`, lu le 27/10/2026). Les appliquer sans relire le wiki. `node railsignals.js --station <gare>` les contrôle sur tout le réseau relié à la gare.
+
+| Où | Règle | Raison |
+|---|---|---|
+| Tout bloc | Ses signaux d'entrée sont tous du même type, bloc ou chemin. | Sinon erreur du jeu « Block has conflicting entry signal types ». |
+| Tout signal | Tout signal, bloc ou chemin, délimite un bloc. Le type du bloc est donné par ses signaux d'entrée. | Wiki : « A block is the area between two signals ». |
+| Convergence (deux voies qui se rejoignent) et jonction où des trajets se croisent | Signaux de **chemin** à toutes les entrées, signal de **bloc** à la sortie, juste après l'aiguillage. | Wiki, bug actuel : à la libération d'un bloc, plusieurs signaux de bloc d'entrée peuvent passer au vert, et les trains se percutent. |
+| Bloc de chemin | **De niveau** : moins de 1 m de dénivelé (seuil de `railsignals.js`). Si une branche est en pente, couper son dernier rail pour finir à plat, et mettre le signal de chemin au joint. | Wiki : sinon les chemins sont mal découpés et des trains peuvent se percuter. Les signaux de bloc n'ont pas cette contrainte. |
+| Gare | Jamais dans un bloc de chemin. L'entrée est un signal de **bloc** ; la sortie est un signal de **chemin** si elle donne sur une jonction (gare de triage, voie basse, boucle de N85 E78), sinon de bloc. | Erreur du jeu « Path block cannot contain stations ». Un signal de chemin juste après une gare est un montage prévu par le jeu. |
+| Gare | Au moins un rail de 12 m entre la gare et ses signaux d'entrée et de sortie (voir plus bas). | Un train de 81,5 m dans une gare de 80 m doit rester entier dans le bloc de la gare. |
+| Avant un signal de chemin | Bloc long : au moins un train, et pas de signal de bloc juste avant. | Le chemin n'est réservé que depuis le bloc qui précède : un bloc court fait ralentir les trains. |
+| Grandes lignes | Un signal de bloc tous les 2 rails, blocs de 200 m au moins (`signaux-ligne.js`), posé à gauche (bord extérieur, circulation à gauche). | Règle de l'utilisateur (24/10/2026). |
+| Tout bloc | Au moins la longueur du plus long train (81,5 m). | Un train arrêté au signal de sortie ne doit pas déborder dans le bloc d'avant. |
+| Joint fait par `railLink` | Pas de signal dessus. | Le jeu ne coupe pas les blocs à ce joint (24/10/2026). |
+
+Application à la boucle de N85 E78 (27/10/2026, `scratchpad boucle-n85.js`). La sortie de la gare est passée en signal de chemin. Le rail de la branche de S13 E101 (139,8 → 138 m) a été coupé en une descente de 52,9 m et un rail à plat de 18,5 m, avec le signal de chemin à leur joint. Un signal de bloc est posé 18 m après l'aiguillage. La zone de l'aiguillage fait 91 m et est de niveau.
+
 ## Signal d'entrée de gare
 
 Règle de l'utilisateur (26/10/2026) : **pas de signal à l'entrée ni à la sortie d'une gare, toujours un rail d'au moins 12 m entre le signal et la gare**. Un train locomotive + 4 wagons fait 81,5 m pour 80 m de gare + 4 quais : à quai, sa queue dépasse de 1,5 m. Avec le signal collé au quai, elle occupait le bloc d'avant, qui dans le hub est le bloc de l'anneau (« un train en gare bloque l'anneau à l'entrée de celle-ci »).
@@ -303,9 +339,12 @@ Commandes de l'agent ajoutées le 26/10/2026 (« il va falloir que tu te dotes d
 
 **Atteler loin du joueur** : un véhicule visé près d'un autre s'y accroche. Le jeu cherche alors le rail sous le voisin par une collision (`ApproximateTrackPositionForVehicle` : sphère d'un mètre, fonction non exportée). Loin du joueur, les rails n'ont pas de collision : sans correctif, l'hologramme reste en (0, 0, 0) avec `FGCDMustHaveRailRoadTrack` et `FGCDNotEnoughSpaceOnTrack`. Depuis le 26/10/2026, `buildAim` refait ce calcul avec le rail que le voisin connaît (`repairFarVehicleSnap` dans `game.js`) : même côté d'attelage, même position (demi-longueur de chacun), sens du rail pour une visée verticale, puis les deux contrôles du jeu (place sur la voie, empiètement). La construction attelle ensuite au voisin (`ConstructVehicle` -> `CoupleTrains`). Le résultat porte `vehicleSnap` (`repaired`, voisin, côté) quand la reprise a eu lieu. Constaté à N204 O100, joueur à 1,7 km : locomotive + 4 wagons attelés. Une visée non verticale n'est pas reprise : son sens dépend de `mScrollTrackDirection`, champ non exposé.
 
-**Tournée** : `node trains.js tournee <gare de chargement>` ajoute un train à la tournée. Il y a un wagon par quai étiqueté non vide (q1…). L'horaire va de la gare de chargement « A -> B » à la gare couplée « B <- A ». Le train porte le nom « A -> B », puis « #2 », « #3 » pour les suivants, et roule en conduite automatique. La gare de chargement doit être libre. Règle d'attente par défaut : charger ou décharger une fois, 0 s (utilisateur : « y'a aucune raison de positionner cette attente »). `regle` la change sur des trains existants en gardant leurs gares et leur arrêt suivant.
+**Tournée** : `node trains.js tournee <gare de chargement>` ajoute un train à la tournée. Il y a un wagon par quai étiqueté non vide (q1…). L'horaire va de la gare de chargement « A -> B » à la gare couplée « B <- A ». Le train porte le nom « A -> B », puis « #2 », « #3 » pour les suivants, et roule en conduite automatique. La gare de chargement doit être libre, ses voies comprises : `tournee` refuse tant qu'un véhicule est à moins de 12 m du milieu de la voie de la gare ou d'un quai. Le 27/10/2026, le #3 de N279 posé à l'instant où le #2 quittait les quais a vu 2 de ses wagons s'atteler à la queue du #2. Règle d'attente par défaut : charger ou décharger une fois, 0 s (utilisateur : « y'a aucune raison de positionner cette attente »). `regle` la change sur des trains existants en gardant leurs gares et leur arrêt suivant.
 - L'utilisateur ne veut pas de calcul du nombre de trains (« ça dépendra beaucoup du trafic ») : on pose un train et on ajuste. Sur un long trajet (N279 E331 -> N211 O96, environ 4,3 km), au moins 2 trains d'emblée.
 - `node trains.js liste [--gare motif]` ; `horaire <train> <gare>… [--auto]` ; `auto <train> on|off` ; `nom <train> <nom>`.
+- Pour l'instant, un seul train par tournée de la métallurgie (utilisateur, 27/10/2026 : « pas besoin de 2 trains par parcours pour l'instant »).
+
+**Retirer un train** : le passer en manuel (`auto <train> off`), puis démonter ses véhicules (`fg.js dismantle`). Relire ensuite chaque véhicule. Le 27/10/2026, sur un train encore à 45 km/h, la locomotive et le premier wagon ont survécu au premier démontage, sans erreur ; un second `dismantle` les a retirés.
 
 **Déraillement** (26/10/2026, deux trains à l'est de l'anneau vbd3) : `trainRerail` (`AFGTrain::Rerail`, ce que fait la touche E du jeu) remet un train sur ses rails, à sa position sur la voie. Un seul train à la fois : deux trains remis en même temps alors qu'ils se touchent déraillent de nouveau aussitôt, un wagon s'est retrouvé à -61 m. Remettre le premier, le faire partir pour dégager, puis remettre le second (`node trains.js rerail <train>`). Loin du joueur, un train qui a déraillé reste « déraillé » sans que ses véhicules tombent ni soient marqués : la remise sur rail ne fait alors rien. Il faut amener le joueur sur place (téléportation près d'un poteau) : les véhicules tombent, puis la remise sur rail marche. Après une remise sur rail, un train peut rester arrêté devant un signal au rouge alors que la voie est libre (itinéraire figé) : couper puis rétablir sa conduite automatique.
 
@@ -319,7 +358,10 @@ Commandes de l'agent ajoutées le 26/10/2026 (« il va falloir que tu te dotes d
 Demande de l'utilisateur, le 26/10/2026 : « on passe à la régulation de la ligne n279 », « il faut que tu maintiennes un temps moyen par boucle », « on s'en fout du temps d'arrêt », « est-ce qu'on peut taguer ça pour ne pas avoir à le refaire ? ». Le régulateur de `game.js` (`lineRegStart`) démarre avec l'agent (`install`) et n'occupe pas l'hôte :
 - **Tournée régulée :** celle de toute gare qui porte l'étiquette `regulation`. Les étiquettes sont sauvegardées avec la partie. Tous les trains dont l'horaire passe par cette gare sont régulés, groupés par horaire. Le régulateur les relit toutes les 10 s : un train ajouté ou refait est pris tout seul.
 - **Arrivées :** il s'accroche à `AFGTrain::OnDocked` et relève les départs à chaque image, pour les seuls trains à quai.
-- **Boucle :** somme des trajets moyens (départ → arrivée), chacun moyenné sur ses 10 dernières mesures. Les arrêts n'y entrent pas. Il y a autant de trajets que de gares à l'horaire. Les mesures sont gardées en étiquette sur la gare de départ : `trajet > <gare suivante> : <mesures en s>`.
+- **Boucle :** somme des trajets moyens, chacun moyenné sur ses 10 dernières mesures. Les arrêts en gare n'y entrent pas. Il y a autant de trajets que de gares à l'horaire. Les mesures sont gardées en étiquette sur la gare de départ : `trajet > <gare suivante> : <mesures en s>`.
+- **Calcul à l'arrivée seulement**, dans `OnDocked` (utilisateur, 28/10/2026 : « on a dit qu'on ne faisait pas de calcul à chaque image mais sur onDocked ») ; à chaque image, le régulateur ne fait que relever le départ des trains à quai.
+- **Train arrivé derrière un train retenu** (28/10/2026) : un train qui arrive moins de 60 s (`lineRegs.queueS`) après le départ d'un train de sa tournée retenu à cette gare attendait derrière lui, à l'entrée. Son trajet n'est pas mesuré (événement `nonMesure`, `derriere`). Cette attente, créée par le régulateur, comptait avant dans le trajet : la moyenne montait, l'intervalle et les retenues aussi (retour de la N279 mesuré à 1 450–2 000 s, pour 240 s sans attente). Les autres attentes en ligne restent comptées (utilisateur : « une attente peut être normale sur un trajet » : croisements, signaux).
+- **Trajets aberrants écartés** (utilisateur, 28/10/2026 : « il faut trouver une manière de plafonner », puis « on pourrait écarter les valeurs qui s'éloignent trop de la moyenne », après une heure de trains en manuel qui avait triplé les moyennes et fait retenir des trains 800 s à quai) : dès 3 mesures, une mesure hors de [moyenne ÷ 1,5 ; moyenne × 1,5] est écartée (événement `ecarte`) et mise en attente. Si les 3 dernières écartées se suivent et se ressemblent (à 25 % de leur médiane : `outlierMax`, `outlierSpread`), le temps de trajet a vraiment changé et elles entrent dans la moyenne (événement `nouveauTemps`). Une suite d'incidents ne se ressemble pas : les trajets de 3 602, 2 671 et 1 087 s de l'arrêt restent écartés. L'ancienne règle acceptait toute suite de 3 écarts, et c'est ce qui avait laissé passer l'arrêt. Un plafond (mesure ramenée dans la borne) a été essayé le même jour : il laissait les moyennes fausses descendre de 5 % par trajet seulement. Les mesures gardées en étiquette sont relues avec la même règle au démarrage.
 - **Intervalle :** boucle ÷ nombre de trains.
 - **Retenue :** à chaque gare, un train arrivé moins d'un intervalle après le départ du précédent est retenu jusqu'à cet intervalle, au plus un intervalle.
 

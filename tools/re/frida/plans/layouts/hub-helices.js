@@ -3,7 +3,7 @@
 // Posee avec l'etage du bas de hub.js.
 //
 // Deux helices a voie unique cote a cote d'est en ouest, toutes deux dans le sens des aiguilles d'une montre vu du
-// dessus : montante U a l'ouest, descendante D a l'est, 7 m entre elles (6,5 m avant le 26/10/2026, voir GAP).
+// dessus : montante U a l'ouest, descendante D a l'est, 7,5 m entre elles (7 m avant le 28/10/2026, voir GAP).
 //  - En bas, une double voie nord-sud entre elles (circulation a droite, consequence du sens horaire) : depuis le cote
 //    nord de l'anneau 0, quart de cercle de 18 m a droite puis 17 m de droite jusqu'au point est de U (cap sud) ; depuis
 //    le point ouest de D (cap nord), 17 m de droite puis quart de cercle jusqu'au cote nord.
@@ -34,20 +34,24 @@ const SIDE = 26; // deux rails de 13 m entre deux aiguillages
 // droite des bretelles : a 13 m, le debut de leur quart de cercle (bloc de l'anneau) passait a 4,4 m du palier de
 // l'helice aux etages ; a 17 m, il en est a 7 m (verification a blanc du 21/10/2026)
 const LEG = 17;
-// Ecart entre les deux helices (point est de U, point ouest de D) : 7 m depuis le 26/10/2026 (utilisateur : « on passe le
-// standard a 7m », « occupe toi des helices ») ; a 6,5 m, les tetes des trains qui s'y croisent au meme niveau pouvaient
-// toucher (seuil 6,74 m pour des helices de 17 m, references/rails.md « Collisions entre trains »). D a ete rapprochee du
-// cote est (rail de 12,5 m au lieu de 13 apres le coin NE) : U, le cote ouest des anneaux et tout le reste n'ont pas bouge.
-const GAP = 7;
-const D_MRG = UE0 + RING_R + 13 - (GAP - 6.5); // en bas : convergence de D sur le cote nord, un rail de 12,5 m apres le coin NE
+// Ecart entre les deux helices (point est de U, point ouest de D) : 7,5 m depuis le 28/10/2026 (deraillement de deux
+// trains croises au pied des helices de l'anneau Z, a 7 m ; utilisateur : « on peut passer a 7.5m pour les pieds des
+// helices ? », « faut juste decaler l'helice ouest de 0.5m ») : U, son aiguillage du bas (UDV) et sa convergence des
+// etages (UMG) reculent de 0,5 m vers l'ouest ; D et les cotes des anneaux ne bougent pas (cote ouest UW fige, la droite
+// NW -> UDV passe de 26 a 25,5 m). Avant : 7 m le 26/10/2026 (« on passe le standard a 7m » : D rapprochee du cote est,
+// rail de 12,5 m au lieu de 13 apres le coin NE), 6,5 m a l'origine ; seuil de contact 6,74 m pour des helices de 17 m
+// (references/rails.md « Collisions entre trains »).
+const GAP = 7.5;
+const D_MRG = UE0 + RING_R + 12.5; // en bas : convergence de D sur le cote nord, un rail de 12,5 m apres le coin NE
 const D_LEG = D_MRG + RING_R; // point ouest de D (bas)
 const U_LEG = D_LEG + GAP; // point est de U (bas)
 const U_DIV = U_LEG + RING_R; // en bas : aiguillage vers U sur le cote nord
+const U_DIV_7 = D_LEG + 7 + RING_R; // aiguillage vers U a l'ecart de 7 m : fixe le cote ouest de l'anneau 0 (UW)
 const DC = D_LEG - R, UC = U_LEG + R; // centres
 const U_W = UC + R, D_E = DC - R; // point ouest de U, point est de D (etages)
 const U_MRG = U_W - RING_R; // etages : convergence de U sur le cote nord
 const D_DIV = D_E + RING_R; // etages : aiguillage vers D sur le cote nord
-const UW = U_DIV + SIDE + RING_R; // cote ouest de l'anneau 0 (le coin NW est un aiguillage : sortie de la gare est 1)
+const UW = U_DIV_7 + SIDE + RING_R; // cote ouest de l'anneau 0 (le coin NW est un aiguillage : sortie de la gare est 1)
 const CV = NORTH - RING_R - LEG; // centre des helices en v (7,49)
 const rad = (d) => (d * Math.PI) / 180;
 const FIRST = [[0, g], [g, g], [g, g], [g, g], [g, g], [g, 0]]; // un tour et demi
